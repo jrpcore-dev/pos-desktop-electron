@@ -1,10 +1,17 @@
-# POS Móvil — Sistema de Ventas
+# Vendia — Sistema de Ventas (POS)
+
+![Electron](https://img.shields.io/badge/Electron-47848F?style=for-the-badge&logo=electron&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![shadcn-ui](https://img.shields.io/badge/shadcn_ui-000000?style=for-the-badge&logo=shadcnui&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![Expo](https://img.shields.io/badge/Expo-000020?style=for-the-badge&logo=expo&logoColor=white)
 
 Sistema POS de escritorio con aplicación móvil complementaria para escaneo de códigos de barras.
 
 ## Arquitectura
 
-- **Escritorio**: Electron + React + Material UI + SQLite (better-sqlite3)
+- **Escritorio**: Electron + React + Tailwind CSS + shadcn/ui + SQLite (better-sqlite3)
 - **Móvil**: Expo (React Native) con escáner de código de barras
 - **Comunicación**: API REST local + descubrimiento UDP (subred LAN)
 
@@ -18,7 +25,7 @@ Sistema POS de escritorio con aplicación móvil complementaria para escaneo de 
 
 ```bash
 # Clonar
-git clone https://github.com/Jacob-Jp/jrp-pos.git
+git clone https://github.com/jrpcore-dev/pos-desktop-electron.git
 cd my-pos-system
 
 # Instalar dependencias
@@ -78,6 +85,7 @@ Escanea el código QR con Expo Go (SDK 57 beta) para abrir la app.
 - **Reportes**: Ventas y gastos por período (solo admin)
 - **Cajeros**: Gestión de perfiles con PIN (solo admin)
 - **Respaldo**: Crear y restaurar backups de la base de datos (solo admin)
+- **Interfaz moderna**: Tema claro/oscuro, tarjetas con hover interactivo, tablas resaltadas, skeletons de carga y spinners (Tailwind CSS + shadcn/ui)
 
 ### Móvil
 
