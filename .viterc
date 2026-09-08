@@ -1,0 +1,14 @@
+{
+  "optimizeDeps": {
+    "disabled": false,
+    "include": [
+      "react",
+      "react-dom"
+    ]
+  },
+  "resolve": {
+    "alias": {
+      "@": "/src/renderer"
+    }
+  }
+}

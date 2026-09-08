@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/renderer/*"]
+    },
+    "jsx": "react-jsx",
+    "checkJs": false
+  },
+  "include": ["src/renderer"]
+}

@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Abarrotes La Esquina — POS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --navy-950: #0b1526;
+        --navy-800: #16233d;
+        --navy-700: #1e2e4d;
+        --blue-600: #2f6fed;
+        --blue-500: #4c8dff;
+        --blue-100: #eaf1fe;
+        --sky-50: #f4f7fc;
+        --surface: #ffffff;
+        --ink-900: #101826;
+        --ink-600: #3e4a61;
+        --ink-500: #5c6b84;
+        --line: #dee6f2;
+        --success: #17a673;
+        --success-bg: #e7f7f1;
+        --warning: #f0a202;
+        --warning-bg: #fdf3dd;
+        --danger: #e5484d;
+        --danger-bg: #fce9ea;
+        --radius: 14px;
+        --shadow:
+          0 2px 10px rgba(16, 24, 38, 0.06), 0 1px 2px rgba(16, 24, 38, 0.04);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--sky-50);
+        color: var(--ink-900);
+        font-family: 'Inter', sans-serif;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        background: var(--navy-950);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 24px;
+        flex-shrink: 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: linear-gradient(135deg, var(--blue-500), var(--blue-600));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Sora', sans-serif;
+        font-weight: 800;
+        font-size: 15px;
+        flex-shrink: 0;
+      }
+      .brand-text {
+        font-family: 'Sora', sans-serif;
+        font-weight: 700;
+        font-size: 15.5px;
+        letter-spacing: 0.2px;
+      }
+      .brand-sub {
+        font-size: 11.5px;
+        color: #9fb3d9;
+        font-weight: 500;
+      }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 13px;
+        color: #c7d4ec;
+      }
+      .shift-pill {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 6px 12px;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 3px rgba(23, 166, 115, 0.25);
+      }
+
+      .main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        gap: 18px;
+        padding: 18px 24px 24px;
+        max-width: 1400px;
+        width: 100%;
+        margin: 0 auto;
+        min-height: 0;
+      }
+
+      .catalog {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-height: 0;
+      }
+      .search-row {
+        display: flex;
+        gap: 10px;
+      }
+      .search-box {
+        flex: 1;
+        position: relative;
+      }
+      .search-box input {
+        width: 100%;
+        padding: 13px 16px 13px 42px;
+        border-radius: 12px;
+        border: 1.5px solid var(--line);
+        background: var(--surface);
+        font-family: 'Inter', sans-serif;
+        font-size: 14.5px;
+        color: var(--ink-900);
+        outline: none;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+      .search-box input:focus {
+        border-color: var(--blue-500);
+        box-shadow: 0 0 0 4px rgba(76, 141, 255, 0.15);
+      }
+      .search-box svg {
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--ink-500);
+      }
+      .scan-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--navy-950);
+        color: #fff;
+        border: none;
+        padding: 0 18px;
+        border-radius: 12px;
+        font-family: 'Sora', sans-serif;
+        font-weight: 600;
+        font-size: 13.5px;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      .scan-btn:hover {
+        background: var(--navy-800);
+      }
+
+      .chip-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        padding: 7px 14px;
+        border-radius: 20px;
+        background: var(--surface);
+        border: 1.5px solid var(--line);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink-600);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .chip.active {
+        background: var(--blue-100);
+        border-color: var(--blue-500);
+        color: var(--blue-600);
+      }
+
+      .stock-alert {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--warning-bg);
+        border: 1px solid #f5d68a;
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-size: 13px;
+        color: #8a5a00;
+      }
+      .stock-alert strong {
+        font-weight: 700;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+      .product {
+        background: var(--surface);
+        border: 1.5px solid var(--line);
+        border-radius: var(--radius);
+        padding: 14px 12px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        transition:
+          transform 0.12s ease,
+          box-shadow 0.12s ease,
+          border-color 0.12s ease;
+        text-align: left;
+        position: relative;
+      }
+      .product:hover {
+        border-color: var(--blue-500);
+        box-shadow: var(--shadow);
+        transform: translateY(-2px);
+      }
+      .product:active {
+        transform: translateY(0px) scale(0.98);
+      }
+      .product-icon {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        background: var(--blue-100);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 19px;
+      }
+      .product-name {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--ink-900);
+        line-height: 1.25;
+      }
+      .product-meta {
+        font-size: 11.5px;
+        color: var(--ink-500);
+      }
+      .product-price {
+        font-family: 'IBM Plex Mono', monospace;
+        font-weight: 600;
+        font-size: 14.5px;
+        color: var(--blue-600);
+        margin-top: auto;
+      }
+      .badge-low {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: var(--warning);
+        color: #fff;
+        font-size: 9.5px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 8px;
+        font-family: 'Inter', sans-serif;
+      }
+
+      .ticket-wrap {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .ticket {
+        background: var(--navy-950);
+        border-radius: 18px;
+        color: #fff;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+      .ticket-head {
+        padding: 18px 20px 14px;
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.18);
+        flex-shrink: 0;
+      }
+      .ticket-head-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+      .ticket-title {
+        font-family: 'Sora', sans-serif;
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .ticket-num {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        color: #8fa5d1;
+      }
+      .ticket-sub {
+        font-size: 12px;
+        color: #8fa5d1;
+        margin-top: 4px;
+      }
+
+      .perforation {
+        display: flex;
+        justify-content: space-evenly;
+        padding: 0 14px;
+        height: 0;
+        position: relative;
+        top: -1px;
+      }
+      .perforation span {
+        width: 9px;
+        height: 9px;
+        background: var(--sky-50);
+        border-radius: 50%;
+        display: block;
+        transform: translateY(-50%);
+      }
+
+      .ticket-items {
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .ticket-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        font-size: 13.5px;
+      }
+      .item-left {
+        display: flex;
+        flex-direction: column;
+      }
+      .item-name {
+        font-weight: 500;
+        color: #fff;
+      }
+      .item-qty {
+        font-size: 11.5px;
+        color: #8fa5d1;
+        font-family: 'IBM Plex Mono', monospace;
+        margin-top: 2px;
+      }
+      .item-price {
+        font-family: 'IBM Plex Mono', monospace;
+        font-weight: 600;
+        color: #fff;
+        white-space: nowrap;
+      }
+      .item-remove {
+        background: none;
+        border: none;
+        color: #5a6c8f;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        padding: 0 0 0 6px;
+      }
+      .item-remove:hover {
+        color: var(--danger);
+      }
+
+      .ticket-empty {
+        color: #5a6c8f;
+        font-size: 13px;
+        text-align: center;
+        padding: 30px 10px;
+      }
+
+      .ticket-totals {
+        padding: 14px 20px 4px;
+        border-top: 1px dashed rgba(255, 255, 255, 0.18);
+        flex-shrink: 0;
+      }
+      .totals-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        color: #9fb3d9;
+        padding: 3px 0;
+        font-family: 'IBM Plex Mono', monospace;
+      }
+      .totals-row.grand {
+        color: #fff;
+        font-size: 20px;
+        font-weight: 700;
+        padding-top: 10px;
+        margin-top: 4px;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .totals-row.grand .label {
+        font-family: 'Sora', sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: #c7d4ec;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+      }
+
+      .ticket-actions {
+        padding: 16px 20px 20px;
+        flex-shrink: 0;
+      }
+      .pay-methods {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .pay-btn {
+        flex: 1;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1.5px solid rgba(255, 255, 255, 0.14);
+        color: #c7d4ec;
+        padding: 9px 6px;
+        border-radius: 10px;
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 12.5px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        text-align: center;
+      }
+      .pay-btn.selected {
+        background: var(--blue-600);
+        border-color: var(--blue-600);
+        color: #fff;
+      }
+      .checkout-btn {
+        width: 100%;
+        background: linear-gradient(135deg, var(--blue-500), var(--blue-600));
+        color: #fff;
+        border: none;
+        padding: 17px;
+        border-radius: 14px;
+        font-family: 'Sora', sans-serif;
+        font-weight: 700;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        box-shadow: 0 6px 20px rgba(47, 111, 237, 0.35);
+        transition:
+          transform 0.12s ease,
+          box-shadow 0.12s ease;
+      }
+      .checkout-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 24px rgba(47, 111, 237, 0.45);
+      }
+      .checkout-btn:active {
+        transform: translateY(0);
+      }
+      .checkout-btn:disabled {
+        background: #324364;
+        box-shadow: none;
+        cursor: not-allowed;
+        color: #7387ac;
+      }
+
+      .zigzag {
+        height: 12px;
+        flex-shrink: 0;
+        background:
+          linear-gradient(135deg, var(--sky-50) 50%, transparent 50%) 0 0,
+          linear-gradient(-135deg, var(--sky-50) 50%, transparent 50%) 0 0;
+        background-size: 16px 16px;
+        background-repeat: repeat-x;
+      }
+
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #c4d2ea;
+        border-radius: 8px;
+      }
+      .ticket-items::-webkit-scrollbar-thumb {
+        background: #2a3b5e;
+      }
+
+      @media (max-width: 880px) {
+        .main {
+          grid-template-columns: 1fr;
+        }
+        .ticket-wrap {
+          order: -1;
+        }
+        .ticket {
+          max-height: 340px;
+        }
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      .product:focus-visible {
+        outline: 2.5px solid var(--blue-500);
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <div class="brand-mark">AE</div>
+        <div>
+          <div class="brand-text">Abarrotes La Esquina</div>
+          <div class="brand-sub">Punto de venta</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="shift-pill">
+          <span class="dot"></span>
+          Cajera: Ana &nbsp;·&nbsp; 10:32 am
+        </div>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="catalog">
+        <div class="search-row">
+          <div class="search-box">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Buscar producto o escanear código..."
+            />
+          </div>
+          <button class="scan-btn">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"
+              />
+              <line x1="7" y1="12" x2="17" y2="12" />
+            </svg>
+            Escanear
+          </button>
+        </div>
+
+        <div class="chip-row">
+          <div class="chip active">Todos</div>
+          <div class="chip">Bebidas</div>
+          <div class="chip">Abarrotes</div>
+          <div class="chip">Lácteos</div>
+          <div class="chip">Panadería</div>
+          <div class="chip">Limpieza</div>
+          <div class="chip">Granel</div>
+        </div>
+
+        <div class="stock-alert">
+          ⚠️
+          <span
+            ><strong>3 productos</strong> con stock bajo — Huevo, Tortilla,
+            Leche Lala 1L</span
+          >
+        </div>
+
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <div class="ticket-wrap">
+        <div class="ticket">
+          <div class="ticket-head">
+            <div class="ticket-head-top">
+              <span class="ticket-title">Ticket actual</span>
+              <span class="ticket-num">#0451</span>
+            </div>
+            <div class="ticket-sub" id="itemCount">0 productos</div>
+          </div>
+          <div class="perforation">
+            <span></span><span></span><span></span><span></span><span></span
+            ><span></span><span></span><span></span><span></span><span></span
+            ><span></span><span></span><span></span><span></span>
+          </div>
+
+          <div class="ticket-items" id="ticketItems">
+            <div class="ticket-empty">
+              Toca un producto para agregarlo<br />al ticket
+            </div>
+          </div>
+
+          <div class="ticket-totals">
+            <div class="totals-row">
+              <span>Subtotal</span><span id="subtotal">$0.00</span>
+            </div>
+            <div class="totals-row">
+              <span>Descuento</span><span id="descuento">-$0.00</span>
+            </div>
+            <div class="totals-row grand">
+              <span class="label">Total</span><span id="total">$0.00</span>
+            </div>
+          </div>
+
+          <div class="ticket-actions">
+            <div class="pay-methods">
+              <div class="pay-btn selected" data-pay="efectivo">
+                💵 Efectivo
+              </div>
+              <div class="pay-btn" data-pay="tarjeta">💳 Tarjeta</div>
+              <div class="pay-btn" data-pay="fiado">📓 Fiado</div>
+            </div>
+            <button class="checkout-btn" id="checkoutBtn" disabled>
+              Cobrar $0.00
+            </button>
+          </div>
+        </div>
+        <div class="zigzag"></div>
+      </div>
+    </div>
+
+    <script>
+      const products = [
+        { name: 'Coca-Cola 600ml', meta: 'Bebidas', price: 15.0, icon: '🥤' },
+        { name: 'Bimbo Grande', meta: 'Panadería', price: 42.5, icon: '🍞' },
+        {
+          name: 'Huevo (kg)',
+          meta: 'Granel · bajo stock',
+          price: 38.0,
+          icon: '🥚',
+          low: true,
+        },
+        { name: 'Frijol Negro (kg)', meta: 'Granel', price: 28.0, icon: '🫘' },
+        {
+          name: 'Leche Lala 1L',
+          meta: 'Lácteos · bajo stock',
+          price: 26.0,
+          icon: '🥛',
+          low: true,
+        },
+        { name: 'Sabritas Original', meta: 'Botanas', price: 18.0, icon: '🥔' },
+        { name: 'Jabón Zote', meta: 'Limpieza', price: 22.0, icon: '🧼' },
+        { name: 'Arroz Morelos (kg)', meta: 'Granel', price: 24.5, icon: '🍚' },
+        {
+          name: 'Tortilla (kg)',
+          meta: 'Panadería · bajo stock',
+          price: 20.0,
+          icon: '🫓',
+          low: true,
+        },
+        {
+          name: 'Refresco Manzana 2L',
+          meta: 'Bebidas',
+          price: 32.0,
+          icon: '🍏',
+        },
+        { name: 'Detergente Ariel', meta: 'Limpieza', price: 45.0, icon: '🧺' },
+        { name: 'Café Legal 100g', meta: 'Abarrotes', price: 34.0, icon: '☕' },
+      ];
+
+      const grid = document.getElementById('grid');
+      const ticketItems = document.getElementById('ticketItems');
+      const cart = [];
+
+      function fmt(n) {
+        return '$' + n.toFixed(2);
+      }
+
+      function renderProducts() {
+        grid.innerHTML = '';
+        products.forEach((p, i) => {
+          const el = document.createElement('button');
+          el.className = 'product';
+          el.innerHTML = `
+        ${p.low ? '<span class="badge-low">BAJO</span>' : ''}
+        <div class="product-icon">${p.icon}</div>
+        <div class="product-name">${p.name}</div>
+        <div class="product-meta">${p.meta}</div>
+        <div class="product-price">${fmt(p.price)}</div>
+      `;
+          el.addEventListener('click', () => addToCart(i));
+          grid.appendChild(el);
+        });
+      }
+
+      function addToCart(index) {
+        const p = products[index];
+        const existing = cart.find((c) => c.index === index);
+        if (existing) {
+          existing.qty++;
+        } else {
+          cart.push({ index, qty: 1, ...p });
+        }
+        renderTicket();
+      }
+
+      function removeFromCart(index) {
+        const i = cart.findIndex((c) => c.index === index);
+        if (i > -1) cart.splice(i, 1);
+        renderTicket();
+      }
+
+      function renderTicket() {
+        document.getElementById('itemCount').textContent =
+          cart.reduce((a, c) => a + c.qty, 0) +
+          (cart.length === 1 && cart[0].qty === 1 ? ' producto' : ' productos');
+
+        if (cart.length === 0) {
+          ticketItems.innerHTML =
+            '<div class="ticket-empty">Toca un producto para agregarlo<br>al ticket</div>';
+        } else {
+          ticketItems.innerHTML = cart
+            .map(
+              (c) => `
+        <div class="ticket-item">
+          <div class="item-left">
+            <span class="item-name">${c.name}</span>
+            <span class="item-qty">${c.qty} x ${fmt(c.price)}</span>
+          </div>
+          <span class="item-price">${fmt(c.qty * c.price)}</span>
+          <button class="item-remove" onclick="removeFromCart(${c.index})">✕</button>
+        </div>
+      `,
+            )
+            .join('');
+        }
+
+        const subtotal = cart.reduce((a, c) => a + c.qty * c.price, 0);
+        document.getElementById('subtotal').textContent = fmt(subtotal);
+        document.getElementById('descuento').textContent = '-' + fmt(0);
+        document.getElementById('total').textContent = fmt(subtotal);
+
+        const btn = document.getElementById('checkoutBtn');
+        btn.textContent = 'Cobrar ' + fmt(subtotal);
+        btn.disabled = subtotal === 0;
+      }
+
+      document.querySelectorAll('.pay-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document
+            .querySelectorAll('.pay-btn')
+            .forEach((b) => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          const label =
+            btn.dataset.pay === 'fiado' ? 'Registrar fiado' : 'Cobrar';
+          const total = document.getElementById('total').textContent;
+          const checkoutBtn = document.getElementById('checkoutBtn');
+          checkoutBtn.textContent = cart.length
+            ? `${label} ${total}`
+            : `${label} $0.00`;
+        });
+      });
+
+      document.getElementById('checkoutBtn').addEventListener('click', () => {
+        if (cart.length === 0) return;
+        alert('Venta registrada ✅');
+        cart.length = 0;
+        renderTicket();
+      });
+
+      document.querySelectorAll('.chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          document
+            .querySelectorAll('.chip')
+            .forEach((c) => c.classList.remove('active'));
+          chip.classList.add('active');
+        });
+      });
+
+      renderProducts();
+    </script>
+  </body>
+</html>

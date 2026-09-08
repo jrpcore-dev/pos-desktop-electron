@@ -1,0 +1,577 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter-800.woff2") format("woff2");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter-900.woff2") format("woff2");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+
+/* ─── Tailwind v4 theme: shadcn tokens (paleta azul/slate del sistema) ─── */
+@theme inline {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
+
+--color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-field: hsl(var(--field));
+  --color-ring: hsl(var(--ring));
+
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  --color-brand: hsl(var(--brand));
+
+  --color-category-1: hsl(var(--category-1));
+  --color-category-2: hsl(var(--category-2));
+  --color-category-3: hsl(var(--category-3));
+  --color-category-4: hsl(var(--category-4));
+  --color-category-5: hsl(var(--category-5));
+  --color-category-6: hsl(var(--category-6));
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --background: 210 40% 98%;
+  --foreground: 222 47% 11%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+
+  --primary: 222 47% 11%;
+  --primary-foreground: 210 40% 98%;
+
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+
+  --accent: 210 40% 96%;
+  --accent-foreground: 222 47% 11%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 160 84% 39%;
+  --success-foreground: 0 0% 100%;
+
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 100%;
+
+  --info: 199 89% 48%;
+  --info-foreground: 0 0% 100%;
+
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --field: 0 0% 100%;
+  --ring: 222 47% 11%;
+
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --brand: 215.43 60% 34.31%;
+
+  --sky: 198.63 88.66% 48.43%;
+  --slate-800: 217.24 32.58% 17.45%;
+
+  --category-1: 217.22 91.22% 59.8%;
+  --category-2: 160.12 84.08% 39.41%;
+  --category-3: 37.69 92.13% 50.2%;
+  --category-4: 0 84.24% 60.2%;
+  --category-5: 258.31 89.53% 66.27%;
+  --category-6: 330.37 81.19% 60.39%;
+
+  --chart-1: 217 91% 60%;
+  --chart-2: 160 84% 39%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
+
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: 226 44% 7%;
+  --foreground: 210 40% 98%;
+
+  --card: 222 24% 12%;
+  --card-foreground: 210 40% 98%;
+
+  --popover: 222 24% 12%;
+  --popover-foreground: 210 40% 98%;
+
+  --primary: 218 55% 58%;
+  --primary-foreground: 222 47% 10%;
+
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+
+  --accent: 217 33% 17%;
+  --accent-foreground: 210 40% 98%;
+
+  --destructive: 0 72% 45%;
+  --destructive-foreground: 0 0% 98%;
+
+  --success: 160 70% 45%;
+  --success-foreground: 0 0% 98%;
+
+  --warning: 45 93% 47%;
+  --warning-foreground: 0 0% 98%;
+
+  --info: 200 93% 52%;
+  --info-foreground: 0 0% 98%;
+
+  --border: 217 33% 20%;
+  --input: 217 33% 20%;
+  --field: 226 45% 4%;
+  --ring: 218 55% 58%;
+
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --brand: 215.43 60% 34.31%;
+
+  --sky: 198.63 88.66% 48.43%;
+  --slate-800: 217.24 32.58% 17.45%;
+
+  --category-1: 217.22 91.22% 59.8%;
+  --category-2: 160.12 84.08% 39.41%;
+  --category-3: 37.69 92.13% 50.2%;
+  --category-4: 0 84.24% 60.2%;
+  --category-5: 258.31 89.53% 66.27%;
+  --category-6: 330.37 81.19% 60.39%;
+
+  --chart-1: 217 91% 65%;
+  --chart-2: 160 70% 45%;
+  --chart-3: 38 92% 55%;
+  --chart-4: 280 65% 65%;
+  --chart-5: 340 75% 60%;
+}
+
+* { box-sizing: border-box; }
+html { height: 100%; }
+
+/* Reemplaza el reset de borde de preflight (omitido a propósito para no
+   romper MUI): los bordes sin color explícito usan el token de shadcn. */
+@layer base {
+  *, ::before, ::after {
+    border-color: hsl(var(--border));
+  }
+
+  /* Cursor pointer por defecto en elementos interactivos (Tailwind v4
+     preflight usa `cursor: default` en botones/selects). */
+  button, [role="button"], select, [data-slot="select-trigger"],
+  [role="option"], label, summary, [role="switch"], [role="checkbox"],
+  [role="radio"], [role="tab"], [role="menuitem"], .cursor-pointer {
+    cursor: pointer;
+  }
+
+  /* Cursor bloqueado (not-allowed) en elementos nativos deshabilitados.
+     Se usa !important para ganar sobre las reglas de cursor:pointer/placeholder,
+     y pointer-events se conserva para permitir el feedback visual del cursor.
+     No se incluye [data-disabled] (lo usa cmdk y heredaría not-allowed a items
+     que no están deshabilitados). */
+  button:disabled, select:disabled, input:disabled, textarea:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed !important;
+  }
+}
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+#root {
+  height: 100%;
+  min-height: 100vh;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.3);
+  color: hsl(var(--foreground));
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(59, 130, 246, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
+}
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes enterTransition {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-enter {
+  animation: enterTransition 180ms ease-out forwards;
+  will-change: opacity, transform;
+}
+
+/* ─── Micro-animaciones del carrito (SÓLO GPU: transform3d + opacity) ─── */
+@keyframes cart-item-in {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.98); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes cart-item-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to   { opacity: 0; transform: translate3d(-12px, 0, 0) scale(0.96); }
+}
+@keyframes cart-qty-pop {
+  0%   { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+@keyframes cart-total-pop {
+  0%   { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+@keyframes cart-row-flash {
+  0%   { background-color: hsl(var(--primary) / 0.18); }
+  100% { background-color: transparent; }
+}
+.cart-item-in   { animation: cart-item-in 180ms ease-out both; will-change: opacity, transform; }
+.cart-item-out  { animation: cart-item-out 150ms ease-in forwards; will-change: opacity, transform; }
+.cart-qty-pop   { animation: cart-qty-pop 100ms ease-out; will-change: transform; }
+.cart-total-pop { animation: cart-total-pop 140ms ease-out; will-change: transform; }
+.cart-row-flash { animation: cart-row-flash 500ms ease-out; }
+
+/* ─── Dialog: fade puro de opacidad (sin tocar transform para no romper
+   el centrado translate(-50%,-50%)) ─── */
+@keyframes dialog-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes dialog-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+[data-state="open"].dialog-content {
+  animation: dialog-fade-in 120ms ease-out forwards;
+  will-change: opacity;
+}
+[data-state="closed"].dialog-content {
+  animation: dialog-fade-out 100ms ease-in forwards;
+  will-change: opacity;
+}
+
+/* El SetupWizard maneja su propio fade (entrada/salida) para poder hacer
+   cross-fade con el POS; hay que anular la animación de entrada del Dialog
+   (fill-mode forwards bloquearía el opacity del fade-out). */
+.setup-wizard-dialog[data-state="open"],
+.setup-wizard-dialog[data-state="closed"] {
+  animation: none !important;
+}
+
+/* ─── Sheet (lado derecho explícito) ─── */
+@keyframes sheet-overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sheet-overlay-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes sheet-right-enter {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes sheet-right-exit {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+
+/* Selectores directos en Radix — evita utilidades Tailwind inestables */
+[data-state="open"].sheet-overlay {
+  animation: sheet-overlay-fade-in 150ms ease-out forwards;
+}
+[data-state="closed"].sheet-overlay {
+  animation: sheet-overlay-fade-out 120ms ease-in forwards;
+}
+[data-state="open"].sheet-content-right {
+  animation: sheet-right-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform;
+}
+[data-state="closed"].sheet-content-right {
+  animation: sheet-right-exit 150ms ease-in forwards;
+  will-change: transform;
+}
+
+/* ─── View Transitions API: cross-fade Dark/Light sin tocar cada nodo ─── */
+@keyframes vt-fade-out {
+  to { opacity: 0; }
+}
+@keyframes vt-fade-in {
+  from { opacity: 0; }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
+}
+::view-transition-old(root) {
+  animation-name: vt-fade-out;
+}
+::view-transition-new(root) {
+  animation-name: vt-fade-in;
+}
+
+.fade-in { animation: fadeIn 0.5s ease-out; }
+.slide-in { animation: slideIn 0.4s ease-out; }
+.slide-up { animation: slideUp 0.5s ease-out; }
+.scale-in { animation: scaleIn 0.3s ease-out; }
+.pulse { animation: pulse 2s infinite; }
+.shake { animation: shake 0.3s ease; }
+.glow { animation: glow 2s infinite; }
+.fade-in-up { animation: fadeInUp 0.4s ease-out; }
+.fade-in-scale { animation: fadeInScale 0.3s ease-out; }
+
+.stagger-1 { animation: slideUp 0.5s ease-out 0.05s both; }
+.stagger-2 { animation: slideUp 0.5s ease-out 0.1s both; }
+.stagger-3 { animation: slideUp 0.5s ease-out 0.15s both; }
+.stagger-4 { animation: slideUp 0.5s ease-out 0.2s both; }
+.stagger-5 { animation: slideUp 0.5s ease-out 0.25s both; }
+.stagger-6 { animation: slideUp 0.5s ease-out 0.3s both; }
+
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body { background: white !important; color: black !important; }
+  .no-print { display: none !important; }
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Setup Wizard: checkmark de éxito (SÓLO transform + opacity = GPU) ─── */
+@keyframes setup-check-scale {
+  0% { transform: scale(0) rotate(-30deg); opacity: 0; }
+  60% { transform: scale(1.2) rotate(3deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.setup-check-scale {
+  animation: setup-check-scale 0.5s ease-out both;
+  will-change: transform, opacity;
+}
+
+/* ─── Setup Wizard: engrane "Configurando..." girando con rebote (SÓLO transform = GPU) ─── */
+@keyframes setup-gear {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(90deg) scale(1.12); }
+  50% { transform: rotate(180deg) scale(1); }
+  75% { transform: rotate(270deg) scale(1.12); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+.animate-setup-gear {
+  animation: setup-gear 1s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* ─── Scrollbar con color primary (claro y oscuro) ─── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--primary) / 0.6) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.45);
+  border-radius: 9999px;
+  border: 2px solid hsl(var(--background));
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.75);
+}
+
+/* Ocultar/adelgazar scrollbar en tiras de tabs (CartTabs) */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── Toasts (sonner v2): fuente Inter + renderizado ─── */
+[data-sonner-toaster] {
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif !important;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Toasts (sonner v2): aceleración GPU de enter/exit ─── */
+[data-sonner-toast] {
+  transition:
+    transform 0.2s ease-out,
+    opacity 0.2s ease-out !important;
+  will-change: transform, opacity;
+}
+
+/* ─── Accesibilidad: apagar animaciones/transiciones con movimiento reducido ─── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  [data-sonner-toast] {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.text-display {
+  font-family: var(--font-display);
+  font-weight: 900;
+}
