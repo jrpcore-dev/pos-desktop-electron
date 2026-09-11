@@ -11,7 +11,7 @@ module.exports = {
     asar: true,
     executableName: "Vendia",
     icon: "./build/Icon.ico",
-    extraResource: ["./build/Icon.ico", "./bd sku.xlsx"],
+    extraResource: ["./build/Icon.ico", "./bd sku.xlsx", "./app-update.yml"],
   },
   rebuildConfig: {},
   makers: [

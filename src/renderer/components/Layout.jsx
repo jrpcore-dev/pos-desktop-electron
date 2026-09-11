@@ -748,7 +748,7 @@ const Layout = () => {
                             isActive
                               ? "bg-gradient-to-r from-primary/10 to-primary/5 font-semibold text-foreground"
                               : "text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10",
-                            !isActive && item.path === "/" && "bg-primary/[0.04] font-semibold",
+                            !isActive && item.path === "/" && "bg-primary/[0.08] font-semibold",
                             !expanded && "w-full justify-center px-0",
                           )}
                         >

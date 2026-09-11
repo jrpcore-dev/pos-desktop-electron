@@ -26,10 +26,14 @@ const UpdateButton = () => {
         lastVersion.current = payload.version;
       }
       if (payload.status === "error") {
-        toast("No se pudo descargar la actualización", {
-          description: payload.message || "Inténtalo más tarde",
-        });
-        setState({ status: "available", version: lastVersion.current });
+        if (lastVersion.current) {
+          toast("No se pudo descargar la actualización", {
+            description: payload.message || "Inténtalo más tarde",
+          });
+          setState({ status: "available", version: lastVersion.current });
+        } else {
+          setState(null);
+        }
         return;
       }
       setState(payload.status === "idle" ? null : payload);

@@ -1,0 +1,4 @@
+provider: github
+owner: jrpcore-dev
+repo: pos-desktop-electron
+updaterCacheDirName: vendia-updater

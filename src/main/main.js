@@ -539,6 +539,7 @@ let tray = null;
 
 // ─── AUTO-UPDATER (GitHub Releases) ─────────────────────────────────────────
 let updateState = null;
+let updateDownloading = false;
 
 const sendUpdateStatus = (payload) => {
   updateState = payload;
@@ -569,10 +570,17 @@ const setupAutoUpdater = () => {
     }
   });
   autoUpdater.on("error", (err) => {
-    sendUpdateStatus({
-      status: "error",
-      message: err && err.message ? err.message : String(err),
-    });
+    const message = err && err.message ? err.message : String(err);
+    if (!updateDownloading) {
+      // Error de check (repo/release no disponible, red, etc.): no hay
+      // actualización real -> ocultar el botón en vez de mostrarlo.
+      if (updateState && updateState.status !== "idle") {
+        sendUpdateStatus({ status: "idle" });
+      }
+      return;
+    }
+    updateDownloading = false;
+    sendUpdateStatus({ status: "error", message });
   });
 
   const check = () => {
@@ -592,14 +600,17 @@ ipcMain.handle("update:download", async () => {
     return { success: false, error: "No disponible en desarrollo" };
   }
   try {
+    updateDownloading = true;
     await autoUpdater.downloadUpdate();
+    updateDownloading = false;
     return { success: true };
   } catch (err) {
-    sendUpdateStatus({
-      status: "error",
-      message: err && err.message ? err.message : String(err),
-    });
-    return { success: false, error: err && err.message ? err.message : String(err) };
+    updateDownloading = false;
+    const message = err && err.message ? err.message : String(err);
+    if (!updateState || updateState.status !== "error") {
+      sendUpdateStatus({ status: "error", message });
+    }
+    return { success: false, error: message };
   }
 });
 
