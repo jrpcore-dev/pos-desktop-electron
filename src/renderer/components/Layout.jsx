@@ -260,6 +260,7 @@ const Layout = () => {
   const [scaleNote, setScaleNote] = useState("");
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [todayTasksCount, setTodayTasksCount] = useState(0);
+  const [lowStockCount, setLowStockCount] = useState(0);
   const [reminderDialog, setReminderDialog] = useState({
     open: false,
     task: null,
@@ -481,6 +482,27 @@ const Layout = () => {
       if (unsubReminder) unsubReminder();
     };
   }, []);
+
+  useEffect(() => {
+    const loadLowStock = async () => {
+      if (!isVisibleRef.current) return;
+      try {
+        const res = await window.api.invoke("get-low-stock-count");
+        setLowStockCount(res.count || 0);
+      } catch {}
+    };
+    loadLowStock();
+    const interval = setInterval(loadLowStock, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (location.pathname === "/inventory") {
+      window.api.invoke("get-low-stock-count").then((res) => {
+        if (res && res.success) setLowStockCount(res.count || 0);
+      });
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -712,6 +734,7 @@ const Layout = () => {
               <div className="flex flex-col gap-0.5">
                 {section.items.map((item) => {
                   const isActive = location.pathname === item.path;
+                  const inventoryAlert = item.path === "/inventory" && lowStockCount > 0;
                   return (
                     <ShadcnTooltip key={item.text}>
                       <TooltipTrigger asChild>
@@ -741,19 +764,37 @@ const Layout = () => {
                               isActive
                                 ? "text-primary"
                                 : "text-muted-foreground group-hover:text-foreground",
+                              item.path === "/inventory" && "relative",
                             )}
                           >
                             {item.icon}
+                            {inventoryAlert && (
+                              <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.6rem] font-bold text-white">
+                                {lowStockCount > 99 ? "99+" : lowStockCount}
+                              </span>
+                            )}
                           </span>
                           {expanded && (
                             <span className="truncate">{item.text}</span>
                           )}
                         </RouterLink>
                       </TooltipTrigger>
-                      {!expanded && (
-                        <TooltipContent side="right" sideOffset={8}>
-                          {item.text}
+                      {inventoryAlert ? (
+                        <TooltipContent
+                          side={expanded ? "bottom" : "right"}
+                          sideOffset={expanded ? 4 : 8}
+                        >
+                          {lowStockCount > 99
+                            ? "Más de 99 productos"
+                            : `${lowStockCount} producto(s)`}{" "}
+                          con stock bajo
                         </TooltipContent>
+                      ) : (
+                        !expanded && (
+                          <TooltipContent side="right" sideOffset={8}>
+                            {item.text}
+                          </TooltipContent>
+                        )
                       )}
                     </ShadcnTooltip>
                   );

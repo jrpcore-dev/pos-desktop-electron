@@ -1304,6 +1304,19 @@ ipcMain.handle("get-top-products", async () => {
 
 // ─── CATEGORIES ─────────────────────────────────────────────
 
+ipcMain.handle("get-low-stock-count", async () => {
+  try {
+    const { count } = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM products WHERE is_active = 1 AND stock <= COALESCE(min_stock, 5)",
+      )
+      .get();
+    return { success: true, count };
+  } catch (error) {
+    return { success: false, error: error.message, count: 0 };
+  }
+});
+
 ipcMain.handle("get-categories", async () => {
   return db
     .prepare(
