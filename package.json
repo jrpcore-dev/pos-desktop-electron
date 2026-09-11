@@ -1,7 +1,7 @@
 {
   "name": "my-pos-system",
   "productName": "Vendia",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Punto de venta Vendia: ventas, inventario, devoluciones, reportes, impresión de tickets y cajón de dinero.",
   "author": {
     "name": "JRP Core",
