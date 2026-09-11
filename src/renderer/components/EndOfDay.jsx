@@ -1013,7 +1013,7 @@ const EndOfDay = () => {
         <div class="footer">
           Generado el
           ${formatMXDateTime(now)}
-          — JRP POS
+          — Vendia
         </div>
 
       </body>
@@ -1291,7 +1291,7 @@ const EndOfDay = () => {
 
     doc.setFont(undefined, "bold");
 
-    doc.text("JRP POS", pageW - margin, yy, {
+    doc.text("Vendia", pageW - margin, yy, {
       align: "right",
     });
 

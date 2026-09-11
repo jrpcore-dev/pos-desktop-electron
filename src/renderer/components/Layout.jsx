@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarDays,
   ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   DatabaseBackup,
   Landmark,
@@ -44,6 +45,7 @@ import { useCashier } from "../contexts/CashierContext";
 import { useThemeMode } from "../contexts/ThemeContext";
 import { formatMXTime } from "../utils/dateUtils";
 import CancelButton from "./CancelButton";
+import UpdateButton from "./UpdateButton";
 import {
   Tooltip as ShadcnTooltip,
   TooltipContent,
@@ -81,6 +83,22 @@ const ROUTE_PRELOADERS = {
 
 const drawerWidth = 288;
 const miniDrawerWidth = 72;
+
+const PAGE_META = {
+  "/": { title: "Terminal de Venta", crumb: "Punto de venta" },
+  "/end-of-day": { title: "Corte de Caja", crumb: "Punto de venta" },
+  "/register-history": { title: "Turnos y Cortes", crumb: "Punto de venta" },
+  "/transacciones": { title: "Transacciones", crumb: "Punto de venta" },
+  "/inventory": { title: "Productos", crumb: "Inventario" },
+  "/stock-movements": { title: "Movimientos", crumb: "Inventario" },
+  "/categories": { title: "Categorías", crumb: "Inventario" },
+  "/suppliers": { title: "Proveedores", crumb: "Inventario" },
+  "/catalog-reference": { title: "Catálogo de referencia", crumb: "Inventario" },
+  "/reports": { title: "Reportes", crumb: "Administración" },
+  "/cashiers": { title: "Cajeros", crumb: "Administración" },
+  "/backup": { title: "Respaldo", crumb: "Administración" },
+  "/configuration": { title: "Configuración", crumb: "Administración" },
+};
 
 /* ────────────────────────────────────────────────────────────
    Primitivas de UI (reemplazan a MUI). Usan las variables del
@@ -702,11 +720,12 @@ const Layout = () => {
                           onMouseEnter={() => ROUTE_PRELOADERS[item.path]?.()}
                           onFocus={() => ROUTE_PRELOADERS[item.path]?.()}
                           className={cn(
-                            "group relative flex h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm font-medium transition-all duration-200 outline-none",
+                            "group relative flex h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm font-medium transition-all duration-200 outline-none hover:shadow-sm",
                             "active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                             isActive
                               ? "bg-gradient-to-r from-primary/10 to-primary/5 font-semibold text-foreground"
                               : "text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10",
+                            !isActive && item.path === "/" && "bg-primary/[0.04] font-semibold",
                             !expanded && "w-full justify-center px-0",
                           )}
                         >
@@ -752,7 +771,7 @@ const Layout = () => {
               <button
                 onClick={() => navigate("/configuration")}
                 className={cn(
-                  "group flex h-11 cursor-pointer items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200 outline-none",
+                  "group flex h-11 cursor-pointer items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200 outline-none hover:shadow-sm",
                   "hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                   "text-muted-foreground hover:text-foreground",
                   expanded ? "w-full px-3" : "w-full justify-center px-0",
@@ -876,17 +895,42 @@ const Layout = () => {
         </aside>
 
         {/* ─── NAVBAR: full-width, el nombre se corre según el ancho del sidebar ─── */}
-        <header
-          className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary pr-3 shadow-sm sm:pr-5"
+<header
+          className="sticky top-0 z-30 grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b border-border bg-secondary shadow-sm"
           style={{
+            WebkitAppRegion: "drag",
             paddingLeft: (drawerOpen ? drawerWidth : miniDrawerWidth) + 12,
+            paddingRight:
+              "max(0.75rem, calc(100vw - env(titlebar-area-x) - env(titlebar-area-width)))",
           }}
         >
-          <span className="truncate text-sm font-bold tracking-wide text-foreground">
-            {storeName}
-          </span>
-          <span className="flex-1" />
-          <div className="flex items-center gap-1">
+          {/* Breadcrumb + título de sección */}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="hidden shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground/80 sm:flex">
+              {PAGE_META[location.pathname]?.crumb || "Inicio"}
+              <ChevronRight
+                size={13}
+                className="text-muted-foreground/40"
+              />
+            </span>
+            <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
+              {PAGE_META[location.pathname]?.title || "Vendia"}
+            </span>
+          </div>
+
+          {/* Centro: nombre de la tienda */}
+          <div className="mx-2 flex min-w-0 items-center justify-center">
+            <span className="truncate text-sm font-bold uppercase tracking-wide text-foreground">
+              {storeName}
+            </span>
+          </div>
+
+          {/* Derecha: estado del sistema + hora */}
+          <div
+            className="flex items-center justify-end gap-1"
+            style={{ WebkitAppRegion: "no-drag" }}
+          >
+            <UpdateButton />
             <ShadcnTooltip>
               <TooltipTrigger asChild>
                 <button

@@ -272,12 +272,18 @@ const ProductRow = React.memo(
     );
     const lowStock = product.stock <= (product.min_stock || 5);
     const doubleLow = product.stock <= (product.min_stock || 5) * 2;
-    const progressPct = Math.min(
-      (product.startOfDay || 0) > 0
-        ? (product.stock / product.startOfDay) * 100
-        : 100,
-      100,
-    );
+    const hasDayRef = (product.startOfDay || 0) > 0;
+    const hasMinRef = (product.min_stock || 0) > 0;
+    const progressPct = hasDayRef
+      ? Math.min(Math.max((product.stock / product.startOfDay) * 100, 0), 100)
+      : hasMinRef
+        ? Math.min(Math.max((product.stock / product.min_stock) * 100, 0), 100)
+        : 0;
+    const barTip = hasDayRef
+      ? `${Math.round(progressPct)}% del stock inicial (${fmtStockNumber(product, product.stock)} de ${fmtStockNumber(product, product.startOfDay)} ${stockUnitCompact(product)})`
+      : hasMinRef
+        ? `${Math.round(progressPct)}% de la meta mínima (${fmtStockNumber(product, product.stock)} / mín ${fmtStockNumber(product, product.min_stock)} ${stockUnitCompact(product)})`
+        : "Sin referencia de stock hoy";
     return (
       <STableRow
         data-filtered={dataFiltered ? "true" : "false"}
@@ -382,7 +388,7 @@ const ProductRow = React.memo(
         </STableCell>
         <STableCell className="min-w-[150px] px-4 text-center">
           <span className="text-sm text-foreground">
-            {Number.isFinite(product.startOfDay)
+            {(product.startOfDay || 0) > 0
               ? `${fmtStockNumber(product, product.stock)} / ${fmtStockNumber(product, product.startOfDay)}`
               : fmtStockNumber(product, product.stock)}{" "}
             <span className="font-normal text-muted-foreground">
@@ -403,19 +409,24 @@ const ProductRow = React.memo(
               )}
             </div>
           )}
-          <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className={cn(
-                "h-full rounded-full transition-all",
-                lowStock
-                  ? "bg-red-500"
-                  : doubleLow
-                    ? "bg-amber-500"
-                    : "bg-primary",
-              )}
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
+          <STooltip>
+            <STooltipTrigger asChild>
+              <div className="mx-auto mt-1 h-2 w-[84%] overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    lowStock
+                      ? "bg-red-500"
+                      : doubleLow
+                        ? "bg-amber-500"
+                        : "bg-primary",
+                  )}
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+            </STooltipTrigger>
+            <STooltipContent>{barTip}</STooltipContent>
+          </STooltip>
         </STableCell>
         <STableCell className="px-4 text-center">
           <StatusBadge label={stockStatus.label} color={stockStatus.color} />

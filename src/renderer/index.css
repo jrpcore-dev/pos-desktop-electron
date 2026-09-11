@@ -315,14 +315,6 @@ body {
   25% { transform: translateX(-4px); }
   75% { transform: translateX(4px); }
 }
-@keyframes glow {
-  0%, 100% { box-shadow: 0 0 8px rgba(59, 130, 246, 0.2); }
-  50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
-}
-@keyframes shimmer {
-  0% { background-position: -200px 0; }
-  100% { background-position: calc(200px + 100%) 0; }
-}
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
@@ -439,7 +431,7 @@ body {
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 180ms;
-  animation-timing-function: ease-out;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 ::view-transition-old(root) {
   animation-name: vt-fade-out;
@@ -448,13 +440,28 @@ body {
   animation-name: vt-fade-in;
 }
 
+/* ─── View Transitions API: navegación entre rutas ─── */
+@keyframes nav-exit {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes nav-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+:root[data-animating="true"]::view-transition-old(root) {
+  animation: nav-exit 200ms ease-out forwards;
+}
+:root[data-animating="true"]::view-transition-new(root) {
+  animation: nav-enter 200ms ease-out forwards;
+}
+
 .fade-in { animation: fadeIn 0.5s ease-out; }
 .slide-in { animation: slideIn 0.4s ease-out; }
 .slide-up { animation: slideUp 0.5s ease-out; }
 .scale-in { animation: scaleIn 0.3s ease-out; }
 .pulse { animation: pulse 2s infinite; }
 .shake { animation: shake 0.3s ease; }
-.glow { animation: glow 2s infinite; }
 .fade-in-up { animation: fadeInUp 0.4s ease-out; }
 .fade-in-scale { animation: fadeInScale 0.3s ease-out; }
 
@@ -555,6 +562,11 @@ body {
 }
 
 /* ─── Accesibilidad: apagar animaciones/transiciones con movimiento reducido ─── */
+html.theme-switching * {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,
@@ -574,4 +586,53 @@ body {
 .text-display {
   font-family: var(--font-display);
   font-weight: 900;
+}
+
+/* ─── Spinner contextual: impresora de ticket ─── */
+.ticket-print {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 165px;
+}
+
+.ticket-window {
+  position: relative;
+  width: 138px;
+  height: 84px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  mask-image: linear-gradient(to bottom, transparent, black 16%, black 84%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 16%, black 84%, transparent);
+}
+.ticket-track {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 11px;
+  animation: ticket-feed 1.4s linear infinite;
+  will-change: transform;
+}
+.ticket-line {
+  display: block;
+  height: 5px;
+  border-radius: 9999px;
+  background: hsl(var(--border));
+}
+.ticket-line--short { width: 46%; }
+.ticket-line--med   { width: 68%; }
+.ticket-line--full  { width: 100%; }
+.ticket-line--total {
+  height: 6px;
+  margin-top: 2px;
+  background: linear-gradient(90deg, hsl(var(--brand)), hsl(var(--brand) / 0.6));
+}
+
+@keyframes ticket-feed {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
 }

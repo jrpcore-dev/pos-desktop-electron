@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 
-const TOP_LEVEL = ["better-sqlite3", "express", "electron-squirrel-startup", "xlsx"];
+const TOP_LEVEL = ["better-sqlite3", "express", "xlsx"];
 
 function findPackageDir(name, fromDir) {
   let dir = fromDir;

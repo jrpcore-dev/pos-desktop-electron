@@ -1,23 +1,21 @@
 const { FusesPlugin } = require("@electron-forge/plugin-fuses");
 const { FuseV1Options, FuseVersion } = require("@electron/fuses");
 const { VitePlugin } = require("@electron-forge/plugin-vite");
-const { AutoUnpackNativesPlugin } = require("@electron-forge/plugin-auto-unpack-natives");
+const {
+  AutoUnpackNativesPlugin,
+} = require("@electron-forge/plugin-auto-unpack-natives");
+const NsisMaker = require("./scripts/nsis-maker");
 
 module.exports = {
   packagerConfig: {
     asar: true,
+    executableName: "Vendia",
     icon: "./build/Icon.ico",
     extraResource: ["./build/Icon.ico", "./bd sku.xlsx"],
   },
   rebuildConfig: {},
   makers: [
-    {
-      name: "@electron-forge/maker-squirrel",
-      config: {
-        name: "JRP_POS",
-        setupIcon: "./build/Icon.ico",
-      },
-    },
+    new NsisMaker(),
     {
       name: "@electron-forge/maker-zip",
       platforms: ["darwin"],
@@ -29,6 +27,17 @@ module.exports = {
     {
       name: "@electron-forge/maker-rpm",
       config: {},
+    },
+  ],
+  publishers: [
+    {
+      name: "@electron-forge/publisher-github",
+      config: {
+        repository: {
+          owner: "jrpcore-dev",
+          name: "pos-desktop-electron",
+        },
+      },
     },
   ],
   plugins: [

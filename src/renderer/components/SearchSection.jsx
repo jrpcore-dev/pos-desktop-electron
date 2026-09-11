@@ -70,13 +70,15 @@ const SearchSection =
                 </div>
                 <style>{`
                   .scan-bar {
+                    left: 0;
                     background: linear-gradient(90deg, transparent, hsl(var(--primary)), transparent);
                     animation: scanMove 2s ease-in-out infinite;
+                    will-change: transform;
                   }
                   @keyframes scanMove {
-                    0% { left: -30%; }
-                    50% { left: 100%; }
-                    100% { left: -30%; }
+                    0% { transform: translateX(-100%); }
+                    50% { transform: translateX(250%); }
+                    100% { transform: translateX(-100%); }
                   }
                 `}</style>
                 <p className="mt-2 text-xs font-medium text-muted-foreground">

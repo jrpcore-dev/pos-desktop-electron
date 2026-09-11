@@ -1001,7 +1001,7 @@ const Reports = () => {
     doc.setTextColor(150);
     doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, yy);
     doc.setFont(undefined, "bold");
-    doc.text("JRP POS", pageW - margin, yy, { align: "right" });
+    doc.text("Vendia", pageW - margin, yy, { align: "right" });
 
     doc.save(`reporte-analitico-${startDate}-a-${endDate}.pdf`);
   };
@@ -1063,7 +1063,7 @@ const Reports = () => {
       </table>
       ${productRows ? `<div class="section-title">Productos más vendidos</div>
       <table><tr><th>Producto</th><th>Unidades</th></tr>${productRows}</table>` : ""}
-      <div class="footer">Generado el ${new Date().toLocaleString("es-MX")} — JRP POS</div>
+      <div class="footer">Generado el ${new Date().toLocaleString("es-MX")} - Vendia</div>
     </body></html>`);
     win.document.close();
     win.print();

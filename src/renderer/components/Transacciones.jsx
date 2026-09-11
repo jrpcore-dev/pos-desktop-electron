@@ -354,7 +354,7 @@ const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledS
   doc.setTextColor(150);
   doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, doc.internal.pageSize.getHeight() - 12);
   doc.setFont(undefined, "bold");
-  doc.text("JRP POS", pageW - margin, doc.internal.pageSize.getHeight() - 12, { align: "right" });
+  doc.text("Vendia", pageW - margin, doc.internal.pageSize.getHeight() - 12, { align: "right" });
 
   doc.save(`transacciones-${dateRange.from}-a-${dateRange.to}.pdf`);
 };
@@ -422,7 +422,7 @@ const printReport = async (sales, expenses, byMethod, total, totalExpenses, coun
     ${expensesHtml}
     <tr class="total-row"><td colspan="3">TOTAL EGRESOS</td><td align="right">-$${totalExpenses.toFixed(2)}</td></tr>
     </table>
-    <div class="footer">Generado el ${new Date().toLocaleString("es-MX")} — JRP POS</div>
+    <div class="footer">Generado el ${new Date().toLocaleString("es-MX")} - Vendia</div>
   </body></html>`);
   win.document.close();
   win.print();

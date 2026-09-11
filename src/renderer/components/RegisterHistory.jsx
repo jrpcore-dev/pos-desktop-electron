@@ -879,7 +879,9 @@ const RegisterHistory = () => {
                             "ID",
                             "Método",
                             "Monto",
-                            ...(isAdmin ? ["Acción"] : []),
+                            ...(isAdmin || detail.sales.some((s) => s.can_cancel)
+                              ? ["Acción"]
+                              : []),
                           ].map((h) => (
                             <ShTableHead
                               key={h}
@@ -928,7 +930,7 @@ const RegisterHistory = () => {
                                   ${(s.status === "cancelado" ? 0 : s.total).toFixed(2)}
                                 </span>
                               </ShTableCell>
-                              {isAdmin && (
+                              {(isAdmin || s.can_cancel) && (
                                 <ShTableCell className="px-4 py-2.5 text-center">
                                   {s.status !== "cancelado" && (
                                     <CancelButton
@@ -951,7 +953,12 @@ const RegisterHistory = () => {
                         {detail.sales.length === 0 && (
                           <ShTableRow>
                             <ShTableCell
-                              colSpan={isAdmin ? 5 : 4}
+                              colSpan={
+                                isAdmin ||
+                                detail.sales.some((s) => s.can_cancel)
+                                  ? 5
+                                  : 4
+                              }
                               className="px-4 py-6 text-center text-sm text-muted-foreground"
                             >
                               Sin ingresos
@@ -977,7 +984,9 @@ const RegisterHistory = () => {
                             "ID",
                             "Motivo",
                             "Monto",
-                            ...(isAdmin ? ["Acción"] : []),
+                            ...(isAdmin || detail.expenses.some((e) => e.can_cancel)
+                              ? ["Acción"]
+                              : []),
                           ].map((h) => (
                             <ShTableHead
                               key={h}
@@ -1023,7 +1032,7 @@ const RegisterHistory = () => {
                                   -${(e.status === "cancelado" ? 0 : e.amount).toFixed(2)}
                                 </span>
                               </ShTableCell>
-                              {isAdmin && (
+                              {(isAdmin || e.can_cancel) && (
                                 <ShTableCell className="px-4 py-2.5 text-center">
                                   {e.status !== "cancelado" && (
                                     <CancelButton
@@ -1048,7 +1057,12 @@ const RegisterHistory = () => {
                         {detail.expenses.length === 0 && (
                           <ShTableRow>
                             <ShTableCell
-                              colSpan={isAdmin ? 5 : 4}
+                              colSpan={
+                                isAdmin ||
+                                detail.expenses.some((e) => e.can_cancel)
+                                  ? 5
+                                  : 4
+                              }
                               className="px-4 py-6 text-center text-sm text-muted-foreground"
                             >
                               Sin egresos

@@ -3,6 +3,7 @@ import { Flame, PackagePlus, Smartphone, Plus, X } from "lucide-react";
 
 import { Skeleton } from "./ui/skeleton";
 import { Input } from "./ui/input";
+import { Kbd } from "./ui/kbd";
 import {
   Dialog,
   DialogPortal,
@@ -51,6 +52,7 @@ const QuickProductsGrid = React.memo(
     const [pickerOpen, setPickerOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [results, setResults] = useState([]);
+    const [pickerIdx, setPickerIdx] = useState(-1);
 
     const addFavorite = (id) => {
       if (favorites.includes(id)) return;
@@ -60,6 +62,7 @@ const QuickProductsGrid = React.memo(
       setPickerOpen(false);
       setQuery("");
       setResults([]);
+      setPickerIdx(-1);
     };
 
     const removeFavorite = (e, id) => {
@@ -104,6 +107,24 @@ const QuickProductsGrid = React.memo(
       })();
       return () => { cancelled = true; };
     }, [pickerOpen, query]);
+
+    const handlePickerKeyDown = (e) => {
+      if (results.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopPropagation();
+        setPickerIdx((p) => (p < results.length - 1 ? p + 1 : 0));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        setPickerIdx((p) => (p > 0 ? p - 1 : results.length - 1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (pickerIdx >= 0) addFavorite(results[pickerIdx].id);
+        else if (results.length > 0) addFavorite(results[0].id);
+      }
+    };
 
     return (
       <div className="flex flex-col items-center px-4 pb-2 pt-1">
@@ -155,9 +176,10 @@ const QuickProductsGrid = React.memo(
                 <div key={p.id} onClick={() => onAddProduct(p)}
                   className="group relative flex h-[5.5rem] w-full cursor-pointer select-none flex-col items-start justify-between gap-1.5 overflow-hidden rounded-xl border border-border bg-background/60 p-2.5 text-left shadow-md transition-all duration-150 hover:border-primary/60 hover:bg-primary/5 hover:shadow-lg active:scale-95">
                   <button type="button" onClick={(e) => removeFavorite(e, p.id)}
+                    onPointerDown={(e) => e.stopPropagation()}
                     title="Quitar de accesos rápidos"
-                    className="absolute right-1.5 top-1.5 z-30 inline-flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-all duration-150 group-hover:opacity-100 hover:border-destructive hover:bg-destructive/15 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <X size={11} />
+                    className="absolute right-1 top-1 z-30 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground opacity-60 transition-all duration-150 hover:opacity-100 hover:border-destructive hover:bg-destructive/15 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <X size={14} />
                   </button>
                   <span className="flex w-full min-w-0 items-center gap-1.5 pr-5">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -193,16 +215,31 @@ const QuickProductsGrid = React.memo(
               <DialogHeader>
                 <DialogTitle>Fijar a accesos rápidos</DialogTitle>
               </DialogHeader>
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar producto…" autoFocus />
+              <Input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setPickerIdx(-1);
+                }}
+                onKeyDown={handlePickerKeyDown}
+                placeholder="Buscar producto…"
+                autoFocus
+              />
               <div className="max-h-72 overflow-y-auto divide-y">
                 {query.trim().length < 1 ? (
                   <p className="px-3 py-4 text-xs text-muted-foreground">Escribí para buscar productos.</p>
                 ) : results.length === 0 ? (
                   <p className="px-3 py-4 text-xs text-muted-foreground">Sin resultados.</p>
                 ) : (
-                  results.map((p) => (
+                  results.map((p, index) => (
                     <button key={p.id} type="button" onClick={() => addFavorite(p.id)}
-                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted">
+                      onMouseEnter={() => setPickerIdx(index)}
+                      className={cn(
+                        "flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors",
+                        index === pickerIdx
+                          ? "bg-primary/10 text-foreground"
+                          : "hover:bg-muted"
+                      )}>
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         <PackagePlus size={15} />
                       </span>
@@ -212,6 +249,11 @@ const QuickProductsGrid = React.memo(
                   ))
                 )}
               </div>
+              {results.length > 0 && (
+                <p className="pt-2 text-center text-[0.68rem] font-medium text-muted-foreground">
+                  <Kbd>↑↓</Kbd> navega · <Kbd>Enter</Kbd> fija
+                </p>
+              )}
             </DialogContent>
           </DialogPortal>
         </Dialog>

@@ -3,6 +3,7 @@ import { DollarSign, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Kbd } from "./ui/kbd";
 import {
   Dialog,
   DialogContent,
@@ -38,10 +39,15 @@ const FastCashDialog = ({
   const chips = useMemo(() => buildChips(total || 0), [total]);
   const isPositive = change >= 0;
   const [confirming, setConfirming] = useState(false);
+  const [chipFocus, setChipFocus] = useState(-1);
 
   useEffect(() => {
     setConfirming(false);
   }, [open]);
+
+  useEffect(() => {
+    setChipFocus((f) => (f >= chips.length ? chips.length - 1 : f));
+  }, [chips]);
 
   useEffect(() => {
     if (open && !waitingDrawer) {
@@ -62,6 +68,20 @@ const FastCashDialog = ({
       } else if (cashAmount && isPositive) {
         onConfirm();
       }
+      return;
+    }
+    if (waitingDrawer || chips.length === 0) return;
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const c = 2;
+      let n = chipFocus < 0 ? 0 : chipFocus;
+      if (e.key === "ArrowRight") n = n % c === 0 && n + 1 < chips.length ? n + 1 : n;
+      else if (e.key === "ArrowLeft") n = n % c !== 0 ? n - 1 : n;
+      else if (e.key === "ArrowDown") n = Math.min(chips.length - 1, n + c);
+      else if (e.key === "ArrowUp") n = Math.max(0, n - c);
+      setChipFocus(n);
+      onCashAmountChange(String(chips[n]));
     }
   };
 
@@ -96,22 +116,30 @@ const FastCashDialog = ({
           </p>
 
           {!waitingDrawer && (
-            <div className="grid grid-cols-2 gap-2">
-              {chips.map((v, i) => (
+            <div className="flex flex-col gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                {chips.map((v, i) => (
                 <Button
                   key={i}
                   type="button"
                   variant="outline"
-                  onClick={() => onCashAmountChange(String(v))}
+                  onClick={() => {
+                    setChipFocus(i);
+                    onCashAmountChange(String(v));
+                  }}
                   className={cn(
-                    "h-11 text-[15px] font-bold tabular-nums transition-all",
-                    parseFloat(cashAmount) === v &&
+                    "h-11 gap-1.5 text-[15px] font-bold tabular-nums transition-all",
+                    (parseFloat(cashAmount) === v || chipFocus === i) &&
                       "border-success bg-success/10 text-success ring-1 ring-success"
                   )}
                 >
                   {i === 0 ? "Monto Exacto" : `$${v.toLocaleString("es-MX")}`}
                 </Button>
               ))}
+            </div>
+            <p className="text-center text-[0.68rem] font-medium text-muted-foreground">
+              <Kbd>↑↓←→</Kbd> eligen · <Kbd>Enter</Kbd> confirma
+            </p>
             </div>
           )}
 

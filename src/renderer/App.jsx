@@ -57,9 +57,14 @@ const AppInner = () => {
     toggleMode: () => {
       const flip = () => {
         const next = mode === "dark" ? "light" : "dark";
+        const root = document.documentElement;
         try { localStorage.setItem("themeMode", next); } catch {}
+        root.classList.add("theme-switching");
         applyModeClass(next);
         flushSync(() => setMode(next));
+        requestAnimationFrame(() => {
+          root.classList.remove("theme-switching");
+        });
       };
       if (typeof document.startViewTransition === "function") {
         document.startViewTransition(() => flip());
@@ -74,6 +79,14 @@ const AppInner = () => {
     const root = document.documentElement;
     if (mode === "dark") root.classList.add("dark");
     else root.classList.remove("dark");
+  }, [mode]);
+
+  // Sincroniza con el titleBarOverlay del proceso principal (color del navbar)
+  // en el arranque y en cada cambio de tema, sin reiniciar la app.
+  useEffect(() => {
+    try {
+      window.api?.setTitlebarTheme(mode);
+    } catch {}
   }, [mode]);
 
   useEffect(() => {
@@ -92,18 +105,9 @@ const AppInner = () => {
     };
     checkFirstTime();
     const handleCtrlN = () => setShowAddProduct(true);
-    const handlePreviewShortcut = (e) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === "W" || e.key === "w")) {
-        e.preventDefault();
-        setSetupPreview(true);
-        setShowSetup(true);
-      }
-    };
     window.addEventListener("ctrl-n", handleCtrlN);
-    window.addEventListener("keydown", handlePreviewShortcut);
     return () => {
       window.removeEventListener("ctrl-n", handleCtrlN);
-      window.removeEventListener("keydown", handlePreviewShortcut);
     };
   }, []);
 
@@ -138,10 +142,10 @@ const AppInner = () => {
   };
 
   const loadingScreen = (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <Spinner size={40} className="mb-2 text-primary" />
-        <p className="text-sm text-muted-foreground">Cargando...</p>
+    <div className="fixed inset-0 z-[9999] flex h-full w-full items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-3 text-center">
+        <Spinner size={40} className="text-brand" />
+        <p className="text-sm font-medium text-muted-foreground">Cargando...</p>
       </div>
     </div>
   );

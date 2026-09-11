@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
@@ -58,8 +58,6 @@ const CartItem = React.memo(
     onRemove,
     onDiscount,
   }) => {
-    const [leaving, setLeaving] = useState(false);
-
     const promo = promoInfo(item, item.quantity).applied;
     const fp = lineUnitPrice(item, item.quantity);
     const unitBadge = unitBadgeLabel(item);
@@ -89,17 +87,11 @@ const CartItem = React.memo(
           ? "/ paquete"
           : "c/u";
 
-    const handleRemoveClick = () => {
-      setLeaving(true);
-      setTimeout(() => onRemove(item), 150);
-    };
-
     return (
       <div
         onClick={() => onSelect(index)}
         className={cn(
           "cart-item-in mb-1 min-h-[66px] cursor-pointer rounded-xl border p-2 transition-colors duration-150",
-          leaving && "cart-item-out pointer-events-none",
           isSelected
             ? "border-primary bg-primary/10"
             : "border-border bg-primary/[0.04] hover:bg-primary/10",
@@ -164,7 +156,10 @@ const CartItem = React.memo(
             variant="ghost"
             size="icon-sm"
             aria-label="Eliminar producto"
-            onClick={handleRemoveClick}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(item);
+            }}
             className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 [&_svg]:!size-[16px]"
           >
             <Trash2 size={16} />
@@ -179,7 +174,10 @@ const CartItem = React.memo(
                 variant="ghost"
                 size="icon"
                 aria-label="Eliminar"
-                onClick={handleRemoveClick}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(item);
+                }}
                 className="h-[38px] w-[38px] rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
               >
                 <Trash2 size={18} />

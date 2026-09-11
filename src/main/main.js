@@ -8,14 +8,62 @@ const {
   Menu,
   nativeImage,
 } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
+
+const legacyUserData = path.join(app.getPath("appData"), "JRP POS");
+const overrideUserData = process.env.VENDIA_USERDATA;
+if (overrideUserData) {
+  app.setPath("userData", overrideUserData);
+} else if (fs.existsSync(legacyUserData)) {
+  app.setPath("userData", legacyUserData);
+}
+
+app.setAppUserModelId("com.vendia.desktop");
 
 const dbDir = path.join(app.getPath("userData"), "db");
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
+
+const logDir = path.join(app.getPath("userData"), "logs");
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+const errorLogPath = path.join(logDir, "vendia-error.log");
+
+const appendErrorLog = (entry) => {
+  try {
+    if (
+      fs.existsSync(errorLogPath) &&
+      fs.statSync(errorLogPath).size > 5 * 1024 * 1024
+    ) {
+      const old = path.join(logDir, "vendia-error.old.log");
+      if (fs.existsSync(old)) fs.unlinkSync(old);
+      fs.renameSync(errorLogPath, old);
+    }
+    fs.appendFileSync(errorLogPath, entry);
+  } catch (e) {}
+};
+
+process.on("uncaughtException", (err) => {
+  appendErrorLog(
+    `[${new Date().toISOString()}] uncaughtException\n${err && err.stack ? err.stack : String(err)}\n---\n`,
+  );
+});
+process.on("unhandledRejection", (reason) => {
+  appendErrorLog(
+    `[${new Date().toISOString()}] unhandledRejection\n${reason instanceof Error ? reason.stack : String(reason)}\n---\n`,
+  );
+});
+
+ipcMain.handle("log-error", (e, payload) => {
+  appendErrorLog(
+    `[${new Date().toISOString()}] renderer\n${String(payload)}\n---\n`,
+  );
+});
 
 const dbPath = path.join(dbDir, "pos-system.db");
 let db = new Database(dbPath);
@@ -103,7 +151,7 @@ const createTables = () => {
   db.exec(`CREATE TABLE IF NOT EXISTS stock_movements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL REFERENCES products(id),
-    type TEXT NOT NULL CHECK(type IN ('in','out','adjust')),
+    type TEXT NOT NULL CHECK(type IN ('in','out','adjust','devolution')),
     quantity INTEGER NOT NULL,
     reference TEXT DEFAULT '',
     notes TEXT DEFAULT '',
@@ -323,6 +371,55 @@ const runMigrations = () => {
     );
   }
 
+  // Migration: add 'devolution' type to stock_movements (las cancelaciones y
+  // devoluciones de venta no deben contarse como entradas/compra de stock,
+  // así que se separan de 'in' con un tipo propio)
+  try {
+    const smSql = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_movements'",
+      )
+      .get();
+    if (smSql && !/devolution/.test(smSql.sql)) {
+      db.pragma("foreign_keys = OFF");
+      db.exec(`
+        CREATE TABLE stock_movements_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_id INTEGER NOT NULL REFERENCES products(id),
+          type TEXT NOT NULL CHECK(type IN ('in','out','adjust','devolution')),
+          quantity INTEGER NOT NULL,
+          reference TEXT DEFAULT '',
+          notes TEXT DEFAULT '',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          cost REAL DEFAULT 0,
+          cashier_id INTEGER,
+          supplier_id INTEGER
+        )
+      `);
+      db.exec(
+        `INSERT INTO stock_movements_v2 (id, product_id, type, quantity, reference, notes, created_at, cost, cashier_id, supplier_id)
+         SELECT id, product_id, type, quantity, reference, notes, created_at, cost, cashier_id, supplier_id FROM stock_movements`,
+      );
+      db.exec(`DROP TABLE stock_movements`);
+      db.exec(`ALTER TABLE stock_movements_v2 RENAME TO stock_movements`);
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)`,
+      );
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at)`,
+      );
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_stock_movements_cashier_created ON stock_movements(cashier_id, created_at)`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      "No se pudo migrar stock_movements (tipo devolution):",
+      err.message,
+    );
+  }
+
   // Migration: add box fields to products
   ensureColumn("products", "box_qty", "INTEGER DEFAULT 0");
   ensureColumn("products", "box_price", "REAL DEFAULT 0");
@@ -427,10 +524,6 @@ const runMigrations = () => {
 
 runMigrations();
 
-if (require("electron-squirrel-startup")) {
-  app.quit();
-}
-
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -443,6 +536,82 @@ const discovery = require("./discovery");
 let mainWin = null;
 let isQuitting = false;
 let tray = null;
+
+// ─── AUTO-UPDATER (GitHub Releases) ─────────────────────────────────────────
+let updateState = null;
+
+const sendUpdateStatus = (payload) => {
+  updateState = payload;
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.webContents.send("update:status", payload);
+  }
+};
+
+const setupAutoUpdater = () => {
+  autoUpdater.autoDownload = false; // Solo descarga si el usuario hace clic
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("update-available", (info) => {
+    sendUpdateStatus({ status: "available", version: info && info.version });
+  });
+  autoUpdater.on("download-progress", (p) => {
+    sendUpdateStatus({
+      status: "downloading",
+      percent: p && p.percent != null ? Math.round(p.percent) : 0,
+    });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    sendUpdateStatus({ status: "downloaded", version: info && info.version });
+  });
+  autoUpdater.on("update-not-available", () => {
+    if (updateState && updateState.status !== "idle") {
+      sendUpdateStatus({ status: "idle" });
+    }
+  });
+  autoUpdater.on("error", (err) => {
+    sendUpdateStatus({
+      status: "error",
+      message: err && err.message ? err.message : String(err),
+    });
+  });
+
+  const check = () => {
+    if (!app.isPackaged) return;
+    if (updateState && updateState.status === "downloaded") return;
+    autoUpdater.checkForUpdates().catch(() => {});
+  };
+
+  if (app.isPackaged) {
+    setTimeout(check, 8000);
+    setInterval(check, 4 * 60 * 60 * 1000);
+  }
+};
+
+ipcMain.handle("update:download", async () => {
+  if (!app.isPackaged) {
+    return { success: false, error: "No disponible en desarrollo" };
+  }
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err) {
+    sendUpdateStatus({
+      status: "error",
+      message: err && err.message ? err.message : String(err),
+    });
+    return { success: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle("update:install", () => {
+  if (updateState && updateState.status === "downloaded") {
+    autoUpdater.quitAndInstall();
+    return { success: true };
+  }
+  return { success: false, error: "No hay actualización descargada" };
+});
+
+ipcMain.handle("update:get-state", () => updateState || { status: "idle" });
 
 const createTray = () => {
   try {
@@ -491,17 +660,35 @@ const createTray = () => {
   }
 };
 
+// Debe coincidir con --secondary y --secondary-foreground en src/renderer/index.css
+// (modo claro = :root, modo oscuro = .dark). Si alguien cambia esos tokens de
+// diseño, debe actualizar también estos valores.
+const TITLEBAR_COLORS = {
+  light: { color: "#f1f5f9", symbolColor: "#0f1729" },
+  dark: { color: "#1d283a", symbolColor: "#f8fafc" },
+};
+const TITLEBAR_HEIGHT = 56; // Altura de la barra nativa = h-14 del navbar (Layout.jsx)
+
+ipcMain.on("set-titlebar-theme", (event, mode) => {
+  if (!mainWin || mainWin.isDestroyed()) return;
+  const colors = TITLEBAR_COLORS[mode === "dark" ? "dark" : "light"];
+  mainWin.setTitleBarOverlay({ ...colors, height: TITLEBAR_HEIGHT });
+});
+
 const createMainWindow = () => {
   mainWin = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 1024,
     minHeight: 700,
-    title: "Sistema Ventas - POS",
+    titleBarStyle: "hidden",
+    titleBarOverlay: { ...TITLEBAR_COLORS.light, height: TITLEBAR_HEIGHT },
+    title: "Vendia",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -533,7 +720,9 @@ const createMainWindow = () => {
 
 app.on("ready", () => {
   // Sin menú de aplicación: evita recargas accidentales (Ctrl+R) y devtools
+  Menu.setApplicationMenu(null);
   migrateLegacyBackups();
+  migrateRegisterContinuity();
   maybeRunAutoBackup();
   setInterval(maybeRunAutoBackup, 6 * 60 * 60 * 1000);
 
@@ -541,6 +730,7 @@ app.on("ready", () => {
 
   createMainWindow();
   createTray();
+  setupAutoUpdater();
 
   // Pre-compila el worker del cajón en segundo plano para que la primera
   // apertura también sea rápida (no bloquea el arranque).
@@ -636,16 +826,21 @@ app.on("second-instance", () => {
 // ─── PRODUCTS ───────────────────────────────────────────────
 
 const savePrices = (productId, prices) => {
-  db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(productId);
-  const stmt = db.prepare(
-    "INSERT INTO product_prices (product_id, type, qty, price) VALUES (?, ?, ?, ?)",
-  );
-  for (const p of prices || []) {
-    const type = p.type === "mayoreo" ? "mayoreo" : "combo";
-    const qty = Math.max(1, parseInt(p.qty) || 1);
-    const price = parseFloat(p.price) || 0;
-    if (qty > 0 && price > 0) stmt.run(productId, type, qty, price);
-  }
+  const txn = db.transaction(() => {
+    db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(
+      productId,
+    );
+    const stmt = db.prepare(
+      "INSERT INTO product_prices (product_id, type, qty, price) VALUES (?, ?, ?, ?)",
+    );
+    for (const p of prices || []) {
+      const type = p.type === "mayoreo" ? "mayoreo" : "combo";
+      const qty = Math.max(1, parseInt(p.qty) || 1);
+      const price = parseFloat(p.price) || 0;
+      if (qty > 0 && price > 0) stmt.run(productId, type, qty, price);
+    }
+  });
+  txn();
 };
 
 const attachPrices = (products) => {
@@ -693,20 +888,23 @@ const attachDaySummary = (products) => {
 
   const todayIn = {};
   const todayOut = {};
+  const todayDev = {};
   const todaySold = {};
   for (const r of movRows) {
     if (r.type === "in") todayIn[r.product_id] = r.qty || 0;
-    else todayOut[r.product_id] = r.qty || 0;
+    else if (r.type === "out") todayOut[r.product_id] = r.qty || 0;
+    else if (r.type === "devolution") todayDev[r.product_id] = r.qty || 0;
   }
   for (const r of saleRows) todaySold[r.product_id] = r.qty || 0;
 
   for (const p of products) {
     const ti = todayIn[p.id] || 0;
     const to = todayOut[p.id] || 0;
+    const td = todayDev[p.id] || 0;
     const ts = todaySold[p.id] || 0;
     p.todayIn = ti;
     p.todaySold = ts;
-    p.startOfDay = (p.stock || 0) - ti + to + ts;
+    p.startOfDay = (p.stock || 0) - ti - td + to + ts;
   }
   return products;
 };
@@ -1337,14 +1535,7 @@ ipcMain.handle(
       // Register the cost as an expense (even if no cash register is open)
       // unless the user opted to pay via "Retiro de Efectivo" (registerExpense=false).
       if (registerExpense !== false) {
-        const todayMX = new Date().toLocaleDateString("en-CA", {
-          timeZone: "America/Mexico_City",
-        });
-        const openReg = db
-          .prepare(
-            "SELECT id FROM cash_register WHERE date = ? AND status = 'open'",
-          )
-          .get(todayMX);
+        const openReg = findOpenRegister(cashierId, "cashier");
         if (roundedCost > 0) {
           if (openReg) {
             db.prepare(
@@ -1562,7 +1753,8 @@ ipcMain.handle("get-product-day-summary", async (event, { productId } = {}) => {
         t: m.created_at,
         type: m.type,
         qty: m.quantity,
-        delta: m.type === "in" ? m.quantity : -m.quantity,
+        delta:
+          m.type === "in" || m.type === "devolution" ? m.quantity : -m.quantity,
       });
     }
     for (const s of saleItems) {
@@ -1618,8 +1810,8 @@ ipcMain.handle("get-product-day-summary", async (event, { productId } = {}) => {
     // ── Acumulado de hoy para el badge ──
     const todayEvents = events.filter((e) => toMXL(e.t) === todayMX);
     const todayIn = todayEvents
-      .filter((e) => e.delta > 0)
-      .reduce((s, e) => s + e.delta, 0);
+      .filter((e) => e.type === "in")
+      .reduce((s, e) => s + e.qty, 0);
     const todayOut = todayEvents
       .filter((e) => e.delta < 0)
       .reduce((s, e) => s + e.delta, 0);
@@ -1666,15 +1858,7 @@ ipcMain.handle(
     { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role },
   ) => {
     const recordSale = db.transaction(() => {
-      // Link to open register if exists (use MX date for lookup)
-      const todayMX = new Date().toLocaleDateString("en-CA", {
-        timeZone: "America/Mexico_City",
-      });
-      const openReg = db
-        .prepare(
-          "SELECT id FROM cash_register WHERE date = ? AND status = 'open'",
-        )
-        .get(todayMX);
+      const openReg = findOpenRegister(cashierId, role);
       const registerId = openReg ? openReg.id : null;
 
       const saleStmt = db.prepare(
@@ -1752,26 +1936,19 @@ ipcMain.handle(
       if (sale.status === "cancelado")
         return { success: false, error: "Esta venta ya fue cancelada" };
 
-      const today = mxToday();
-      const saleDate = new Date(
-        sale.created_at.replace(" ", "T") + "Z",
-      ).toLocaleDateString("en-CA", {
-        timeZone: "America/Mexico_City",
-      });
-      if (saleDate !== today)
-        return { success: false, error: "Solo puedes cancelar ventas de hoy" };
-
       const reg = sale.register_id
         ? db
-            .prepare("SELECT date, status FROM cash_register WHERE id = ?")
+            .prepare("SELECT status, closed_at FROM cash_register WHERE id = ?")
             .get(sale.register_id)
         : null;
-      const openToday = reg && reg.status === "open" && reg.date === today;
-      if (!openToday && role !== "admin")
+      const canCancel =
+        role === "admin" ||
+        (reg && reg.status === "open") ||
+        (reg && reg.status === "closed" && isWithinCancelWindow(reg.closed_at));
+      if (!canCancel)
         return {
           success: false,
-          error:
-            "Solo el administrador puede cancelar ventas fuera de la caja abierta",
+          error: "No se puede cancelar esta venta fuera del plazo permitido",
         };
 
       const doCancel = db.transaction(() => {
@@ -1790,7 +1967,7 @@ ipcMain.handle(
           "UPDATE products SET stock = stock + ? WHERE id = ?",
         );
         const movStmt = db.prepare(
-          "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'in', ?, ?, ?, ?)",
+          "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
         );
         for (const it of items) {
           if (it.product_id && (it.stock_deducted || 0) > 0) {
@@ -1815,7 +1992,10 @@ ipcMain.handle(
 
 ipcMain.handle(
   "cancel-sale-item",
-  async (event, { saleId, itemId, cashierName, reason, role, cashierId, quantity }) => {
+  async (
+    event,
+    { saleId, itemId, cashierName, reason, role, cashierId, quantity },
+  ) => {
     try {
       if (!saleId || !itemId)
         return { success: false, error: "Datos inválidos" };
@@ -1831,25 +2011,19 @@ ipcMain.handle(
       if (item.status === "cancelado")
         return { success: false, error: "Este producto ya fue cancelado" };
 
-      const today = mxToday();
-      const saleDate = new Date(
-        sale.created_at.replace(" ", "T") + "Z",
-      ).toLocaleDateString("en-CA", {
-        timeZone: "America/Mexico_City",
-      });
-      if (saleDate !== today)
-        return { success: false, error: "Solo puedes cancelar ventas de hoy" };
-
       const reg = sale.register_id
         ? db
-            .prepare("SELECT date, status FROM cash_register WHERE id = ?")
+            .prepare("SELECT status, closed_at FROM cash_register WHERE id = ?")
             .get(sale.register_id)
         : null;
-      const openToday = reg && reg.status === "open" && reg.date === today;
-      if (!openToday && role !== "admin")
+      const canCancel =
+        role === "admin" ||
+        (reg && reg.status === "open") ||
+        (reg && reg.status === "closed" && isWithinCancelWindow(reg.closed_at));
+      if (!canCancel)
         return {
           success: false,
-          error: "Solo el administrador puede cancelar productos fuera de la caja abierta",
+          error: "No se puede cancelar este producto fuera del plazo permitido",
         };
 
       const itemQuantity = Number(item.quantity || 0);
@@ -1871,14 +2045,15 @@ ipcMain.handle(
       const unitPrice = Number(item.price_at_sale || 0);
       const discount = Number(item.discount_percent || 0);
       const refundAmount =
-        unitPrice * cancelQty * (1 - Math.min(100, Math.max(0, discount)) / 100);
+        unitPrice *
+        cancelQty *
+        (1 - Math.min(100, Math.max(0, discount)) / 100);
 
       const stockPerUnit =
         itemQuantity > 0
           ? (Number(item.stock_deducted || 0) || itemQuantity) / itemQuantity
           : 1;
-      const restoreStock =
-        Math.round(stockPerUnit * cancelQty * 1000) / 1000;
+      const restoreStock = Math.round(stockPerUnit * cancelQty * 1000) / 1000;
 
       let saleCancelled = false;
 
@@ -1899,7 +2074,7 @@ ipcMain.handle(
             item.product_id,
           );
           db.prepare(
-            "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'in', ?, ?, ?, ?)",
+            "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
           ).run(
             item.product_id,
             restoreStock,
@@ -1933,7 +2108,8 @@ ipcMain.handle(
         cancelledQty: cancelQty,
         isPartial,
         saleCancelled,
-        itemStatus: newReturned + 0.0001 >= itemQuantity ? "cancelado" : "parcial",
+        itemStatus:
+          newReturned + 0.0001 >= itemQuantity ? "cancelado" : "parcial",
       };
     } catch (error) {
       return { success: false, error: error.message };
@@ -1958,6 +2134,49 @@ function toUTCDateRange(mxDateStr) {
   return { start, end };
 }
 
+// ─── REGISTER HELPERS ──────────────────────────────────────
+function findOpenRegister(cashierId, role) {
+  if (role === "admin" || !cashierId) {
+    return (
+      db
+        .prepare(
+          "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+        )
+        .get() || null
+    );
+  }
+  return (
+    db
+      .prepare(
+        "SELECT * FROM cash_register WHERE status = 'open' AND cashier_id = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(cashierId) ||
+    db
+      .prepare(
+        "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+      )
+      .get() ||
+    null
+  );
+}
+
+function isWithinCancelWindow(closedAt) {
+  if (!closedAt) return false;
+  const closedDateStr = new Date(
+    new Date(closedAt.replace(" ", "T") + "Z").getTime() -
+      MX_UTC_OFFSET * 3600000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  const today = mxToday();
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterday = yesterdayDate.toLocaleDateString("en-CA", {
+    timeZone: "America/Mexico_City",
+  });
+  return closedDateStr >= yesterday;
+}
+
 ipcMain.handle(
   "get-sales-for-today",
   async (event, { date, registerId } = {}) => {
@@ -1968,15 +2187,29 @@ ipcMain.handle(
       if (registerId) {
         sales = db
           .prepare(
-            "SELECT * FROM sales WHERE created_at >= ? AND created_at < ? AND register_id = ? ORDER BY created_at DESC",
+            `SELECT s.*, 
+              CASE WHEN cr.status = 'open' THEN 1 
+                   WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
+                   ELSE 0 END as can_cancel
+            FROM sales s 
+            LEFT JOIN cash_register cr ON s.register_id = cr.id
+            WHERE s.created_at >= ? AND s.created_at < ? AND s.register_id = ?
+            ORDER BY s.created_at DESC`,
           )
-          .all(start, end, registerId);
+          .all(today, start, end, registerId);
       } else {
         sales = db
           .prepare(
-            "SELECT * FROM sales WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC",
+            `SELECT s.*, 
+              CASE WHEN cr.status = 'open' THEN 1 
+                   WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
+                   ELSE 0 END as can_cancel
+            FROM sales s 
+            LEFT JOIN cash_register cr ON s.register_id = cr.id
+            WHERE s.created_at >= ? AND s.created_at < ?
+            ORDER BY s.created_at DESC`,
           )
-          .all(start, end);
+          .all(today, start, end);
       }
       const itemRows = db
         .prepare(
@@ -2127,11 +2360,19 @@ ipcMain.handle("get-sale-details", async (event, saleId) => {
 ipcMain.handle("get-sales-by-date", async (event, { date }) => {
   try {
     const { start, end } = toUTCDateRange(date);
+    const today = mxToday();
     const sales = db
       .prepare(
-        "SELECT * FROM sales WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC",
+        `SELECT s.*,
+          CASE WHEN cr.status = 'open' THEN 1 
+               WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
+               ELSE 0 END as can_cancel
+        FROM sales s 
+        LEFT JOIN cash_register cr ON s.register_id = cr.id
+        WHERE s.created_at >= ? AND s.created_at < ?
+        ORDER BY s.created_at DESC`,
       )
-      .all(start, end);
+      .all(today, start, end);
     const total = db
       .prepare(
         "SELECT COALESCE(SUM(total),0) as total FROM sales WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')",
@@ -2345,32 +2586,25 @@ ipcMain.handle(
   "register-cash-expense",
   async (event, { amount, reason, cashierId, role }) => {
     try {
-      const today = mxToday();
-      let register;
-      if (role === "admin") {
-        register = db
-          .prepare(
-            "SELECT id, expenses FROM cash_register WHERE date = ? AND status = 'open'",
-          )
-          .get(today);
-      } else if (cashierId) {
-        register = db
-          .prepare(
-            "SELECT id, expenses FROM cash_register WHERE date = ? AND status = 'open' AND cashier_id = ?",
-          )
-          .get(today, cashierId);
-      }
+      const register = findOpenRegister(cashierId, role);
       if (!register)
-        return { success: false, error: "No hay caja abierta para ti hoy" };
+        return {
+          success: false,
+          error: "No hay caja abierta para registrar gasto",
+        };
 
-      const newExpenses = (register.expenses || 0) + amount;
-      db.prepare("UPDATE cash_register SET expenses = ? WHERE id = ?").run(
-        newExpenses,
-        register.id,
-      );
-      db.prepare(
-        "INSERT INTO cash_register_expenses (register_id, amount, reason) VALUES (?, ?, ?)",
-      ).run(register.id, amount, reason);
+      const registerExpense = db.transaction(() => {
+        const newExpenses = (register.expenses || 0) + amount;
+        db.prepare("UPDATE cash_register SET expenses = ? WHERE id = ?").run(
+          newExpenses,
+          register.id,
+        );
+        db.prepare(
+          "INSERT INTO cash_register_expenses (register_id, amount, reason) VALUES (?, ?, ?)",
+        ).run(register.id, amount, reason);
+        return newExpenses;
+      });
+      const newExpenses = registerExpense();
       return { success: true, expenses: newExpenses };
     } catch (error) {
       return { success: false, error: error.message };
@@ -2382,37 +2616,13 @@ ipcMain.handle(
   "get-cash-register-status",
   async (event, { cashierId, role } = {}) => {
     try {
-      const today = mxToday();
-      let register;
-      if (role === "admin") {
-        register = db
-          .prepare(
-            "SELECT * FROM cash_register WHERE date = ? AND status = 'open' ORDER BY id DESC LIMIT 1",
-          )
-          .get(today);
-      } else if (cashierId) {
-        register = db
-          .prepare(
-            "SELECT * FROM cash_register WHERE date = ? AND status = 'open' AND cashier_id = ? ORDER BY id DESC LIMIT 1",
-          )
-          .get(today, cashierId);
-      }
-      if (!register) {
-        // Si no hay caja abierta hoy (p.ej. se abrió anoche y cambió el día),
-        // recuperar la caja abierta más reciente de los últimos días para no
-        // perderla ni crear una duplicada.
-        register = db
-          .prepare(
-            "SELECT * FROM cash_register WHERE status = 'open' AND date >= date(?, '-3 days') ORDER BY id DESC LIMIT 1",
-          )
-          .get(today);
-      }
+      let register = findOpenRegister(cashierId, role);
       if (!register) {
         register = db
           .prepare(
             "SELECT * FROM cash_register WHERE date = ? ORDER BY id DESC LIMIT 1",
           )
-          .get(today);
+          .get(mxToday());
       }
       if (register) {
         const opener = db
@@ -2444,22 +2654,44 @@ ipcMain.handle(
   async (event, { openingBalance, cashierId, role }) => {
     try {
       const today = mxToday();
-      if (role === "admin") {
-        const existing = db
+      const openRegisters = db
+        .prepare(
+          "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id ASC",
+        )
+        .all();
+      for (const existing of openRegisters) {
+        // Auto-close the previous register before opening new one
+        const sales = db
           .prepare(
-            "SELECT id FROM cash_register WHERE date = ? AND status = 'open'",
+            "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
           )
-          .get(today);
-        if (existing)
-          return { success: false, error: "Ya hay una caja abierta hoy" };
-      } else if (cashierId) {
-        const existing = db
-          .prepare(
-            "SELECT id FROM cash_register WHERE date = ? AND status = 'open' AND cashier_id = ?",
-          )
-          .get(today, cashierId);
-        if (existing)
-          return { success: false, error: "Ya tienes una caja abierta" };
+          .all(existing.id);
+        const cashSales =
+          sales.find((s) => s.payment_method === "cash")?.total || 0;
+        const cardSales =
+          sales.find((s) => s.payment_method === "card")?.total || 0;
+        const transferSales =
+          sales.find((s) => s.payment_method === "transfer")?.total || 0;
+        const totalExpenses = existing.expenses || 0;
+        const expectedClose =
+          (existing.opening_balance || 0) + cashSales - totalExpenses;
+
+        db.prepare(
+          `UPDATE cash_register SET
+            cash_sales=?, card_sales=?, transfer_sales=?, expenses=?,
+            expected_close=?, declared_close=?, difference=?, name='Cierre automático', status='closed', closed_at=CURRENT_TIMESTAMP, closed_by=?
+            WHERE id=?`,
+        ).run(
+          cashSales,
+          cardSales,
+          transferSales,
+          totalExpenses,
+          expectedClose,
+          expectedClose,
+          0,
+          cashierId || null,
+          existing.id,
+        );
       }
 
       db.prepare(
@@ -2479,7 +2711,6 @@ ipcMain.handle(
     { declaredClose, expenses, name, cashierId, role, registerId, force },
   ) => {
     try {
-      const today = mxToday();
       let register;
       if (registerId) {
         register = db
@@ -2496,13 +2727,12 @@ ipcMain.handle(
             `SELECT cr.*, c.role AS opener_role
              FROM cash_register cr
              LEFT JOIN cashiers c ON cr.opened_by = c.id
-             WHERE cr.date = ? AND cr.status = 'open'
+             WHERE cr.status = 'open'
              ORDER BY cr.id DESC LIMIT 1`,
           )
-          .get(today);
+          .get();
       }
-      if (!register)
-        return { success: false, error: "No hay caja abierta hoy" };
+      if (!register) return { success: false, error: "No hay caja abierta" };
 
       const openerIsAdmin = register.opener_role === "admin";
       const isOwnRegister =
@@ -2597,21 +2827,7 @@ ipcMain.handle(
   "get-cash-register-expenses",
   async (event, { cashierId, role } = {}) => {
     try {
-      const today = mxToday();
-      let register;
-      if (role === "admin") {
-        register = db
-          .prepare(
-            "SELECT id FROM cash_register WHERE date = ? AND status = 'open'",
-          )
-          .get(today);
-      } else if (cashierId) {
-        register = db
-          .prepare(
-            "SELECT id FROM cash_register WHERE date = ? AND status = 'open' AND cashier_id = ?",
-          )
-          .get(today, cashierId);
-      }
+      const register = findOpenRegister(cashierId, role);
       if (!register) return { success: true, expenses: [] };
       const expenses = db
         .prepare(
@@ -2627,13 +2843,11 @@ ipcMain.handle(
 
 ipcMain.handle("get-previous-register-today", async () => {
   try {
-    const today = mxToday();
-    const { start, end } = toUTCDateRange(today);
     const register = db
       .prepare(
-        "SELECT * FROM cash_register WHERE status = 'closed' AND closed_at >= ? AND closed_at < ? ORDER BY closed_at DESC LIMIT 1",
+        "SELECT * FROM cash_register WHERE status = 'closed' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1",
       )
-      .get(start, end);
+      .get();
     return { success: true, register: register || null };
   } catch (error) {
     return { success: false, error: error.message };
@@ -2675,13 +2889,18 @@ ipcMain.handle(
           };
         }
       } else {
-        const expenseMXDate = new Date(
-          expense.created_at.replace(" ", "T") + "Z",
-        ).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
-        if (role !== "admin" || expenseMXDate !== mxToday()) {
+        // Closed register: only cancel within the 1-day window (admin always ok)
+        if (
+          role !== "admin" &&
+          !(
+            register &&
+            register.closed_at &&
+            isWithinCancelWindow(register.closed_at)
+          )
+        ) {
           return {
             success: false,
-            error: "Solo puedes cancelar gastos de la caja abierta",
+            error: "No puedes cancelar gastos fuera del plazo permitido",
           };
         }
       }
@@ -2743,9 +2962,17 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
 
     const sales = db
       .prepare(
-        "SELECT * FROM sales WHERE register_id = ? ORDER BY created_at DESC LIMIT 500",
+        `SELECT s.*,
+          CASE WHEN cr.status = 'open' THEN 1 
+               WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
+               ELSE 0 END as can_cancel
+        FROM sales s 
+        LEFT JOIN cash_register cr ON s.register_id = cr.id
+        WHERE s.register_id = ?
+        ORDER BY s.created_at DESC
+        LIMIT 500`,
       )
-      .all(registerId);
+      .all(mxToday(), registerId);
 
     const items = db
       .prepare(
@@ -2763,9 +2990,17 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
 
     const expenses = db
       .prepare(
-        "SELECT * FROM cash_register_expenses WHERE register_id = ? ORDER BY created_at DESC LIMIT 500",
+        `SELECT e.*,
+          CASE WHEN cr.status = 'open' THEN 1 
+               WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
+               ELSE 0 END as can_cancel
+        FROM cash_register_expenses e
+        LEFT JOIN cash_register cr ON e.register_id = cr.id
+        WHERE e.register_id = ?
+        ORDER BY e.created_at DESC
+        LIMIT 500`,
       )
-      .all(registerId);
+      .all(mxToday(), registerId);
 
     const totalSales = db
       .prepare(
@@ -2906,12 +3141,81 @@ const migrateLegacyBackups = () => {
   }
 };
 
+const migrateRegisterContinuity = () => {
+  try {
+    // 1) Close old open registers, keeping only the most recent one
+    const openRegs = db
+      .prepare(
+        "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id ASC",
+      )
+      .all();
+    for (let i = 0; i < openRegs.length - 1; i++) {
+      const reg = openRegs[i];
+      const sales = db
+        .prepare(
+          "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
+        )
+        .all(reg.id);
+      const cashSales =
+        sales.find((s) => s.payment_method === "cash")?.total || 0;
+      const cardSales =
+        sales.find((s) => s.payment_method === "card")?.total || 0;
+      const transferSales =
+        sales.find((s) => s.payment_method === "transfer")?.total || 0;
+      const totalExpenses = reg.expenses || 0;
+      const expectedClose =
+        (reg.opening_balance || 0) + cashSales - totalExpenses;
+
+      db.prepare(
+        `UPDATE cash_register SET
+          cash_sales=?, card_sales=?, transfer_sales=?, expenses=?,
+          expected_close=?, declared_close=?, difference=?, name='Cierre automático', status='closed', closed_at=CURRENT_TIMESTAMP
+          WHERE id=?`,
+      ).run(
+        cashSales,
+        cardSales,
+        transferSales,
+        totalExpenses,
+        expectedClose,
+        expectedClose,
+        0,
+        reg.id,
+      );
+    }
+
+    // 2) Attach orphan sales to the register matching their MX date
+    const orphans = db
+      .prepare("SELECT id, created_at FROM sales WHERE register_id IS NULL")
+      .all();
+    for (const sale of orphans) {
+      const mxDate = new Date(
+        sale.created_at.replace(" ", "T") + "Z",
+      ).toLocaleDateString("en-CA", {
+        timeZone: "America/Mexico_City",
+      });
+      const target = db
+        .prepare(
+          "SELECT id FROM cash_register WHERE date = ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(mxDate);
+      if (target) {
+        db.prepare("UPDATE sales SET register_id = ? WHERE id = ?").run(
+          target.id,
+          sale.id,
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Register continuity migration failed:", error.message);
+  }
+};
+
 ipcMain.handle("create-backup", async () => {
   try {
     const backupDir = getBackupDir();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const backupPath = path.join(backupDir, `pos-backup-${timestamp}.db`);
-    fs.copyFileSync(dbPath, backupPath);
+    await db.backup(backupPath);
     const stats = fs.statSync(backupPath);
     return {
       success: true,
@@ -2993,7 +3297,7 @@ ipcMain.handle("delete-backup", async (event, backupPath) => {
 const WEEKLY_BACKUP_RETAIN = 8;
 const isWeeklyBackup = (name) => /^pos-weekly-.*\.db$/.test(name);
 
-const maybeRunAutoBackup = () => {
+const maybeRunAutoBackup = async () => {
   try {
     const today = mxToday();
     const row = db
@@ -3008,7 +3312,7 @@ const maybeRunAutoBackup = () => {
       if (days >= 0 && days < 7) return;
     }
     const backupDir = getBackupDir();
-    fs.copyFileSync(dbPath, path.join(backupDir, `pos-weekly-${today}.db`));
+    await db.backup(path.join(backupDir, `pos-weekly-${today}.db`));
     db.prepare(
       "INSERT OR REPLACE INTO settings (key, value) VALUES ('auto_backup_last', ?)",
     ).run(today);
@@ -3854,7 +4158,9 @@ const seedCatalogIfEmpty = (force = false) => {
     const result = runCatalogImport(file);
     if (result.success) {
       console.log(
-        force ? "[catálogo] REIMPORTACIÓN forzada:" : "[catálogo] Carga automática:",
+        force
+          ? "[catálogo] REIMPORTACIÓN forzada:"
+          : "[catálogo] Carga automática:",
         `Nuevos: ${result.imported} · Vinculados: ${result.linked} · Actualizados: ${result.updatedRef} · Omitidos: ${result.skipped}`,
       );
       const total = db
@@ -4425,8 +4731,7 @@ ipcMain.handle("get-printers", async () => {
   try {
     const { BrowserWindow: BW } = require("electron");
     const window = BW.getFocusedWindow();
-    const printers =
-      (await window?.webContents.getPrintersAsync?.()) ?? [];
+    const printers = (await window?.webContents.getPrintersAsync?.()) ?? [];
     return printers.map((p) => ({
       name: p.name,
       displayName: p.displayName || p.name,
@@ -4456,6 +4761,9 @@ ipcMain.handle("print-receipt", async (event, htmlContent) => {
       width: 220,
       height: 700,
       backgroundColor: "#ffffff",
+      webPreferences: {
+        sandbox: true,
+      },
     });
 
     await printWin.loadURL(

@@ -2,13 +2,20 @@ import { useCallback, useRef, useState } from "react";
 
 let uid = 0;
 
-const createCart = (folio) => ({
-  id: ++uid,
-  folio,
-  items: [],
-  paymentMethod: "cash",
-  notes: "",
-});
+const createCart = (folio) => {
+  let last = "cash";
+  try {
+    const stored = localStorage.getItem("lastPaymentMethod");
+    if (["cash", "card", "transfer"].includes(stored)) last = stored;
+  } catch {}
+  return {
+    id: ++uid,
+    folio,
+    items: [],
+    paymentMethod: last,
+    notes: "",
+  };
+};
 
 /**
  * Gestión atómica y ligera de múltiples carritos (pestañas).

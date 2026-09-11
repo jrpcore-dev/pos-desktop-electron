@@ -1,8 +1,13 @@
 {
   "name": "my-pos-system",
-  "productName": "JRP POS",
-  "version": "1.0.1",
-  "description": "My Electron application description",
+  "productName": "Vendia",
+  "version": "2.0.0",
+  "description": "Punto de venta Vendia: ventas, inventario, devoluciones, reportes, impresión de tickets y cajón de dinero.",
+  "author": {
+    "name": "JRP Core",
+    "email": "contacto@jrpcore.dev"
+  },
+  "license": "UNLICENSED",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -12,11 +17,6 @@
     "lint": "echo \"No linting configured\""
   },
   "keywords": [],
-  "author": {
-    "name": "Jacob Puc",
-    "email": "jacobesa619@gmail.com"
-  },
-  "license": "MIT",
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
     "@radix-ui/react-avatar": "^1.2.6",
@@ -39,7 +39,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "dayjs": "^1.11.21",
-    "electron-squirrel-startup": "^1.0.1",
+    "electron-updater": "^6.8.9",
     "escpos": "^3.0.0-alpha.6",
     "escpos-usb": "^3.0.0-alpha.4",
     "express": "^5.2.1",
@@ -67,14 +67,15 @@
     "@electron-forge/cli": "^7.8.1",
     "@electron-forge/maker-deb": "^7.8.1",
     "@electron-forge/maker-rpm": "^7.8.1",
-    "@electron-forge/maker-squirrel": "^7.8.1",
     "@electron-forge/maker-zip": "^7.8.1",
     "@electron-forge/plugin-auto-unpack-natives": "^7.8.1",
     "@electron-forge/plugin-fuses": "^7.8.1",
     "@electron-forge/plugin-vite": "^7.8.3",
+    "@electron-forge/publisher-github": "^7.11.2",
     "@electron/fuses": "^1.8.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "37.2.0",
+    "electron-forge-maker-nsis": "^26.15.3",
     "vite": "^7.3.6"
   },
   "engines": {

@@ -162,8 +162,7 @@ const startServer = async (db, port = 3456) => {
     // Register cost as expense (even if no cash register is open)
     // unless the user opted to not deduct from the register (registerExpense=false).
     if (registerExpense !== false && totalCost > 0) {
-      const todayMX = new Date().toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
-      const openReg = db.prepare("SELECT id FROM cash_register WHERE date = ? AND status = 'open'").get(todayMX);
+      const openReg = db.prepare("SELECT id FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1").get();
       if (openReg) {
         db.prepare("UPDATE cash_register SET expenses = COALESCE(expenses, 0) + ? WHERE id = ?").run(totalCost, openReg.id);
       }

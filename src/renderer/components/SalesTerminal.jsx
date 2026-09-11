@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useCallback,
 } from "react";
+import { createPortal } from "react-dom";
 import { useCashier } from "../contexts/CashierContext";
 import {
   ShoppingCart,
@@ -93,6 +94,15 @@ const useIsDark = () => {
     return () => observer.disconnect();
   }, []);
   return isDark;
+};
+
+const lastSavedPaymentMethod = () => {
+  try {
+    const stored = localStorage.getItem("lastPaymentMethod");
+    return ["cash", "card", "transfer"].includes(stored) ? stored : "";
+  } catch {
+    return "";
+  }
 };
 
 const SalesTerminal = () => {
@@ -206,6 +216,21 @@ const processSaleRef = useRef(null);
     : cartSummary.total;
   const displayDiscountTotal = displaySubtotal - displayTotal;
 
+  const paymentLabel =
+    paymentMethod === "cash"
+      ? "Efectivo"
+      : paymentMethod === "card"
+        ? "Tarjeta"
+        : paymentMethod === "transfer"
+          ? "Transferencia"
+          : "Sin método";
+  const itemCount = `${cart.length} ${cart.length === 1 ? "producto" : "productos"}`;
+
+  const totalAccentClass = "bg-success/10 border-success/30";
+  const totalValueClass = "text-success";
+
+  const [removingKeys, setRemovingKeys] = useState(() => new Set());
+
   const processSale = async (method) => {
     const registerOpen = await checkRegisterOpen();
     if (!registerOpen) {
@@ -228,7 +253,7 @@ const processSaleRef = useRef(null);
         setWaitingDrawer(true);
       } else {
         setCart([]);
-        setPaymentMethod("");
+        setPaymentMethod(lastSavedPaymentMethod());
         setCashDialogOpen(false);
         setCashAmount("");
         setChange(0);
@@ -304,6 +329,8 @@ const processSaleRef = useRef(null);
     }
   }, [cart.length]);
 
+  const cartOpsRef = useRef(null);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       const barcodeInput = document.getElementById("barcode-input");
@@ -372,14 +399,14 @@ const processSaleRef = useRef(null);
         e.preventDefault();
         const lastItem = cartRef.current?.[cartRef.current.length - 1];
         if (lastItem && !lastItem.isWeightItem) {
-          updateQuantity(lastItem, 1);
+          cartOpsRef.current?.updateQuantity(lastItem, 1);
         }
       }
       if (e.key === "F3") {
         e.preventDefault();
         const lastItem = cartRef.current?.[cartRef.current.length - 1];
         if (lastItem && !lastItem.isWeightItem) {
-          updateQuantity(lastItem, -1);
+          cartOpsRef.current?.updateQuantity(lastItem, -1);
         }
       }
       if (e.key === "q" && (e.ctrlKey || e.metaKey)) {
@@ -405,7 +432,7 @@ const processSaleRef = useRef(null);
         const cart = cartRef.current;
         if (cart.length > 0) {
           const lastItem = cart[cart.length - 1];
-          removeFromCart(lastItem);
+          cartOpsRef.current?.removeFromCart(lastItem);
         }
       }
       if (e.key === "F6") {
@@ -470,8 +497,8 @@ const processSaleRef = useRef(null);
           e.preventDefault();
           const now = Date.now();
           if (now - lastEscRef.current < 400) {
-            setCart([]);
-            setPaymentMethod("");
+            cartOpsRef.current?.setCart([]);
+            cartOpsRef.current?.setPaymentMethod("");
             showNotification("Carrito limpiado", "success");
           }
           lastEscRef.current = now;
@@ -497,14 +524,14 @@ const processSaleRef = useRef(null);
           e.preventDefault();
           const item = cartRef.current[selectedCartItemIndex];
           if (item && !item.isWeightItem) {
-            updateQuantity(item, 1);
+            cartOpsRef.current?.updateQuantity(item, 1);
           }
         }
         if (e.key === "ArrowLeft") {
           e.preventDefault();
           const item = cartRef.current[selectedCartItemIndex];
           if (item && !item.isWeightItem) {
-            updateQuantity(item, -1);
+            cartOpsRef.current?.updateQuantity(item, -1);
           }
         }
         if (e.key === "Enter" &&
@@ -536,13 +563,13 @@ if (e.key === "Tab" && !isEditable) {
         }
         if (e.key === "ArrowRight") {
           e.preventDefault();
-          setPaymentMethod((prev) =>
+          cartOpsRef.current?.setPaymentMethod((prev) =>
             prev === "cash" ? "card" : prev === "card" ? "transfer" : "cash",
           );
         }
         if (e.key === "ArrowLeft") {
           e.preventDefault();
-          setPaymentMethod((prev) =>
+          cartOpsRef.current?.setPaymentMethod((prev) =>
             prev === "cash" ? "transfer" : prev === "transfer" ? "card" : "cash",
           );
         }
@@ -1020,7 +1047,7 @@ if (e.key === "Tab" && !isEditable) {
         })
         .filter(Boolean),
     );
-  }, []);
+  }, [setCart]);
 
   const removeFromCart = useCallback(
     (item) => {
@@ -1034,8 +1061,28 @@ if (e.key === "Tab" && !isEditable) {
       );
       showNotification("Producto eliminado del carrito", "info");
     },
-    [showNotification],
+    [setCart, showNotification],
   );
+
+  const removeWithCollapse = useCallback(
+    (item) => {
+      const key = lineKeyOf(item);
+      setRemovingKeys((prev) => new Set(prev).add(key));
+      window.setTimeout(() => {
+        removeFromCart(item);
+        setRemovingKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }, 240);
+    },
+    [removeFromCart],
+  );
+
+  useEffect(() => {
+    cartOpsRef.current = { setCart, setPaymentMethod, updateQuantity, removeFromCart };
+  }, [setCart, setPaymentMethod, updateQuantity, removeFromCart]);
 
   const applyDiscount = (item, amount) => {
     setCart((prev) =>
@@ -1085,7 +1132,14 @@ if (e.key === "Tab" && !isEditable) {
   };
 
   const handlePayClick = (method) => {
-    setPaymentMethod(method === paymentMethod ? "" : method);
+    if (method !== paymentMethod) {
+      setPaymentMethod(method);
+      try {
+        localStorage.setItem("lastPaymentMethod", method);
+      } catch {}
+    } else {
+      setPaymentMethod("");
+    }
   };
 
   const handleCashConfirm = () => {
@@ -1096,7 +1150,7 @@ if (e.key === "Tab" && !isEditable) {
     setWaitingDrawer(false);
     setCashDialogOpen(false);
     setCart([]);
-    setPaymentMethod("");
+    setPaymentMethod(lastSavedPaymentMethod());
     setCashAmount("");
     setChange(0);
     setBarcode("");
@@ -1226,7 +1280,7 @@ if (e.key === "Tab" && !isEditable) {
       `<div style="text-align:center;font-size:10px">Conserve este ticket</div>`,
     );
     lines.push(
-      `<div style="text-align:center;font-size:9px;margin-top:5px">JRP POS</div>`,
+      `<div style="text-align:center;font-size:9px;margin-top:5px">Vendia</div>`,
     );
     lines.push(`<div style="height:20px"></div>`);
 
@@ -1320,98 +1374,167 @@ if (e.key === "Tab" && !isEditable) {
           </ShadButton>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto p-1.5">
+<div className="min-h-0 flex-1 overflow-auto p-1.5">
           {cart.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-1 opacity-40">
               <ShoppingCart size={56} className="text-muted-foreground" />
               <p className="text-sm text-muted-foreground">Sin productos</p>
             </div>
           ) : (
-            cart.map((item, index) => (
-              <CartItem
-                key={lineKeyOf(item)}
-                item={item}
-                index={index}
-                isSelected={selectedCartItemIndex === index && focusZone === "cart"}
-                onSelect={onSelectItem}
-                onQuantityChange={updateQuantity}
-                onRemove={removeFromCart}
-                onDiscount={openDiscountDialog}
-              />
-            ))
+            cart.map((item, index) => {
+              const lineKey = lineKeyOf(item);
+              const removing = removingKeys.has(lineKey);
+              return (
+                <div
+                  key={lineKey}
+                  className={cn(
+                    "grid transition-all duration-200 ease-out",
+                    removing
+                      ? "grid-rows-[0fr] opacity-40"
+                      : "grid-rows-[1fr] opacity-100",
+                  )}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <CartItem
+                      item={item}
+                      index={index}
+                      isSelected={selectedCartItemIndex === index && focusZone === "cart"}
+                      onSelect={onSelectItem}
+                      onQuantityChange={updateQuantity}
+                      onRemove={removeWithCollapse}
+                      onDiscount={openDiscountDialog}
+                    />
+                  </div>
+                </div>
+              );
+            })
           )}
         </div>
 
         <div className="h-px bg-border" />
 
-        <div className="border-t border-border bg-muted/30 p-4">
-          <div className="mb-2">
-            <div className="mb-0.5 flex justify-between">
-              <span className="text-xs text-muted-foreground">Subtotal</span>
-              <span className="text-xs text-muted-foreground">
+        <div className="border-t border-border bg-muted/30 p-3">
+          {/* Totales tipo ticket */}
+          <div className="mb-2.5 flex flex-col gap-0.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-medium text-muted-foreground">
+                Subtotal
+              </span>
+              <span className="text-base font-bold tabular-nums text-foreground">
                 ${displaySubtotal.toFixed(2)}
               </span>
             </div>
             {displayDiscountTotal > 0 && (
-              <div className="mb-0.5 flex justify-between">
-                <span className="text-xs text-destructive">Descuentos</span>
-                <span className="text-xs text-destructive">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm font-medium text-destructive">
+                  Descuentos
+                </span>
+                <span className="text-base font-bold tabular-nums text-destructive">
                   -${displayDiscountTotal.toFixed(2)}
                 </span>
               </div>
             )}
-            <div className="my-1 h-px bg-border" />
-            <div className="flex items-center justify-between">
-              <span className="text-base font-extrabold text-foreground">
-                Total
-              </span>
+            <div className="my-1 border-t border-dashed border-border" />
+            <div
+              className={cn(
+                "flex items-end justify-between gap-3 rounded-xl border px-4 py-2",
+                totalAccentClass,
+              )}
+            >
+              <div className="flex flex-col leading-tight">
+                <span className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                  Total
+                </span>
+                <span className="text-[0.68rem] font-medium text-muted-foreground">
+                  {itemCount} · {paymentLabel}
+                </span>
+              </div>
               <span
                 key={displayTotal}
-                className="cart-total-pop inline-block text-2xl font-extrabold tabular-nums text-success"
+                className={cn(
+                  "cart-total-pop inline-block text-3xl font-black leading-none tabular-nums",
+                  totalValueClass,
+                )}
               >
                 ${displayTotal.toFixed(2)}
               </span>
             </div>
           </div>
 
+          {/* Métodos de pago */}
           <div
             className={cn(
-              "mb-1.5 flex gap-1 rounded-md p-0.5 transition-all duration-150",
+              "mb-1.5 flex gap-1 rounded-lg p-1 transition-all duration-150",
               focusZone === "payment"
                 ? "ring-2 ring-primary ring-inset"
                 : "ring-2 ring-transparent ring-inset",
             )}
           >
-            <ShadButton
+            <button
               type="button"
-              variant={paymentMethod === "cash" ? "warning" : "outline"}
-              size="sm"
               onClick={() => handlePayClick("cash")}
-              className="flex-1 font-bold text-xs py-1"
+              title="Efectivo"
+              className={cn(
+                "flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                paymentMethod === "cash"
+                  ? "border-primary bg-primary/10 text-primary shadow-sm"
+                  : "border-border bg-background text-muted-foreground hover:bg-muted",
+              )}
             >
-              <DollarSign />
-              Efectivo
-            </ShadButton>
-            <ShadButton
+              <DollarSign
+                size={17}
+                className={cn(
+                  paymentMethod === "cash"
+                    ? "text-primary"
+                    : "text-muted-foreground",
+                )}
+              />
+              <span className="text-sm font-bold leading-none">Efectivo</span>
+            </button>
+
+            <button
               type="button"
-              variant={paymentMethod === "card" ? "default" : "outline"}
-              size="sm"
               onClick={() => handlePayClick("card")}
-              className="flex-1 font-bold text-xs py-1"
+              title="Tarjeta"
+              className={cn(
+                "flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                paymentMethod === "card"
+                  ? "border-primary bg-primary/10 text-primary shadow-sm"
+                  : "border-border bg-background text-muted-foreground hover:bg-muted",
+              )}
             >
-              <CreditCard />
-              Tarjeta
-            </ShadButton>
-            <ShadButton
+              <CreditCard
+                size={17}
+                className={cn(
+                  paymentMethod === "card"
+                    ? "text-primary"
+                    : "text-muted-foreground",
+                )}
+              />
+              <span className="text-sm font-bold leading-none">Tarjeta</span>
+            </button>
+
+            <button
               type="button"
-              variant={paymentMethod === "transfer" ? "warning" : "outline"}
-              size="sm"
               onClick={() => handlePayClick("transfer")}
-              className="flex-1 font-bold text-xs py-1"
+              title="Transferencia"
+              className={cn(
+                "flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                paymentMethod === "transfer"
+                  ? "border-primary bg-primary/10 text-primary shadow-sm"
+                  : "border-border bg-background text-muted-foreground hover:bg-muted",
+              )}
             >
-              <Landmark />
-              Transf.
-            </ShadButton>
+              <Landmark
+                size={17}
+                className={cn(
+                  paymentMethod === "transfer"
+                    ? "text-primary"
+                    : "text-muted-foreground",
+                )}
+              />
+              <span className="text-sm font-bold leading-none">Transf.</span>
+            </button>
           </div>
 
           {focusZone === "payment" && (
@@ -1441,16 +1564,17 @@ if (e.key === "Tab" && !isEditable) {
                 if (paymentMethod === "cash") setCashDialogOpen(true);
                 else processSale(paymentMethod);
               }}
-              className="w-full px-4 py-3.5 text-base font-extrabold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm shadow-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full min-h-[58px] px-4 py-4 text-xl font-black uppercase tracking-wide bg-success text-white hover:bg-success/90 shadow-sm shadow-success/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
             >
               {printing ? (
-                <Spinner size={18} />
+                <Spinner size={20} />
               ) : (
-                <Banknote size={20} />
+                <Banknote size={22} />
               )}
               <span className="flex-1 text-center">
-                {printing ? "Procesando venta..." : "Finalizar Venta"}
+                {printing ? "Cobrando..." : "Cobrar"}
               </span>
+              <Kbd className="h-5 px-1 text-[10px]">Enter</Kbd>
             </ShadButton>
           </div>
         </div>
@@ -1583,14 +1707,43 @@ if (e.key === "Tab" && !isEditable) {
         onConfirm={handleManualProduct}
       />
 
-      {printing && (
-        <div className="fixed inset-0 z-[9998] flex flex-col items-center justify-center gap-2 bg-black/60 backdrop-blur-sm">
-          <Spinner size={48} className="text-white" />
-          <p className="text-base font-bold text-white">
-            Imprimiendo ticket...
-          </p>
-        </div>
-      )}
+      {printing &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex flex-col items-center justify-center gap-5 bg-black/60 backdrop-blur-sm">
+            <div className="ticket-print">
+              <div className="ticket-window">
+                <div className="ticket-track">
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={[
+                        "ticket-line",
+                        i === 11
+                          ? "ticket-line--total"
+                          : ["ticket-line--full", "ticket-line--med", "ticket-line--short"][i % 3],
+                      ].join(" ")}
+                    />
+                  ))}
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <span
+                      key={`b-${i}`}
+                      className={[
+                        "ticket-line",
+                        i === 11
+                          ? "ticket-line--total"
+                          : ["ticket-line--full", "ticket-line--med", "ticket-line--short"][i % 3],
+                      ].join(" ")}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p className="text-base font-bold text-white">
+              Imprimiendo ticket...
+            </p>
+          </div>,
+          document.body,
+        )}
       </ResizablePanelGroup>
     </div>
   );
