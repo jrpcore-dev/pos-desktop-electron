@@ -1,6 +1,15 @@
 export const calcFinalPrice = (price, discount) =>
   price * (1 - (discount || 0) / 100);
 
+export const resolveUnitPrice = (product, pricing) => {
+  if (!product || typeof product.id !== "number" || !pricing) return product?.price;
+  const ex = pricing.exceptions && pricing.exceptions[product.id];
+  if (ex != null) return ex;
+  const tp = pricing.tierPrices && pricing.tierPrices[product.id];
+  if (tp != null) return tp;
+  return product.price;
+};
+
 const todayISO = () => {
   const d = new Date();
   const y = d.getFullYear();

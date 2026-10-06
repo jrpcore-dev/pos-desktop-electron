@@ -14,6 +14,8 @@ import {
   DollarSign,
   Landmark,
   Banknote,
+  UserPlus,
+  X,
 } from "lucide-react";
 import CartItem from "./CartItem";
 import CartTabs from "./CartTabs";
@@ -24,6 +26,7 @@ import BoxChoiceDialog from "./BoxChoiceDialog";
 import QtyDialog from "./QtyDialog";
 import DiscountDialog from "./DiscountDialog";
 import ManualProductDialog from "./ManualProductDialog";
+import CustomerSearchDialog from "./CustomerSearchDialog";
 import { useMultiCart } from "./cart/useMultiCart";
 import { Button as ShadButton } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -47,6 +50,7 @@ import {
   lineTotal,
   lineUnitPrice,
   committedStockFor,
+  resolveUnitPrice,
 } from "../utils/cartMath";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 
@@ -125,6 +129,9 @@ const SalesTerminal = () => {
     setCart,
     paymentMethod,
     setPaymentMethod,
+    customer,
+    pricing,
+    setCustomer,
     newSale,
     switchCart,
     cancelCart,
@@ -138,6 +145,7 @@ const SalesTerminal = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [manualProductModalOpen, setManualProductModalOpen] = useState(false);
+  const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
   const [manualProduct, setManualProduct] = useState({ name: "", price: "" });
   const [pendingQty, setPendingQty] = useState(1);
   const [qtyDialogOpen, setQtyDialogOpen] = useState(false);
@@ -260,6 +268,7 @@ const processSaleRef = useRef(null);
         setWaitingDrawer(true);
       } else {
         setCart([]);
+        setCustomer(null, null);
         setPaymentMethod(lastSavedPaymentMethod());
         setCashDialogOpen(false);
         setCashAmount("");
@@ -686,6 +695,13 @@ if (e.key === "Tab" && !isEditable) {
 
   useEffect(() => {
     const searchQuery = barcode.replace(/^\d+\*/g, "");
+    if (/^CLI-/i.test(searchQuery)) {
+      setSearchResults([]);
+      setShowSuggestions(false);
+      setIsSearching(false);
+      setSearchTimedOut(false);
+      return;
+    }
     const isNumeric = /^\d+$/.test(searchQuery);
     const minChars = isNumeric ? 5 : 3;
     if (searchQuery.length < minChars) {
@@ -745,6 +761,50 @@ if (e.key === "Tab" && !isEditable) {
     [notify],
   );
 
+  const repriceCart = (nextPricing) => {
+    setCart((prev) =>
+      prev.map((it) => {
+        if (it.isManual || typeof it.id !== "number") return it;
+        const base =
+          resolveUnitPrice(
+            { id: it.id, price: it.catalogPrice ?? it.price },
+            nextPricing,
+          ) ?? it.price;
+        if (base === it.price) return it;
+        return {
+          ...it,
+          price: base,
+          finalPrice: calcFinalPrice(base, it.discount_percent),
+        };
+      }),
+    );
+  };
+
+  const selectCustomer = async (found) => {
+    try {
+      const res = await window.api.invoke("get-customer-pricing", found.id);
+      if (!res.success || !res.customer) {
+        showNotification("Cliente no encontrado", "error");
+        return;
+      }
+      const nextPricing = {
+        exceptions: res.exceptions || {},
+        tierPrices: res.tierPrices || {},
+      };
+      setCustomer(res.customer, nextPricing);
+      repriceCart(nextPricing);
+      window.api.invoke("touch-customer", res.customer.id);
+      showNotification(`${res.customer.name} seleccionado`, "success");
+    } catch {
+      showNotification("No se pudo cargar el cliente", "error");
+    }
+  };
+
+  const clearCustomer = () => {
+    setCustomer(null, null);
+    repriceCart(null);
+  };
+
   const checkRegisterOpen = async () => {
     try {
       const res = await window.api.invoke("get-cash-register-status", {
@@ -790,11 +850,14 @@ if (e.key === "Tab" && !isEditable) {
       setBoxChoiceDialog({ open: true, product, qty });
       return;
     }
-    const effectivePrice = calcFinalPrice(
-      product.price,
-      product.discount_percent,
-    );
-    const productWithDiscount = { ...product, finalPrice: effectivePrice };
+    const basePrice = resolveUnitPrice(product, pricing);
+    const effectivePrice = calcFinalPrice(basePrice, product.discount_percent);
+    const productWithDiscount = {
+      ...product,
+      price: basePrice,
+      finalPrice: effectivePrice,
+      catalogPrice: product.price,
+    };
 
     if (product.isManual) {
       setCart((prev) => {
@@ -858,13 +921,13 @@ if (e.key === "Tab" && !isEditable) {
       showNotification("Stock insuficiente", "warning");
       return;
     }
-    const effectivePrice = calcFinalPrice(
-      product.price,
-      product.discount_percent,
-    );
+    const weightBase = resolveUnitPrice(product, pricing);
+    const effectivePrice = calcFinalPrice(weightBase, product.discount_percent);
     const productWithWeight = {
       ...product,
+      price: weightBase,
       finalPrice: effectivePrice,
+      catalogPrice: product.price,
       quantity: kg,
       isWeightItem: true,
     };
@@ -912,11 +975,14 @@ if (e.key === "Tab" && !isEditable) {
       showNotification("Stock insuficiente", "warning");
       return;
     }
-    const unitPrice = isBox
+    const chosenUnitPrice = isBox
       ? product.box_price
       : isPack
         ? packPriceOf(product)
         : piecePriceOf(product);
+    const unitPrice =
+      resolveUnitPrice({ ...product, price: chosenUnitPrice }, pricing) ??
+      chosenUnitPrice;
     const effectivePrice = calcFinalPrice(unitPrice, product.discount_percent);
     const item = {
       ...product,
@@ -925,6 +991,7 @@ if (e.key === "Tab" && !isEditable) {
       isBoxItem: isBox,
       isPackItem: isPack,
       price: unitPrice,
+      catalogPrice: chosenUnitPrice,
       prices: product.prices || [],
     };
     setCart((prev) => {
@@ -965,6 +1032,17 @@ if (e.key === "Tab" && !isEditable) {
         setBarcode("");
         setSelectedSuggestionIndex(-1);
         showNotification("Producto no encontrado", "error");
+        return;
+      }
+      if (/^CLI-/i.test(rest)) {
+        setBarcode("");
+        setSelectedSuggestionIndex(-1);
+        const res = await window.api.invoke("get-customer-by-qr", rest);
+        if (res.success && res.customer) {
+          await selectCustomer(res.customer);
+        } else {
+          showNotification("Cliente no encontrado", "error");
+        }
         return;
       }
       if (
@@ -1191,6 +1269,7 @@ if (e.key === "Tab" && !isEditable) {
     setWaitingDrawer(false);
     setCashDialogOpen(false);
     setCart([]);
+    setCustomer(null, null);
     setPaymentMethod(lastSavedPaymentMethod());
     setCashAmount("");
     setChange(0);
@@ -1393,6 +1472,37 @@ if (e.key === "Tab" && !isEditable) {
         <div className="h-px bg-border" />
 
         <div className="border-t border-border bg-muted/30 p-3">
+          <div className="mb-2.5">
+            {customer ? (
+              <div className="flex h-12 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
+                <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+                  {customer.name}
+                  {customer.tier_name && (
+                    <span className="ml-2 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary">
+                      {customer.tier_name}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={clearCustomer}
+                  title="Quitar cliente"
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCustomerDialogOpen(true)}
+                className="flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+              >
+                <UserPlus size={18} />
+                Cliente
+              </button>
+            )}
+          </div>
           {/* Totales tipo ticket */}
           <div className="mb-2.5 flex flex-col gap-0.5">
             <div className="flex items-baseline justify-between">
@@ -1671,6 +1781,19 @@ if (e.key === "Tab" && !isEditable) {
         onNameChange={(v) => setManualProduct({ ...manualProduct, name: v })}
         onPriceChange={(v) => setManualProduct({ ...manualProduct, price: v })}
         onConfirm={handleManualProduct}
+      />
+
+      <CustomerSearchDialog
+        open={customerDialogOpen}
+        onClose={() => {
+          setCustomerDialogOpen(false);
+          refocusBarcode();
+        }}
+        onSelect={(c) => {
+          setCustomerDialogOpen(false);
+          selectCustomer(c);
+          refocusBarcode();
+        }}
       />
 
       {printing &&

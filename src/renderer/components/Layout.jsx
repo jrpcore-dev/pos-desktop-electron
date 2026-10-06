@@ -79,6 +79,7 @@ const ROUTE_PRELOADERS = {
   "/backup": () => import("./BackupRestore"),
   "/catalog-reference": () => import("./Catalog"),
   "/servicios": () => import("./servicios/ServicesScreen"),
+  "/customers": () => import("./Customers"),
 };
 
 const drawerWidth = 288;
@@ -90,6 +91,7 @@ const PAGE_META = {
   "/register-history": { title: "Turnos y Cortes", crumb: "Punto de venta" },
   "/transacciones": { title: "Transacciones", crumb: "Punto de venta" },
   "/servicios": { title: "Servicios", crumb: "Transacciones" },
+  "/customers": { title: "Clientes", crumb: "Transacciones" },
   "/inventory": { title: "Productos", crumb: "Inventario" },
   "/stock-movements": { title: "Movimientos", crumb: "Inventario" },
   "/categories": { title: "Categorías", crumb: "Inventario" },
@@ -575,6 +577,7 @@ const Layout = () => {
           path: "/transacciones",
         },
         { text: "Servicios", icon: <Zap />, path: "/servicios" },
+        { text: "Clientes", icon: <Users />, path: "/customers" },
       ],
     },
     {

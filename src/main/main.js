@@ -147,8 +147,10 @@ const createTables = () => {
     phone TEXT DEFAULT '',
     email TEXT DEFAULT '',
     address TEXT DEFAULT '',
+    delivery_days TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  ensureColumn("suppliers", "delivery_days", "TEXT DEFAULT ''");
 
   db.exec(`CREATE TABLE IF NOT EXISTS stock_movements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -282,6 +284,61 @@ const createTables = () => {
   ensureColumn("sale_items", "cancelled_at", "DATETIME");
   ensureColumn("sale_items", "cancelled_by", "TEXT");
   ensureColumn("sale_items", "returned_qty", "REAL DEFAULT 0");
+
+  // ─── CUSTOMERS / TIERS ─────────────────────────────────────
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_tiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    position INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.exec(`CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    tier_id INTEGER REFERENCES customer_tiers(id),
+    qr_code TEXT UNIQUE,
+    last_seen_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)`,
+  );
+
+  db.exec(`CREATE TABLE IF NOT EXISTS tier_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tier_id INTEGER NOT NULL REFERENCES customer_tiers(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    price REAL NOT NULL,
+    UNIQUE(tier_id, product_id)
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_tier_prices_tier ON tier_prices(tier_id)`,
+  );
+
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    price REAL NOT NULL,
+    UNIQUE(customer_id, product_id)
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_customer_prices_customer ON customer_prices(customer_id)`,
+  );
+
+  const tierCount = db
+    .prepare("SELECT COUNT(*) AS c FROM customer_tiers")
+    .get().c;
+  if (tierCount === 0) {
+    const ins = db.prepare(
+      "INSERT INTO customer_tiers (name, position) VALUES (?, ?)",
+    );
+    ins.run("Normal", 0);
+    ins.run("Frecuente", 1);
+    ins.run("Mayorista", 2);
+  }
 };
 
 createTables();
@@ -1453,6 +1510,258 @@ ipcMain.handle("search-products", async (event, query) => {
   }
 });
 
+// ─── CUSTOMERS ────────────────────────────────────────────────
+
+ipcMain.handle("get-tiers", async () => {
+  try {
+    return db
+      .prepare("SELECT * FROM customer_tiers ORDER BY position, id")
+      .all();
+  } catch (e) {
+    return [];
+  }
+});
+
+ipcMain.handle("get-customer-by-qr", async (event, code) => {
+  try {
+    const customer = db
+      .prepare(
+        `SELECT c.*, t.name AS tier_name FROM customers c
+         LEFT JOIN customer_tiers t ON t.id = c.tier_id
+         WHERE c.qr_code = ?`,
+      )
+      .get(String(code || "").trim());
+    if (customer) {
+      db.prepare("UPDATE customers SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?").run(
+        customer.id,
+      );
+    }
+    return { success: !!customer, customer: customer || null };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("search-customers", async (event, query) => {
+  try {
+    const q = String(query || "").trim();
+    const n = nomarize(q);
+    if (!n) {
+      return db
+        .prepare(
+          `SELECT c.*, t.name AS tier_name FROM customers c
+           LEFT JOIN customer_tiers t ON t.id = c.tier_id
+           ORDER BY c.name COLLATE NOCASE ASC LIMIT 200`,
+        )
+        .all();
+    }
+    return db
+      .prepare(
+        `SELECT c.*, t.name AS tier_name FROM customers c
+         LEFT JOIN customer_tiers t ON t.id = c.tier_id
+         WHERE nomar(c.name) LIKE ? OR c.phone LIKE ?
+         ORDER BY c.last_seen_at IS NULL, c.last_seen_at DESC, c.name COLLATE NOCASE ASC
+         LIMIT 20`,
+      )
+      .all(`%${n}%`, `%${q}%`);
+  } catch (error) {
+    return [];
+  }
+});
+
+ipcMain.handle("get-recent-customers", async () => {
+  try {
+    return db
+      .prepare(
+        `SELECT c.*, t.name AS tier_name FROM customers c
+         LEFT JOIN customer_tiers t ON t.id = c.tier_id
+         WHERE c.last_seen_at IS NOT NULL
+         ORDER BY c.last_seen_at DESC LIMIT 8`,
+      )
+      .all();
+  } catch (error) {
+    return [];
+  }
+});
+
+ipcMain.handle("get-customer", async (event, id) => {
+  try {
+    const customer = db
+      .prepare(
+        `SELECT c.*, t.name AS tier_name FROM customers c
+         LEFT JOIN customer_tiers t ON t.id = c.tier_id WHERE c.id = ?`,
+      )
+      .get(id);
+    return { success: !!customer, customer: customer || null };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("add-customer", async (event, data) => {
+  try {
+    const name = String(data?.name || "").trim();
+    if (!name) return { success: false, error: "Nombre requerido" };
+    const phone = String(data?.phone || "").trim();
+    const tierId = data?.tier_id || null;
+    const info = db
+      .prepare(
+        "INSERT INTO customers (name, phone, tier_id) VALUES (?, ?, ?)",
+      )
+      .run(name, phone, tierId);
+    const qr = `CLI-${info.lastInsertRowid}`;
+    db.prepare("UPDATE customers SET qr_code = ? WHERE id = ?").run(
+      qr,
+      info.lastInsertRowid,
+    );
+    const customer = db
+      .prepare("SELECT * FROM customers WHERE id = ?")
+      .get(info.lastInsertRowid);
+    return { success: true, customer };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("update-customer", async (event, id, data) => {
+  try {
+    db.prepare(
+      "UPDATE customers SET name = ?, phone = ?, tier_id = ? WHERE id = ?",
+    ).run(
+      String(data?.name || "").trim(),
+      String(data?.phone || "").trim(),
+      data?.tier_id || null,
+      id,
+    );
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("delete-customer", async (event, id) => {
+  try {
+    db.prepare("DELETE FROM customers WHERE id = ?").run(id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("touch-customer", async (event, id) => {
+  try {
+    db.prepare(
+      "UPDATE customers SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).run(id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("get-customer-prices", async (event, customerId) => {
+  try {
+    return db
+      .prepare(
+        `SELECT cp.*, p.name AS product_name FROM customer_prices cp
+         JOIN products p ON p.id = cp.product_id
+         WHERE cp.customer_id = ? ORDER BY p.name`,
+      )
+      .all(customerId);
+  } catch (error) {
+    return [];
+  }
+});
+
+ipcMain.handle("set-customer-price", async (event, customerId, productId, price) => {
+  try {
+    db.prepare(
+      `INSERT INTO customer_prices (customer_id, product_id, price) VALUES (?, ?, ?)
+       ON CONFLICT(customer_id, product_id) DO UPDATE SET price = excluded.price`,
+    ).run(customerId, productId, price);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("delete-customer-price", async (event, id) => {
+  try {
+    db.prepare("DELETE FROM customer_prices WHERE id = ?").run(id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("get-tier-prices", async (event, tierId) => {
+  try {
+    return db
+      .prepare(
+        `SELECT tp.*, p.name AS product_name FROM tier_prices tp
+         JOIN products p ON p.id = tp.product_id
+         WHERE tp.tier_id = ? ORDER BY p.name`,
+      )
+      .all(tierId);
+  } catch (error) {
+    return [];
+  }
+});
+
+ipcMain.handle("set-tier-price", async (event, tierId, productId, price) => {
+  try {
+    db.prepare(
+      `INSERT INTO tier_prices (tier_id, product_id, price) VALUES (?, ?, ?)
+       ON CONFLICT(tier_id, product_id) DO UPDATE SET price = excluded.price`,
+    ).run(tierId, productId, price);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("delete-tier-price", async (event, id) => {
+  try {
+    db.prepare("DELETE FROM tier_prices WHERE id = ?").run(id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("get-customer-pricing", async (event, customerId) => {
+  try {
+    const customer = db
+      .prepare("SELECT * FROM customers WHERE id = ?")
+      .get(customerId);
+    if (!customer) return { success: false, error: "Cliente no encontrado" };
+    const exceptions = db
+      .prepare(
+        "SELECT product_id, price FROM customer_prices WHERE customer_id = ?",
+      )
+      .all(customerId);
+    const tierPrices = customer.tier_id
+      ? db
+          .prepare(
+            "SELECT product_id, price FROM tier_prices WHERE tier_id = ?",
+          )
+          .all(customer.tier_id)
+      : [];
+    return {
+      success: true,
+      customer,
+      exceptions: Object.fromEntries(
+        exceptions.map((r) => [r.product_id, r.price]),
+      ),
+      tierPrices: Object.fromEntries(
+        tierPrices.map((r) => [r.product_id, r.price]),
+      ),
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("get-products-by-ids", async (event, ids) => {
   try {
     const arr = (Array.isArray(ids) ? ids : [])
@@ -1591,7 +1900,7 @@ ipcMain.handle("add-supplier", async (event, data) => {
   try {
     const info = db
       .prepare(
-        "INSERT INTO suppliers (name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO suppliers (name, contact, phone, email, address, delivery_days) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(
         data.name,
@@ -1599,6 +1908,7 @@ ipcMain.handle("add-supplier", async (event, data) => {
         data.phone || "",
         data.email || "",
         data.address || "",
+        data.delivery_days || "",
       );
     return { success: true, id: info.lastInsertRowid };
   } catch (error) {
@@ -1609,13 +1919,14 @@ ipcMain.handle("add-supplier", async (event, data) => {
 ipcMain.handle("update-supplier", async (event, id, data) => {
   try {
     db.prepare(
-      "UPDATE suppliers SET name=?, contact=?, phone=?, email=?, address=? WHERE id=?",
+      "UPDATE suppliers SET name=?, contact=?, phone=?, email=?, address=?, delivery_days=? WHERE id=?",
     ).run(
       data.name,
       data.contact || "",
       data.phone || "",
       data.email || "",
       data.address || "",
+      data.delivery_days || "",
       id,
     );
     return { success: true };

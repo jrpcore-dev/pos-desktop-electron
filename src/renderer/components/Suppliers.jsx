@@ -27,12 +27,30 @@ import PaginationBar from "./PaginationBar";
 
 const PAGE_SIZE = 10;
 
+const DELIVERY_DAYS = [
+  ["lun", "Lun"],
+  ["mar", "Mar"],
+  ["mie", "Mié"],
+  ["jue", "Jue"],
+  ["vie", "Vie"],
+  ["sab", "Sáb"],
+  ["dom", "Dom"],
+];
+
+const daysLabel = (csv) =>
+  String(csv || "")
+    .split(",")
+    .filter(Boolean)
+    .map((k) => (DELIVERY_DAYS.find((d) => d[0] === k) || [k, k])[1])
+    .join(", ");
+
 const supplierSchema = z.object({
   name: z.string().min(1, "El nombre es requerido"),
   contact: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email("Email inválido").optional().or(z.literal("")),
   address: z.string().optional(),
+  delivery_days: z.string().optional(),
 });
 
 const SupplierRow = memo(function SupplierRow({ supplier, onEdit, onDelete }) {
@@ -74,6 +92,14 @@ const SupplierRow = memo(function SupplierRow({ supplier, onEdit, onDelete }) {
             <Mail size={14} className="shrink-0" aria-hidden="true" />
             <span className="truncate text-xs">{supplier.email || "—"}</span>
           </div>
+          {supplier.delivery_days && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Truck size={14} className="shrink-0" aria-hidden="true" />
+              <span className="truncate text-xs">
+                {daysLabel(supplier.delivery_days)}
+              </span>
+            </div>
+          )}
         </div>
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
@@ -129,7 +155,7 @@ const Suppliers = () => {
     reset,
   } = useForm({
     resolver: zodResolver(supplierSchema),
-    defaultValues: { name: "", contact: "", phone: "", email: "", address: "" },
+    defaultValues: { name: "", contact: "", phone: "", email: "", address: "", delivery_days: "" },
   });
 
   const load = useCallback(async () => {
@@ -168,7 +194,7 @@ const Suppliers = () => {
 
   const openAdd = useCallback(() => {
     setEditItem(null);
-    reset({ name: "", contact: "", phone: "", email: "", address: "" });
+    reset({ name: "", contact: "", phone: "", email: "", address: "", delivery_days: "" });
     setSubmitError("");
     setModalOpen(true);
   }, [reset, setModalOpen]);
@@ -187,6 +213,7 @@ const Suppliers = () => {
       phone: s.phone || "",
       email: s.email || "",
       address: s.address || "",
+      delivery_days: s.delivery_days || "",
     });
     setSubmitError("");
     setModalOpen(true);
@@ -352,6 +379,48 @@ const Suppliers = () => {
           )}
         />
       </div>
+      <div className="space-y-1.5">
+        <Label>Días de llegada</Label>
+        <Controller
+          name="delivery_days"
+          control={control}
+          render={({ field }) => {
+            const selected = String(field.value || "").split(",").filter(Boolean);
+            const toggle = (k) => {
+              const next = selected.includes(k)
+                ? selected.filter((x) => x !== k)
+                : [...selected, k].sort(
+                    (a, b) =>
+                      DELIVERY_DAYS.findIndex((d) => d[0] === a) -
+                      DELIVERY_DAYS.findIndex((d) => d[0] === b),
+                  );
+              field.onChange(next.join(","));
+            };
+            return (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {DELIVERY_DAYS.map(([k, label]) => {
+                  const on = selected.includes(k);
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => toggle(k)}
+                      aria-pressed={on}
+                      className={
+                        on
+                          ? "h-10 min-w-[3rem] cursor-pointer rounded-lg border border-primary bg-primary px-3 text-sm font-bold text-primary-foreground transition-colors"
+                          : "h-10 min-w-[3rem] cursor-pointer rounded-lg border border-border bg-background px-3 text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                      }
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          }}
+        />
+      </div>
     </div>
   );
 });
@@ -501,24 +570,17 @@ const Suppliers = () => {
             if (e.key === "Enter" && !e.shiftKey) handleSubmit(onSubmit)();
           }}
         >
-          <SheetHeader>
-            <div className="flex items-center gap-3">
-              <span
-className="flex h-8 w-8 items-center justify-center rounded-lg"
-              style={{ backgroundColor: "hsl(var(--slate-800))", color: "#fff" }}
-              >
-                <Truck size={18} color="#fff" />
-              </span>
-              <div>
-                <SheetTitle className="text-base">
-                  {editItem ? "Editar Proveedor" : "Nuevo Proveedor"}
-                </SheetTitle>
-                <SheetDescription>
-                  {editItem
-                    ? "Modifique la información del proveedor"
-                    : "Complete la información del proveedor"}
-                </SheetDescription>
-              </div>
+          <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
+            <Truck size={30} className="shrink-0" />
+            <div className="min-w-0">
+              <SheetTitle className="text-base">
+                {editItem ? "Editar Proveedor" : "Nuevo Proveedor"}
+              </SheetTitle>
+              <SheetDescription>
+                {editItem
+                  ? "Modifica la información del proveedor"
+                  : "Ingresa la información del nuevo proveedor"}
+              </SheetDescription>
             </div>
           </SheetHeader>
 

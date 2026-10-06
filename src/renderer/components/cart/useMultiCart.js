@@ -14,6 +14,8 @@ const createCart = (folio) => {
     items: [],
     paymentMethod: last,
     notes: "",
+    customer: null,
+    pricing: null,
   };
 };
 
@@ -73,6 +75,17 @@ export const useMultiCart = () => {
     [activeIndex],
   );
 
+  const setCustomer = useCallback(
+    (customer, pricing) => {
+      setCarts((prev) =>
+        prev.map((c, i) =>
+          i === activeIndex ? { ...c, customer, pricing } : c,
+        ),
+      );
+    },
+    [activeIndex],
+  );
+
   const newSale = useCallback(() => {
     folioRef.current += 1;
     const newCart = createCart(folioRef.current);
@@ -108,6 +121,9 @@ export const useMultiCart = () => {
     setCart,
     paymentMethod,
     setPaymentMethod,
+    customer: activeCart.customer,
+    pricing: activeCart.pricing,
+    setCustomer,
     newSale,
     switchCart,
     cancelCart,

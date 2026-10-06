@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, User, Lock, Search, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, User, UserPlus, Lock, Search, Loader2 } from "lucide-react";
 import { useToast } from "./ToastProvider";
 import {
   Sheet,
@@ -324,24 +324,17 @@ const Cashiers = () => {
             if (e.key === "Enter" && !e.shiftKey) handleSave();
           }}
         >
-          <SheetHeader>
-            <div className="flex items-center gap-3">
-              <span
-                className="flex h-8 w-8 items-center justify-center rounded-lg"
-style={{ backgroundColor: "hsl(var(--brand))", color: "#fff" }}
-              >
-                <User size={18} color="#fff" />
-              </span>
-              <div>
-                <SheetTitle className="text-base">
-                  {editing ? "Editar Cajero" : "Nuevo Cajero"}
-                </SheetTitle>
-                <SheetDescription>
-                  {editing
-                    ? "Actualiza los datos del cajero"
-                    : "Registra un nuevo cajero"}
-                </SheetDescription>
-              </div>
+          <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
+            <UserPlus size={30} className="shrink-0" />
+            <div className="min-w-0">
+              <SheetTitle className="text-base">
+                {editing ? "Editar Cajero" : "Nuevo Cajero"}
+              </SheetTitle>
+              <SheetDescription>
+                {editing
+                  ? "Modifica la información del cajero"
+                  : "Ingresa la información del nuevo cajero"}
+              </SheetDescription>
             </div>
           </SheetHeader>
 
