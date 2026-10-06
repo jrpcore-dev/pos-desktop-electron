@@ -23,12 +23,14 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
+  Coins,
   History,
   MoreHorizontal,
   Scale,
   Boxes,
   Layers,
   Loader2,
+  X,
 } from "lucide-react";
 import AddProductModal from "./AddProductModal";
 import { CardSkeleton } from "./Skeletons";
@@ -36,7 +38,6 @@ import CancelButton from "./CancelButton";
 import {
   Button as SButton,
   Input as SInput,
-  Badge,
   Label,
   Table as STable,
   TableBody as STableBody,
@@ -51,9 +52,6 @@ import {
   Avatar as SAvatar,
   AvatarImage as SAvatarImage,
   AvatarFallback as SAvatarFallback,
-  Alert as SAlert,
-  AlertTitle as SAlertTitle,
-  AlertDescription as SAlertDescription,
   EmptyState,
   Dialog,
   DialogContent,
@@ -85,6 +83,7 @@ import {
   Kbd,
   KbdGroup,
   Skeleton,
+  StockStatus,
 } from "./ui";
 import PaginationBar from "./PaginationBar";
 import { cn } from "@/lib/utils";
@@ -92,18 +91,12 @@ import { useToast } from "./ToastProvider";
 import { useCashier } from "../contexts/CashierContext";
 import { mxToday, formatMXTime } from "../utils/dateUtils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
+import { getStockStatus } from "./ui/stock-status";
 
 const ROW_HEIGHT = 52;
 const BUFFER_ROWS = 3;
 const PAGE_SIZE = 25;
 const MAX_ROWS_PER_PAGE = 100;
-
-const getStockStatus = (stock, minStock) => {
-  const min = minStock || 5;
-  if (stock === 0) return { label: "Agotado", color: "error" };
-  if (stock <= min) return { label: "Stock Bajo", color: "warning" };
-  return { label: "En Stock", color: "success" };
-};
 
 const calcDiscountedPrice = (price, discount) =>
   price * (1 - (discount || 0) / 100);
@@ -182,7 +175,7 @@ const SortHead = ({ label, k, align = "left", sortField, sortDir, onSort }) => {
   return (
     <STableHead
       className={cn(
-        "cursor-pointer select-none whitespace-nowrap px-4 font-semibold text-foreground/75 hover:text-foreground",
+        "h-10 cursor-pointer select-none whitespace-nowrap px-4 font-semibold text-foreground/75 hover:text-foreground",
         align === "right" && "text-right",
         align === "center" && "text-center",
       )}
@@ -204,55 +197,66 @@ const SortHead = ({ label, k, align = "left", sortField, sortDir, onSort }) => {
   );
 };
 
-const StatusBadge = React.memo(({ label, color }) => {
-  const variant =
-    color === "error"
-      ? "destructive"
-      : color === "warning"
-      ? "warning"
-      : "success";
+const ProductChip = React.memo(({ icon: Icon, label, tooltip, iconOnly }) => {
+  const chip = (
+    <span
+      className={cn(
+        "inline-flex h-[20px] shrink-0 items-center justify-center gap-1 rounded-[6px] border border-border bg-muted/70 px-1.5 text-[0.66rem] font-bold text-muted-foreground",
+        iconOnly && "w-[20px] px-0",
+      )}
+    >
+      <Icon className="h-3 w-3 shrink-0" strokeWidth={2} />
+      {!iconOnly && label}
+    </span>
+  );
+  if (!tooltip) return chip;
   return (
-    <Badge variant={variant} className="h-[20px] text-[0.65rem]">
-      {label}
-    </Badge>
+    <STooltip>
+      <STooltipTrigger asChild>
+        <span tabIndex={-1} className="inline-flex shrink-0 cursor-default">
+          {chip}
+        </span>
+      </STooltipTrigger>
+      <STooltipContent>{tooltip}</STooltipContent>
+    </STooltip>
   );
 });
-StatusBadge.displayName = "StatusBadge";
-
-const ProductChip = React.memo(
-  ({ icon: Icon, label, variant = "neutral", tooltip }) => {
-    const style = {
-      neutral:
-        "border border-border bg-muted text-muted-foreground shadow-sm",
-      rebaja: "bg-destructive/10 text-destructive dark:text-red-400 shadow-sm",
-      mayoreo: "bg-amber-500/15 text-amber-600 dark:text-amber-400 shadow-sm",
-    }[variant];
-    const text = label.charAt(0).toUpperCase() + label.slice(1);
-    const chip = (
-      <span
-        className={cn(
-          "inline-flex h-[22px] shrink-0 items-center gap-1 rounded px-1.5 text-[0.68rem] font-bold",
-          style,
-        )}
-      >
-        {Icon && <Icon className="h-3 w-3" strokeWidth={2.5} />}
-        {text}
-      </span>
-    );
-    if (!tooltip) return chip;
-    return (
-      <STooltip>
-        <STooltipTrigger asChild>
-          <button type="button" className="shrink-0 rounded">
-            {chip}
-          </button>
-        </STooltipTrigger>
-        <STooltipContent>{tooltip}</STooltipContent>
-      </STooltip>
-    );
-  },
-);
 ProductChip.displayName = "ProductChip";
+
+const PriceMetaIcons = React.memo(({ product }) => {
+  const discount = product.discount_percent > 0;
+  const prices = product.prices || [];
+  const mayoreo = prices.length > 0;
+  const minQty = mayoreo
+    ? Math.min(...prices.map((p) => Number(p.qty) || 1))
+    : 0;
+  if (!discount && !mayoreo) return null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {discount && (
+        <STooltip>
+          <STooltipTrigger asChild>
+            <span className="inline-flex shrink-0 cursor-default items-center text-red-500 dark:text-red-400">
+              <Percent className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </span>
+          </STooltipTrigger>
+          <STooltipContent>{`Descuento de ${product.discount_percent}%`}</STooltipContent>
+        </STooltip>
+      )}
+      {mayoreo && (
+        <STooltip>
+          <STooltipTrigger asChild>
+            <span className="inline-flex shrink-0 cursor-default items-center text-primary">
+              <Coins className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </span>
+          </STooltipTrigger>
+          <STooltipContent>{`Precio por mayoreo a partir de ${minQty} pzas`}</STooltipContent>
+        </STooltip>
+      )}
+    </span>
+  );
+});
+PriceMetaIcons.displayName = "PriceMetaIcons";
 
 const ProductRow = React.memo(
   ({
@@ -322,47 +326,36 @@ const ProductRow = React.memo(
                     icon={Scale}
                     label="kg"
                     tooltip="Se vende por peso"
+                    iconOnly={dataFiltered}
                   />
                 )}
                 {isContainerUnit(product.sale_unit) &&
                   product.sale_unit === "boxpack" && (
                     <ProductChip
                       icon={Boxes}
-                      label="caja·paquete"
+                      label="Caja/Pkg"
                       tooltip="Se vende en caja y en paquete"
+                      iconOnly={dataFiltered}
                     />
                   )}
                 {isContainerUnit(product.sale_unit) &&
                   product.sale_unit === "box" && (
                     <ProductChip
                       icon={Boxes}
-                      label="caja"
+                      label={`${product.box_qty || "—"} pzas`}
                       tooltip={`Caja de ${product.box_qty || "—"} pzas`}
+                      iconOnly={dataFiltered}
                     />
                   )}
                 {isContainerUnit(product.sale_unit) &&
                   product.sale_unit === "package" && (
                     <ProductChip
                       icon={Package}
-                      label="paquete"
+                      label={`${product.box_qty || "—"} pzas`}
                       tooltip={`Paquete de ${product.box_qty || "—"} pzas`}
+                      iconOnly={dataFiltered}
                     />
                   )}
-                {product.discount_percent > 0 && (
-                  <ProductChip
-                    variant="rebaja"
-                    icon={Percent}
-                    label={`-${product.discount_percent}%`}
-                  />
-                )}
-                {product.prices?.length > 0 && (
-                  <ProductChip
-                    variant="mayoreo"
-                    icon={Layers}
-                    label="Mayoreo"
-                    tooltip="Precio por volumen (mayoreo)"
-                  />
-                )}
               </div>
               <span className="block truncate text-xs text-muted-foreground">
                 {product.brand || ""}
@@ -376,60 +369,63 @@ const ProductRow = React.memo(
               <span className="block text-xs text-muted-foreground line-through">
                 ${product.price.toFixed(2)}
               </span>
-              <span className="block text-sm font-bold text-red-600 dark:text-red-400">
-                ${finalPrice.toFixed(2)}
+              <span className="flex items-center justify-end gap-1">
+                <span className="text-sm font-bold text-red-600 dark:text-red-400">
+                  ${finalPrice.toFixed(2)}
+                </span>
+                <PriceMetaIcons product={product} />
               </span>
             </div>
           ) : (
-            <span className="text-sm font-semibold">
-              ${boxPriceDisplay(product).toFixed(2)}
+            <span className="inline-flex items-center justify-end gap-1">
+              <span className="text-sm font-semibold">
+                ${boxPriceDisplay(product).toFixed(2)}
+              </span>
+              <PriceMetaIcons product={product} />
             </span>
           )}
         </STableCell>
         <STableCell className="min-w-[150px] px-4 text-center">
-          <span className="text-sm text-foreground">
-            {(product.startOfDay || 0) > 0
-              ? `${fmtStockNumber(product, product.stock)} / ${fmtStockNumber(product, product.startOfDay)}`
-              : fmtStockNumber(product, product.stock)}{" "}
-            <span className="font-normal text-muted-foreground">
-              {stockUnitCompact(product)}
-            </span>
-          </span>
+          <STooltip>
+            <STooltipTrigger asChild>
+              <div className="mx-auto mt-1 w-[50%]">
+                <div className="mb-0.5 text-center text-sm font-medium tabular-nums text-foreground">
+                  {fmtStockNumber(product, product.stock)}
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted-foreground/40">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      lowStock
+                        ? "bg-red-500"
+                        : doubleLow
+                          ? "bg-amber-500"
+                          : "bg-primary",
+                    )}
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+              </div>
+            </STooltipTrigger>
+            <STooltipContent className="text-sm">{barTip}</STooltipContent>
+          </STooltip>
           {(product.todayIn > 0 || product.todaySold > 0) && (
-            <div className="mt-0.5 flex justify-center gap-1.5">
+            <div className="mt-1 flex justify-center gap-1.5">
               {product.todayIn > 0 && (
-                <span className="text-[0.65rem] font-bold text-emerald-500">
+                <span className="text-[0.65rem] font-bold tabular-nums text-emerald-500">
                   +{product.todayIn} hoy
                 </span>
               )}
               {product.todaySold > 0 && (
-                <span className="text-[0.65rem] font-bold text-red-500">
+                <span className="text-[0.65rem] font-bold tabular-nums text-red-500">
                   -{product.todaySold} ventas
                 </span>
               )}
             </div>
           )}
-          <STooltip>
-            <STooltipTrigger asChild>
-              <div className="mx-auto mt-1 h-2 w-[84%] overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    lowStock
-                      ? "bg-red-500"
-                      : doubleLow
-                        ? "bg-amber-500"
-                        : "bg-primary",
-                  )}
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
-            </STooltipTrigger>
-            <STooltipContent>{barTip}</STooltipContent>
-          </STooltip>
         </STableCell>
         <STableCell className="px-4 text-center">
-          <StatusBadge label={stockStatus.label} color={stockStatus.color} />
+          <StockStatus label={stockStatus.label} tone={stockStatus.tone} />
         </STableCell>
         <STableCell className="px-4 text-center">
           <div className="inline-flex items-center gap-0.5">
@@ -1174,15 +1170,6 @@ const Inventory = () => {
         </div>
       </div>
 
-      {!loading && stats.lowStockCount > 0 && (
-        <SAlert variant="warning" className="mb-5">
-          <TriangleAlert className="h-4 w-4" />
-          <SAlertTitle>
-            {stats.lowStockCount} producto(s) con stock bajo
-          </SAlertTitle>
-        </SAlert>
-      )}
-
       <STooltipProvider delayDuration={200}>
         <div className="flex h-full w-full flex-col">
           <div
@@ -1192,14 +1179,14 @@ const Inventory = () => {
           >
             <STable>
               <STableHeader>
-                <STableRow className="bg-muted/40 hover:bg-transparent">
+                <STableRow className="sticky top-0 z-10 bg-muted hover:bg-transparent">
                   <SortHead label="Producto" k="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                   <SortHead label="Precio" k="price" align="right" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                   <SortHead label="Stock" k="stock" align="center" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                  <STableHead className="px-4 text-center font-semibold text-foreground/75">
+                  <STableHead className="h-10 px-4 text-center font-semibold text-foreground/75">
                     Estado
                   </STableHead>
-                  <STableHead className="px-4 text-center font-semibold text-foreground/75">
+                  <STableHead className="h-10 px-4 text-center font-semibold text-foreground/75">
                     Acciones
                   </STableHead>
                 </STableRow>
@@ -1347,7 +1334,7 @@ const Inventory = () => {
                   <SheetTitle className="break-words text-2xl font-extrabold leading-tight">
                     {selectedProduct.name}
                   </SheetTitle>
-                  <p className="mt-1 font-mono text-base font-semibold tracking-wider text-muted-foreground">
+                  <p className="mt-1 text-base font-semibold tracking-wider text-muted-foreground">
                     {selectedProduct.barcode || "Sin código"}
                   </p>
                   <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
@@ -1370,15 +1357,15 @@ const Inventory = () => {
                       ))}
                   </div>
                 </div>
-                <StatusBadge
+                <StockStatus
                   label={getStockStatus(
                     selectedProduct.stock,
                     selectedProduct.min_stock,
                   ).label}
-                  color={getStockStatus(
+                  tone={getStockStatus(
                     selectedProduct.stock,
                     selectedProduct.min_stock,
-                  ).color}
+                  ).tone}
                 />
               </div>
             </div>
@@ -1531,7 +1518,7 @@ const Inventory = () => {
                             >
                               <div className="flex items-center gap-1.5">
                                 <Clock size={11} className="text-slate-400" />
-                                <span className="font-mono text-[0.68rem] text-muted-foreground">
+                                <span className="text-[0.68rem] text-muted-foreground">
                                   {formatMXTime(a.created_at)}
                                 </span>
                                 <span className="text-[0.72rem] font-bold text-emerald-500">
@@ -1857,15 +1844,15 @@ const Inventory = () => {
                   )}
                 </div>
                 {selectedProduct && (
-                  <StatusBadge
+                  <StockStatus
                     label={getStockStatus(
                       selectedProduct.stock,
                       selectedProduct.min_stock,
                     ).label}
-                    color={getStockStatus(
+                    tone={getStockStatus(
                       selectedProduct.stock,
                       selectedProduct.min_stock,
-                    ).color}
+                    ).tone}
                   />
                 )}
               </div>
@@ -2288,15 +2275,15 @@ const Inventory = () => {
                   </DialogDescription>
                 </div>
                 {selectedProduct && (
-                  <StatusBadge
+                  <StockStatus
                     label={getStockStatus(
                       selectedProduct.stock,
                       selectedProduct.min_stock,
                     ).label}
-                    color={getStockStatus(
+                    tone={getStockStatus(
                       selectedProduct.stock,
                       selectedProduct.min_stock,
-                    ).color}
+                    ).tone}
                   />
                 )}
               </div>
@@ -2555,3 +2542,4 @@ const Inventory = () => {
 };
 
 export default Inventory;
+

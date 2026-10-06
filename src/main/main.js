@@ -12,6 +12,8 @@ const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
+const { hashPin, verifyPin } = require("./pins");
+const activation = require("./activation");
 
 const legacyUserData = path.join(app.getPath("appData"), "JRP POS");
 const overrideUserData = process.env.VENDIA_USERDATA;
@@ -185,6 +187,17 @@ const createTables = () => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  db.exec(`CREATE TABLE IF NOT EXISTS insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT DEFAULT '',
+    route TEXT DEFAULT '/reports',
+    week_key TEXT,
+    status TEXT DEFAULT 'unread',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   // Migration: add register_id to sales
   const sCols2 = db.prepare("PRAGMA table_info(sales)").all();
   if (!sCols2.find((c) => c.name === "register_id")) {
@@ -351,6 +364,19 @@ const runMigrations = () => {
   // Migration: add sale_unit to products
   ensureColumn("products", "sale_unit", "TEXT DEFAULT 'piece'");
 
+  // Migration: search_name normalizado para el buscador por relevancia
+  // (se escribe en cada alta/edición/importación; el backfill es idempotente)
+  ensureColumn("products", "search_name", "TEXT DEFAULT ''");
+  try {
+    db.exec(
+      `UPDATE products SET search_name = nomar(name)
+       WHERE search_name IS NULL OR search_name = ''`,
+    );
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_products_search_name ON products(search_name)`,
+    );
+  } catch (e) {}
+
   // Migration: add cost to stock_movements
   ensureColumn("stock_movements", "cost", "REAL DEFAULT 0");
   // Migration: add cashier_id to stock_movements
@@ -452,6 +478,38 @@ const runMigrations = () => {
     `CREATE INDEX IF NOT EXISTS idx_product_prices_product ON product_prices(product_id)`,
   );
 
+  // Migration: allow_manual_discount (permiso explícito de descuento manual en caja).
+  // Separation of concerns: antes, el permiso se infería como
+  // has_discount=1 AND discount_percent<=0 AND sin tiers (canManualDiscount).
+  // El backfill es ONE-SHOT: solo se ejecuta en la primera migración (cuando la
+  // columna se acaba de crear), para no pisar decisiones posteriores del gerente.
+  {
+    const amdCols = db.prepare("PRAGMA table_info(products)").all();
+    if (!amdCols.find((c) => c.name === "allow_manual_discount")) {
+      db.exec(
+        "ALTER TABLE products ADD COLUMN allow_manual_discount INTEGER DEFAULT 0",
+      );
+      db.exec(
+        `UPDATE products SET allow_manual_discount = 1
+           WHERE COALESCE(allow_manual_discount, 0) = 0
+             AND has_discount = 1 AND discount_percent <= 0
+             AND NOT EXISTS (
+               SELECT 1 FROM product_prices pp WHERE pp.product_id = products.id
+             )`,
+      );
+    }
+  }
+
+  // Migration: vigencia opcional de promociones por cantidad (solo tiers).
+  // Fechas vacías = promoción vigente siempre.
+  ensureColumn("products", "allow_manual_discount", "INTEGER DEFAULT 0");
+  // Vigencia única global para toda la promoción del producto
+  ensureColumn("products", "promo_start_date", "TEXT DEFAULT ''");
+  ensureColumn("products", "promo_end_date", "TEXT DEFAULT ''");
+  // Precio fijo de promoción (excluyente con % automático). >0 = aplica a
+  // cualquier cantidad.
+  ensureColumn("products", "promo_fixed_price", "REAL DEFAULT 0");
+
   // Migration: add cashier_id to cash_register
   ensureColumn("cash_register", "cashier_id", "INTEGER");
   // Migration: add opened_by and closed_by to cash_register
@@ -520,6 +578,25 @@ const runMigrations = () => {
 
   // Migration: add role column to cashiers
   ensureColumn("cashiers", "role", "TEXT DEFAULT 'cashier'");
+
+  // Migración de seguridad: PINs en texto plano → hash scrypt (salt por cajero).
+  // Invisible para el usuario final: el mismo PIN de siempre sigue funcionando.
+  ensureColumn("cashiers", "pin_hash", "TEXT");
+  ensureColumn("cashiers", "pin_salt", "TEXT");
+  const legacyPins = db
+    .prepare(
+      "SELECT id, pin FROM cashiers WHERE pin != '' AND (pin_hash IS NULL OR pin_hash = '')",
+    )
+    .all();
+  for (const c of legacyPins) {
+    // Cuentas con el PIN por defecto '0000' se saltan: quedan pendientes de
+    // decisión del dueño del negocio, no se tocan bajo ninguna circunstancia.
+    if (c.pin === "0000") continue;
+    const { salt, hash } = hashPin(c.pin);
+    db.prepare(
+      "UPDATE cashiers SET pin = '', pin_hash = ?, pin_salt = ? WHERE id = ?",
+    ).run(hash, salt, c.id);
+  }
 };
 
 runMigrations();
@@ -624,6 +701,48 @@ ipcMain.handle("update:install", () => {
 
 ipcMain.handle("update:get-state", () => updateState || { status: "idle" });
 
+ipcMain.handle("print-pdf", async (event, data) => {
+  const tmpPath = path.join(
+    app.getPath("temp"),
+    `vendia-print-${Date.now()}-${Math.floor(Math.random() * 9999)}.pdf`,
+  );
+  try {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    fs.writeFileSync(tmpPath, Buffer.from(bytes));
+
+    const printWin = new BrowserWindow({
+      width: 900,
+      height: 720,
+      show: false,
+      title: "Vista previa de impresión",
+      autoHideMenuBar: true,
+      webPreferences: {
+        sandbox: true,
+      },
+    });
+
+    printWin.once("closed", () => {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch (e) {
+        /* noop */
+      }
+    });
+
+    await printWin.loadFile(tmpPath);
+    printWin.show();
+
+    return { success: true };
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch (e) {
+      /* noop */
+    }
+    return { success: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
 const createTray = () => {
   try {
     const devIcon = path.join(__dirname, "../../build/Icon.ico");
@@ -671,14 +790,11 @@ const createTray = () => {
   }
 };
 
-// Debe coincidir con --secondary y --secondary-foreground en src/renderer/index.css
-// (modo claro = :root, modo oscuro = .dark). Si alguien cambia esos tokens de
-// diseño, debe actualizar también estos valores.
 const TITLEBAR_COLORS = {
-  light: { color: "#f1f5f9", symbolColor: "#0f1729" },
-  dark: { color: "#1d283a", symbolColor: "#f8fafc" },
+  light: { color: "#f8fafc", symbolColor: "#0f1729" },
+  dark: { color: "#0a0e1a", symbolColor: "#f8fafc" },
 };
-const TITLEBAR_HEIGHT = 56; // Altura de la barra nativa = h-14 del navbar (Layout.jsx)
+const TITLEBAR_HEIGHT = 48;
 
 ipcMain.on("set-titlebar-theme", (event, mode) => {
   if (!mainWin || mainWin.isDestroyed()) return;
@@ -972,7 +1088,7 @@ ipcMain.handle("get-products", async (event, params) => {
       `
     SELECT p.id, p.name, p.barcode, p.price, p.stock, p.cost_price, p.sale_unit,
            p.min_stock, p.box_qty, p.box_price, p.pack_qty, p.discount_percent,
-           p.has_discount, p.supplier_id, p.category_id,
+           p.has_discount, p.allow_manual_discount, p.promo_fixed_price, p.promo_start_date, p.promo_end_date, p.supplier_id, p.category_id,
            p.brand, p.image_path,
            c.name as category_name, s.name as supplier_name
     FROM products p
@@ -1075,6 +1191,10 @@ ipcMain.handle("add-product", async (event, product) => {
     min_stock,
     discount_percent,
     has_discount,
+    allow_manual_discount,
+    promo_fixed_price,
+    promo_start_date,
+    promo_end_date,
     sale_unit,
     box_qty,
     box_price,
@@ -1097,11 +1217,12 @@ ipcMain.handle("add-product", async (event, product) => {
 
     if (existing) {
       const stmt = db.prepare(`UPDATE products SET
-        name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
-        expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, is_active=1, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
+        name=?, search_name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
+        expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, allow_manual_discount=?, promo_fixed_price=?, promo_start_date=?, promo_end_date=?, is_active=1, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
         WHERE id=?`);
       stmt.run(
         name,
+        nomarize(name),
         brand,
         price,
         stock || 0,
@@ -1113,6 +1234,10 @@ ipcMain.handle("add-product", async (event, product) => {
         minStock,
         discount_percent || 0,
         has_discount ? 1 : 0,
+        allow_manual_discount ? 1 : 0,
+        promo_fixed_price || 0,
+        promo_start_date || "",
+        promo_end_date || "",
         sale_unit || "piece",
         box_qty || 0,
         box_price || 0,
@@ -1125,11 +1250,12 @@ ipcMain.handle("add-product", async (event, product) => {
     }
 
     const stmt = db.prepare(`INSERT INTO products
-      (barcode, name, brand, price, stock, category_id, supplier_id, expiry_date, image_path, cost_price, min_stock, discount_percent, has_discount, sale_unit, box_qty, box_price, pack_qty, pack_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (barcode, name, search_name, brand, price, stock, category_id, supplier_id, expiry_date, image_path, cost_price, min_stock, discount_percent, has_discount, allow_manual_discount, promo_fixed_price, promo_start_date, promo_end_date, sale_unit, box_qty, box_price, pack_qty, pack_price)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const info = stmt.run(
       barcode,
       name,
+      nomarize(name),
       brand,
       price,
       stock || 0,
@@ -1141,6 +1267,10 @@ ipcMain.handle("add-product", async (event, product) => {
       minStock,
       discount_percent || 0,
       has_discount ? 1 : 0,
+      allow_manual_discount ? 1 : 0,
+      promo_fixed_price || 0,
+      promo_start_date || "",
+      promo_end_date || "",
       sale_unit || "piece",
       box_qty || 0,
       box_price || 0,
@@ -1172,9 +1302,13 @@ ipcMain.handle("update-product", async (event, id, product) => {
       image_path,
       cost_price,
       min_stock,
-      discount_percent,
-      has_discount,
-      is_active,
+discount_percent,
+    has_discount,
+    allow_manual_discount,
+    promo_fixed_price,
+    promo_start_date,
+    promo_end_date,
+    is_active,
       sale_unit,
       box_qty,
       box_price,
@@ -1193,12 +1327,13 @@ ipcMain.handle("update-product", async (event, id, product) => {
       };
 
     const stmt = db.prepare(`UPDATE products SET
-      barcode=?, name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
-      expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, is_active=?, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
+      barcode=?, name=?, search_name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
+      expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, allow_manual_discount=?, promo_fixed_price=?, promo_start_date=?, promo_end_date=?, is_active=?, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
       WHERE id=?`);
     const info = stmt.run(
       barcode || "",
       name,
+      nomarize(name),
       brand,
       price,
       stock,
@@ -1210,6 +1345,10 @@ ipcMain.handle("update-product", async (event, id, product) => {
       parseFloat(min_stock) > 0 ? parseFloat(min_stock) : autoMinStock(stock),
       discount_percent || 0,
       has_discount ? 1 : 0,
+      allow_manual_discount ? 1 : 0,
+      promo_fixed_price || 0,
+      promo_start_date || "",
+      promo_end_date || "",
       is_active !== undefined ? is_active : 1,
       sale_unit || "piece",
       box_qty || 0,
@@ -1242,7 +1381,7 @@ ipcMain.handle("get-product-by-barcode", async (event, barcode) => {
   try {
     const product = db
       .prepare("SELECT * FROM products WHERE barcode = ? AND is_active = 1")
-      .get(barcode);
+      .get(String(barcode || "").trim());
     return {
       success: !!product,
       product: product ? attachPrices([product])[0] : null,
@@ -1252,20 +1391,63 @@ ipcMain.handle("get-product-by-barcode", async (event, barcode) => {
   }
 });
 
+const SEARCH_LIMIT = 25;
+
 ipcMain.handle("search-products", async (event, query) => {
   try {
-    return attachPrices(
-      db
-        .prepare(
-          `
-      SELECT p.*, c.name as category_name FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id
-      WHERE (nomar(p.name) LIKE ? OR p.barcode LIKE ?) AND p.is_active = 1
-      ORDER BY p.name LIMIT 20
-    `,
-        )
-        .all(`%${nomarize(query)}%`, `%${query}%`),
-    );
+    const qRaw = String(query || "").trim();
+    const n = nomarize(qRaw);
+    if (!qRaw || !n) return [];
+
+    const rows = db
+      .prepare(
+        `SELECT p.*, c.name AS category_name,
+          CASE
+            WHEN p.barcode = ? THEN 0
+            WHEN p.search_name = ? THEN 1
+            WHEN p.barcode LIKE ? THEN 2
+            WHEN p.search_name LIKE ? THEN 3
+            WHEN p.search_name LIKE ? THEN 4
+            WHEN ' ' || p.search_name LIKE ? THEN 5
+            WHEN instr(p.search_name, ?) > 1 THEN 6
+            WHEN p.barcode LIKE ? THEN 7
+            ELSE 8
+          END AS rank
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.is_active = 1
+          AND (
+            p.barcode = ? OR p.search_name = ? OR p.barcode LIKE ?
+            OR p.search_name LIKE ? OR p.search_name LIKE ?
+            OR ' ' || p.search_name LIKE ? OR instr(p.search_name, ?) > 1
+            OR p.barcode LIKE ?
+          )
+        ORDER BY rank ASC,
+          CASE WHEN p.barcode LIKE '200%' THEN 0 ELSE 1 END ASC,
+          p.name COLLATE NOCASE ASC
+        LIMIT ?`,
+      )
+      .all(
+        qRaw,
+        n,
+        `${qRaw}%`,
+        `${n} %`,
+        `${n}%`,
+        `% ${n}%`,
+        n,
+        `%${qRaw}%`,
+        qRaw,
+        n,
+        `${qRaw}%`,
+        `${n} %`,
+        `${n}%`,
+        `% ${n}%`,
+        n,
+        `%${qRaw}%`,
+        SEARCH_LIMIT,
+      );
+
+    return attachPrices(rows).map(({ rank, ...rest }) => rest);
   } catch (error) {
     return [];
   }
@@ -1324,7 +1506,7 @@ ipcMain.handle("get-low-stock-count", async () => {
       .get();
     return { success: true, count };
   } catch (error) {
-    return { success: false, error: error.message, count: 0 };
+    return { success: false, error: error.message };
   }
 });
 
@@ -1576,10 +1758,10 @@ ipcMain.handle(
             roundedCost,
             reason,
             productId,
-            qty,
-          );
-        }
-      }
+qty,
+);
+    }
+  }
 
       return { productName: product.name };
     });
@@ -1903,6 +2085,12 @@ ipcMain.handle(
       const stockStmt = db.prepare(
         "UPDATE products SET stock = stock - ? WHERE id = ?",
       );
+      const allowNoStock =
+        String(
+          db
+            .prepare("SELECT value FROM settings WHERE key = 'sale_without_stock'")
+            .get()?.value || "",
+        ) === "true";
 
       for (const item of cart) {
         // Manual items: null product_id, skip stock update
@@ -1931,7 +2119,7 @@ ipcMain.handle(
           const prod = db
             .prepare("SELECT stock FROM products WHERE id = ?")
             .get(item.id);
-          if (!prod || prod.stock < stockDeducted) {
+          if (!allowNoStock && (!prod || prod.stock < stockDeducted)) {
             throw new Error(
               `Stock insuficiente para "${productName}". Quedan ${prod ? prod.stock : 0}`,
             );
@@ -2512,6 +2700,77 @@ ipcMain.handle("get-all-settings", async () => {
   }
 });
 
+// ─── ACTIVACIÓN DE LA APP MÓVIL ─────────────────────────────
+
+const getActivationStatus = () => {
+  const enabled = activation.isEnabled(db);
+  const ends = activation.graceEndsAt(db);
+  const graceEndsMs = ends ? new Date(ends).getTime() : null;
+  const devices = activation.listDevices(db).map((d) => ({
+    deviceId: d.device_id,
+    deviceName: d.device_name || "Dispositivo móvil",
+    cashierName: d.cashier_name || null,
+    activatedAt: d.activated_at,
+    lastSeenAt: d.last_seen_at,
+    revoked: d.revoked === 1,
+    state:
+      d.revoked === 1
+        ? "revoked"
+        : d.last_seen_at &&
+            Date.now() - new Date(String(d.last_seen_at).replace(" ", "T") + "Z").getTime() <
+              24 * 60 * 60 * 1000
+          ? "online"
+          : "offline",
+  }));
+  return {
+    enabled,
+    code: activation.getActivationCode(db),
+    graceEndsAt: ends,
+    graceActive: enabled && graceEndsMs !== null && Date.now() < graceEndsMs,
+    graceDaysLeft:
+      enabled && graceEndsMs !== null ? Math.max(1, Math.ceil((graceEndsMs - Date.now()) / 86400000)) : 0,
+    devices,
+  };
+};
+
+ipcMain.handle("get-activation-status", async () => getActivationStatus());
+
+ipcMain.handle("set-activation-enabled", async (event, enabled) => {
+  try {
+    if (enabled) activation.ensureGraceEnd(db);
+    activation.setSetting(db, "activation_enabled", enabled ? "1" : "0");
+    return { success: true, status: getActivationStatus() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("set-activation-grace", async (event, mode) => {
+  try {
+    const target =
+      mode === "reset"
+        ? new Date(Date.now() + activation.GRACE_DAYS * 86400000).toISOString()
+        : new Date(Date.now() - 60 * 1000).toISOString();
+    activation.setGraceEnd(db, target);
+    return { success: true, status: getActivationStatus() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("revoke-device", async (event, deviceId) => {
+  return activation.revokeDevice(db, deviceId);
+});
+
+ipcMain.handle("rotate-activation-code", async () => {
+  try {
+    activation.rotateCode(db);
+    return { success: true, status: getActivationStatus() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("get-server-status", () => {
   const api = apiServer.getStatus();
   return {
@@ -2534,11 +2793,12 @@ ipcMain.handle("get-cashiers", async () => {
 
 ipcMain.handle("add-cashier", async (event, cashier) => {
   try {
+    const { salt, hash } = hashPin(cashier.pin || "0000");
     const info = db
       .prepare(
-        "INSERT INTO cashiers (name, pin, role, is_active) VALUES (?, ?, ?, ?)",
+        "INSERT INTO cashiers (name, pin, pin_hash, pin_salt, role, is_active) VALUES (?, '', ?, ?, ?, ?)",
       )
-      .run(cashier.name, cashier.pin || "0000", cashier.role || "cashier", 1);
+      .run(cashier.name, hash, salt, cashier.role || "cashier", 1);
     return { success: true, id: info.lastInsertRowid };
   } catch (error) {
     return { success: false, error: error.message };
@@ -2548,11 +2808,13 @@ ipcMain.handle("add-cashier", async (event, cashier) => {
 ipcMain.handle("update-cashier", async (event, id, cashier) => {
   try {
     if (cashier.pin) {
+      const { salt, hash } = hashPin(cashier.pin);
       db.prepare(
-        "UPDATE cashiers SET name=?, pin=?, role=?, is_active=? WHERE id=?",
+        "UPDATE cashiers SET name=?, pin='', pin_hash=?, pin_salt=?, role=?, is_active=? WHERE id=?",
       ).run(
         cashier.name,
-        cashier.pin,
+        hash,
+        salt,
         cashier.role || "cashier",
         cashier.is_active,
         id,
@@ -2571,10 +2833,13 @@ ipcMain.handle("update-cashier", async (event, id, cashier) => {
 ipcMain.handle("verify-cashier-pin", async (event, id, pin) => {
   try {
     const cashier = db
-      .prepare("SELECT id, name, pin, role FROM cashiers WHERE id = ?")
+      .prepare("SELECT id, name, pin, pin_hash, pin_salt, role FROM cashiers WHERE id = ?")
       .get(id);
     if (!cashier) return { success: false, error: "Cajero no encontrado" };
-    if (cashier.pin !== pin) return { success: false, error: "PIN incorrecto" };
+    const ok = cashier.pin_hash && cashier.pin_salt
+      ? verifyPin(pin, cashier.pin_salt, cashier.pin_hash)
+      : cashier.pin === pin;
+    if (!ok) return { success: false, error: "PIN incorrecto" };
     return {
       success: true,
       cashier: { id: cashier.id, name: cashier.name, role: cashier.role },
@@ -2969,6 +3234,7 @@ ipcMain.handle(
   },
 );
 
+// ─── RESUMEN DEL CORTE (solo totales, sin listas) ────────────
 ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
   try {
     const register = db
@@ -2983,48 +3249,6 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
       )
       .get(registerId);
     if (!register) return { success: false, error: "Caja no encontrada" };
-
-    const sales = db
-      .prepare(
-        `SELECT s.*,
-          CASE WHEN cr.status = 'open' THEN 1 
-               WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
-               ELSE 0 END as can_cancel
-        FROM sales s 
-        LEFT JOIN cash_register cr ON s.register_id = cr.id
-        WHERE s.register_id = ?
-        ORDER BY s.created_at DESC
-        LIMIT 500`,
-      )
-      .all(mxToday(), registerId);
-
-    const items = db
-      .prepare(
-        `
-      SELECT si.*, s.status, COALESCE(p.name, si.product_name) AS product_name, p.barcode, p.sale_unit AS sale_unit, s.created_at as sale_created_at
-      FROM sale_items si
-      JOIN sales s ON si.sale_id = s.id
-      LEFT JOIN products p ON si.product_id = p.id
-      WHERE s.register_id = ?
-      ORDER BY s.created_at DESC
-      LIMIT 500
-    `,
-      )
-      .all(registerId);
-
-    const expenses = db
-      .prepare(
-        `SELECT e.*,
-          CASE WHEN cr.status = 'open' THEN 1 
-               WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
-               ELSE 0 END as can_cancel
-        FROM cash_register_expenses e
-        LEFT JOIN cash_register cr ON e.register_id = cr.id
-        WHERE e.register_id = ?
-        ORDER BY e.created_at DESC
-        LIMIT 500`,
-      )
-      .all(mxToday(), registerId);
 
     const totalSales = db
       .prepare(
@@ -3046,22 +3270,250 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
         "SELECT COALESCE(SUM(amount),0) as t FROM cash_register_expenses WHERE register_id = ? AND (status IS NULL OR status != 'cancelado')",
       )
       .get(registerId).t;
+    const productsCount = db
+      .prepare(
+        `SELECT COUNT(DISTINCT si.product_id) as c
+         FROM sale_items si JOIN sales s ON si.sale_id = s.id
+         WHERE s.register_id = ?
+           AND (s.status IS NULL OR s.status != 'cancelado')
+           AND (si.status IS NULL OR si.status != 'cancelado')`,
+      )
+      .get(registerId).c;
+
+    const liveByMethod = db
+      .prepare(
+        `SELECT payment_method, COALESCE(SUM(total), 0) AS total
+         FROM sales
+         WHERE register_id = ? AND (status IS NULL OR status != 'cancelado')
+         GROUP BY payment_method`,
+      )
+      .all(registerId);
+    const liveCash =
+      liveByMethod.find((m) => m.payment_method === "cash")?.total || 0;
+    const liveCard =
+      liveByMethod.find((m) => m.payment_method === "card")?.total || 0;
+    const liveTransfer =
+      liveByMethod.find((m) => m.payment_method === "transfer")?.total || 0;
+    const cancelledCount = db
+      .prepare(
+        "SELECT COUNT(*) AS c FROM sales WHERE register_id = ? AND status = 'cancelado'",
+      )
+      .get(registerId).c;
 
     return {
       success: true,
       register,
-      sales,
-      items,
-      expenses,
       totalSales,
       totalItems,
       saleCount,
       totalExpenses,
+      productsCount,
+      live: {
+        cashSales: liveCash,
+        cardSales: liveCard,
+        transferSales: liveTransfer,
+        expenses: totalExpenses,
+        cancelledCount,
+      },
     };
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
+
+// ─── MOVIMIENTOS DEL CORTE (feed unificado, paginado y filtrable) ───
+ipcMain.handle(
+  "get-register-movements",
+  async (
+    event,
+    {
+      registerId,
+      search = "",
+      kind = "all",
+      method = "all",
+      status = "all",
+      sort = "recent",
+      page = 1,
+      pageSize = 25,
+    } = {},
+  ) => {
+    try {
+      if (!registerId) return { success: true, rows: [], total: 0 };
+
+      const cteParams = [mxToday(), registerId, mxToday(), registerId];
+      const cte = `
+        WITH movements AS (
+          SELECT
+            'income' AS kind,
+            s.id AS ref_id,
+            s.created_at AS created_at,
+            s.payment_method AS method,
+            s.total AS amount,
+            NULL AS reason,
+            CASE WHEN s.status = 'cancelado' THEN 'cancelled' ELSE 'active' END AS state,
+            CASE WHEN cr.status = 'open' THEN 1
+                 WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1
+                 ELSE 0 END AS can_cancel,
+            (SELECT group_concat(COALESCE(p.name, si.product_name), ', ')
+               FROM sale_items si
+               LEFT JOIN products p ON si.product_id = p.id
+              WHERE si.sale_id = s.id
+                AND (si.status IS NULL OR si.status != 'cancelado')) AS products
+          FROM sales s
+          LEFT JOIN cash_register cr ON s.register_id = cr.id
+          WHERE s.register_id = ?
+          UNION ALL
+          SELECT
+            'expense' AS kind,
+            e.id AS ref_id,
+            e.created_at AS created_at,
+            NULL AS method,
+            -e.amount AS amount,
+            e.reason AS reason,
+            CASE WHEN e.status = 'cancelado' THEN 'cancelled' ELSE 'active' END AS state,
+            CASE WHEN cr.status = 'open' THEN 1
+                 WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1
+                 ELSE 0 END AS can_cancel,
+            NULL AS products
+          FROM cash_register_expenses e
+          LEFT JOIN cash_register cr ON e.register_id = cr.id
+          WHERE e.register_id = ?
+        )
+      `;
+
+      const where = [];
+      const whereParams = [];
+
+      if (kind === "income" || kind === "expense") {
+        where.push("kind = ?");
+        whereParams.push(kind);
+      }
+      if (method !== "all") {
+        where.push("method = ?");
+        whereParams.push(method);
+      }
+      if (status === "active" || status === "cancelled") {
+        where.push("state = ?");
+        whereParams.push(status);
+      }
+
+      const raw = String(search || "").trim();
+      if (raw) {
+        const like = `%${raw}%`;
+        const digits = raw.replace(/[^0-9]/g, "");
+        const terms = [
+          "CAST(ref_id AS TEXT) LIKE ?",
+          "CAST(ABS(amount) AS TEXT) LIKE ?",
+          "COALESCE(reason, '') LIKE ?",
+          "COALESCE(method, '') LIKE ?",
+          "COALESCE(products, '') LIKE ?",
+        ];
+        const termParams = [like, like, like, like, like];
+        if (digits && digits !== raw) {
+          terms.push(
+            "CAST(ref_id AS TEXT) LIKE ?",
+            "CAST(ABS(amount) AS TEXT) LIKE ?",
+          );
+          termParams.push(`%${digits}%`, `%${digits}%`);
+        }
+        where.push(`(${terms.join(" OR ")})`);
+        whereParams.push(...termParams);
+      }
+
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const sortMap = {
+        recent: "created_at DESC, ref_id DESC",
+        oldest: "created_at ASC, ref_id ASC",
+        amount_desc: "ABS(amount) DESC, created_at DESC",
+        amount_asc: "ABS(amount) ASC, created_at DESC",
+      };
+      const orderSql = sortMap[sort] || sortMap.recent;
+
+      const sizeN = Math.min(Math.max(parseInt(pageSize, 10) || 25, 5), 200);
+      const pageN = Math.max(parseInt(page, 10) || 1, 1);
+
+      const total = db
+        .prepare(`${cte} SELECT COUNT(*) AS c FROM movements ${whereSql}`)
+        .get(...cteParams, ...whereParams).c;
+
+      const rows = db
+        .prepare(
+          `${cte} SELECT * FROM movements ${whereSql} ORDER BY ${orderSql} LIMIT ? OFFSET ?`,
+        )
+        .all(...cteParams, ...whereParams, sizeN, (pageN - 1) * sizeN);
+
+      return { success: true, rows, total, page: pageN, pageSize: sizeN };
+    } catch (error) {
+      return { success: false, error: error.message, rows: [], total: 0 };
+    }
+  },
+);
+
+// ─── PRODUCTOS VENDIDOS DEL CORTE (agregado, paginado y filtrable) ───
+ipcMain.handle(
+  "get-register-products",
+  async (
+    event,
+    { registerId, search = "", page = 1, pageSize = 25 } = {},
+  ) => {
+    try {
+      if (!registerId) return { success: true, rows: [], total: 0 };
+
+      const where = [
+        "s.register_id = ?",
+        "(s.status IS NULL OR s.status != 'cancelado')",
+        "(si.status IS NULL OR si.status != 'cancelado')",
+      ];
+      const params = [registerId];
+
+      const raw = String(search || "").trim();
+      if (raw) {
+        const like = `%${raw}%`;
+        where.push(
+          "(COALESCE(p.name, si.product_name) LIKE ? OR COALESCE(p.barcode, '') LIKE ?)",
+        );
+        params.push(like, like);
+      }
+      const whereSql = `WHERE ${where.join(" AND ")}`;
+
+      const inner = `
+        SELECT
+          si.product_id AS product_id,
+          COALESCE(p.name, si.product_name, 'Producto') AS product_name,
+          COALESCE(p.barcode, '') AS barcode,
+          SUM(si.quantity - COALESCE(si.returned_qty, 0)) AS quantity,
+          SUM((si.quantity - COALESCE(si.returned_qty, 0)) * si.price_at_sale) AS gross,
+          SUM((si.quantity - COALESCE(si.returned_qty, 0)) * si.price_at_sale *
+              (1 - COALESCE(si.discount_percent, 0) / 100.0)) AS subtotal
+        FROM sale_items si
+        JOIN sales s ON si.sale_id = s.id
+        LEFT JOIN products p ON si.product_id = p.id
+        ${whereSql}
+        GROUP BY si.product_id, COALESCE(p.name, si.product_name)
+        HAVING SUM(si.quantity - COALESCE(si.returned_qty, 0)) > 0
+      `;
+
+      const total = db
+        .prepare(`SELECT COUNT(*) AS c FROM (${inner})`)
+        .get(...params).c;
+
+      const sizeN = Math.min(Math.max(parseInt(pageSize, 10) || 25, 5), 200);
+      const pageN = Math.max(parseInt(page, 10) || 1, 1);
+
+      const rows = db
+        .prepare(
+          `SELECT * FROM (${inner})
+           ORDER BY subtotal DESC, product_name COLLATE NOCASE ASC
+           LIMIT ? OFFSET ?`,
+        )
+        .all(...params, sizeN, (pageN - 1) * sizeN);
+
+      return { success: true, rows, total, page: pageN, pageSize: sizeN };
+    } catch (error) {
+      return { success: false, error: error.message, rows: [], total: 0 };
+    }
+  },
+);
 
 // ─── VENTAS SEMANALES ────────────────────────────────────────
 ipcMain.handle("get-weekly-sales", async (event, { weeks = 12 }) => {
@@ -3085,6 +3537,78 @@ ipcMain.handle("get-weekly-sales", async (event, { weeks = 12 }) => {
       .all(start);
 
     return { success: true, rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ─── INSIGHTS (bandeja de avisos) ───────────────────────────
+ipcMain.handle("get-insights", async () => {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT * FROM insights WHERE status = 'unread'
+         ORDER BY created_at DESC LIMIT 30`,
+      )
+      .all();
+    const unread = db
+      .prepare(`SELECT COUNT(*) as c FROM insights WHERE status = 'unread'`)
+      .get().c;
+    return { success: true, rows, unread };
+  } catch (error) {
+    return { success: false, error: error.message, rows: [], unread: 0 };
+  }
+});
+
+ipcMain.handle("mark-insight", async (event, { id, status }) => {
+  try {
+    db.prepare(`UPDATE insights SET status = ? WHERE id = ?`).run(status, id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Pulso semanal real: compara últimos 7 días contra los 7 anteriores
+ipcMain.handle("run-weekly-pulse", async () => {
+  try {
+    const weekKey = new Date().toISOString().slice(0, 10);
+    const range = (daysAgo, span) => {
+      const to = new Date(Date.now() - daysAgo * 86400000 - 6 * 3600000);
+      const from = new Date(to.getTime() - span * 86400000);
+      return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+    };
+    const cur = range(0, 7);
+    const prev = range(7, 7);
+    const sum = (a, b) =>
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(total),0) t, COUNT(*) c FROM sales
+           WHERE DATE(created_at,'-6 hours') >= ? AND DATE(created_at,'-6 hours') < ?
+             AND (status IS NULL OR status != 'cancelado')`,
+        )
+        .get(a, b);
+    const c = sum(cur.from, cur.to);
+    const p = sum(prev.from, prev.to);
+    const delta = p.t > 0 ? ((c.t - p.t) / p.t) * 100 : 0;
+    const top = db
+      .prepare(
+        `SELECT product_name, SUM(quantity) qty FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         WHERE DATE(s.created_at,'-6 hours') >= ? AND DATE(s.created_at,'-6 hours') < ?
+           AND (s.status IS NULL OR s.status != 'cancelado')
+         GROUP BY product_name ORDER BY qty DESC LIMIT 3`,
+      )
+      .all(cur.from, cur.to);
+    const body = `Ventas $${c.t.toFixed(0)} (${delta >= 0 ? "+" : ""}${delta.toFixed(0)}% vs sem. pasada). Top: ${
+      top.map((t) => `${t.product_name} (${t.qty})`).join(", ") || "sin datos"
+    }`;
+    db.prepare(`DELETE FROM insights WHERE type = 'weekly_pulse' AND week_key = ?`).run(weekKey);
+    db.prepare(
+      `INSERT INTO insights (type, title, body, route, week_key)
+       VALUES ('weekly_pulse', 'Pulso semanal', ?, '/reports', ?)`,
+    ).run(body, weekKey);
+    return { success: true, body };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -3276,7 +3800,11 @@ ipcMain.handle("restore-backup", async (event, backupPath) => {
     const src = new Database(backupPath, { readonly: true });
     src.backup(db);
     src.close();
-    runMigrations();
+runMigrations();
+
+// Candado de activación por negocio: tabla de dispositivos emparejados +
+// settings mínimos (el código se genera una sola vez en el primer arranque).
+activation.ensureSchema(db);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -3674,8 +4202,8 @@ ipcMain.handle("import-products-data", async (event, filePath) => {
           .map((r) => r.barcode),
       );
       const insert = db.prepare(
-        `INSERT INTO products (barcode, name, brand, price, stock, cost_price, min_stock, sale_unit, box_qty, box_price, pack_qty, pack_price, category_id, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        `INSERT INTO products (barcode, name, search_name, brand, price, stock, cost_price, min_stock, sale_unit, box_qty, box_price, pack_qty, pack_price, category_id, is_active, allow_manual_discount, promo_fixed_price, promo_start_date, promo_end_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, '', '')`,
       );
 
       for (const row of dataRows) {
@@ -3731,6 +4259,7 @@ ipcMain.handle("import-products-data", async (event, filePath) => {
           insert.run(
             barcode || null,
             name,
+            nomarize(name),
             String(getVal(row, "brand") || "").trim() || null,
             toNum(getVal(row, "price")),
             impStock,
@@ -4308,7 +4837,7 @@ ipcMain.handle("activate-catalog-product", async (event, id, data) => {
          price = ?, cost_price = ?, min_stock = ?, sale_unit = ?, stock = ?,
          box_qty = ?, box_price = ?, pack_qty = ?, pack_price = ?,
          category_id = ?, supplier_id = ?, discount_percent = ?, has_discount = ?,
-         is_active = 1
+         allow_manual_discount = ?, promo_fixed_price = ?, promo_start_date = ?, promo_end_date = ?, is_active = 1
        WHERE id = ?`,
     ).run(
       price,
@@ -4324,6 +4853,10 @@ ipcMain.handle("activate-catalog-product", async (event, id, data) => {
       data.supplier_id ? parseInt(data.supplier_id, 10) : prod.supplier_id,
       data.has_discount ? parseFloat(data.discount_percent) || 0 : 0,
       data.has_discount ? 1 : 0,
+      data.allow_manual_discount ? 1 : 0,
+      data.promo_fixed_price || 0,
+      data.promo_start_date || "",
+      data.promo_end_date || "",
       id,
     );
     savePrices(
@@ -4479,6 +5012,34 @@ let scaleConnected = false;
 let scalePortPath = "";
 let scaleBaudRate = 115200;
 let scaleProcess = null;
+let scaleFailCount = 0;
+const SCALE_MAX_CONSECUTIVE_FAILS = 3;
+const SCALE_STREAM_MAX_RETRIES = 3;
+
+const logScale = (msg) =>
+  console.log(`[SCALE] ${new Date().toISOString()} ${msg}`);
+
+// Registra SOLO transiciones reales + motivo exacto.
+const updateScaleConnection = (connected, reason) => {
+  if (scaleConnected === connected) return;
+  scaleConnected = connected;
+  logScale(
+    connected ? `connected via ${reason}` : `disconnected via ${reason}`,
+  );
+};
+
+// Debounce: 3 fallos CONSECUTIVOS antes de marcar desconectada.
+// Mantiene el estado actual en fallos aislados (transitorios).
+const onScaleProbeFailure = (why) => {
+  scaleFailCount += 1;
+  logScale(
+    `probe failure ${scaleFailCount}/${SCALE_MAX_CONSECUTIVE_FAILS}: ${why}`,
+  );
+  if (scaleFailCount >= SCALE_MAX_CONSECUTIVE_FAILS) {
+    updateScaleConnection(false, why);
+    scalePortPath = "";
+  }
+};
 
 const psReadWeightAsync = (port, baud) => {
   const script = `
@@ -4493,7 +5054,7 @@ const psReadWeightAsync = (port, baud) => {
       $port.DiscardInBuffer()
       $port.Write("P")
       $data = ""
-      $deadline = (Get-Date).AddSeconds(3)
+      $deadline = (Get-Date).AddSeconds(5)
       while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 50
         while ($port.BytesToRead -gt 0) {
@@ -4559,20 +5120,28 @@ const psReadWeightAsync = (port, baud) => {
   });
 };
 
-const psContinuousScript = (port, baud) => `
+const psContinuousScript = (port, baud, retries = SCALE_STREAM_MAX_RETRIES) => `
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   $port = New-Object System.IO.Ports.SerialPort "${port}", ${baud}, None, 8, One
   $port.ReadTimeout = -1
-  $port.Open()
+  try {
+    $port.Open()
+  } catch {
+    Write-Output "SCALE_TRANSIENT_ABORT: $($_.Exception.Message)"
+    exit 1
+  }
   Start-Sleep -Milliseconds 200
   $port.DiscardInBuffer()
+  $errorStreak = 0
   while ($true) {
-    if ($port.BytesToRead -eq 0) {
-      try { $port.Write("P") } catch { break }
-    }
-    $data = ""
-    while ($port.BytesToRead -gt 0) {
-      try {
+    $failed = $false
+    $errMsg = ""
+    try {
+      if ($port.BytesToRead -eq 0) {
+        $port.Write("P")
+      }
+      $data = ""
+      while ($port.BytesToRead -gt 0) {
         $bytes = $port.ReadByte()
         if ($bytes -eq 13 -or $bytes -eq 10) {
           if ($data.Length -gt 0) {
@@ -4582,12 +5151,26 @@ const psContinuousScript = (port, baud) => `
         } else {
           $data += [char]$bytes
         }
-      } catch { break }
+      }
+      if ($data.Length -gt 0) {
+        Write-Output $data
+      }
+    } catch {
+      $failed = $true
+      $errMsg = $_.Exception.Message
     }
-    if ($data.Length -gt 0) {
-      Write-Output $data
+    if ($failed) {
+      $errorStreak++
+      if ($errorStreak -gt ${retries}) {
+        Write-Output "SCALE_TRANSIENT_ABORT: $errMsg"
+        break
+      }
+      Write-Output "SCALE_TRANSIENT: $errMsg"
+      Start-Sleep -Milliseconds 500
+    } else {
+      $errorStreak = 0
+      Start-Sleep -Milliseconds 50
     }
-    Start-Sleep -Milliseconds 50
   }
 `;
 
@@ -4614,14 +5197,19 @@ ipcMain.handle("connect-scale", async (event, portPath, baudRate = 115200) => {
   try {
     const probe = await psReadWeightAsync(portPath, baud);
     if (!probe.ok) {
-      scaleConnected = false;
-      scalePortPath = "";
+      onScaleProbeFailure(
+        `probe-fail: ${probe.raw || "No se pudo abrir el puerto"}`,
+      );
       return {
         success: false,
         error: probe.raw || "No se pudo abrir el puerto",
       };
     }
-    scaleConnected = true;
+    scaleFailCount = 0;
+    updateScaleConnection(
+      true,
+      `probe (lectura ${probe.raw.trim() || "sin peso"})`,
+    );
     scalePortPath = portPath;
     scaleBaudRate = baud;
     const match = probe.raw.match(/(-?\d+\.?\d*)/);
@@ -4635,8 +5223,7 @@ ipcMain.handle("connect-scale", async (event, portPath, baudRate = 115200) => {
         : "Puerto abierto, sin lectura (revisa baud/protocolo)",
     };
   } catch (error) {
-    scaleConnected = false;
-    scalePortPath = "";
+    onScaleProbeFailure(`probe-error: ${error.message || "No se pudo conectar"}`);
     return { success: false, error: error.message || "No se pudo conectar" };
   }
 });
@@ -4651,6 +5238,7 @@ ipcMain.handle("read-weight", async () => {
       scaleBaudRate || 115200,
     );
     if (!probe.ok) {
+      logScale(`read-weight probe-fail: ${probe.raw || "No se pudo abrir el puerto"}`);
       return {
         success: false,
         error: probe.raw || "No se pudo abrir el puerto",
@@ -4662,6 +5250,7 @@ ipcMain.handle("read-weight", async () => {
     }
     return { success: false, error: "No se pudo leer el peso", raw: probe.raw };
   } catch (error) {
+    logScale(`read-weight error: ${error.message}`);
     return { success: false, error: error.message };
   }
 });
@@ -4671,7 +5260,8 @@ ipcMain.handle("disconnect-scale", async () => {
     scaleProcess.kill();
     scaleProcess = null;
   }
-  scaleConnected = false;
+  scaleFailCount = 0;
+  updateScaleConnection(false, "user-disconnect");
   scalePortPath = "";
   return { success: true };
 });
@@ -4684,7 +5274,11 @@ ipcMain.handle(
         scaleProcess.kill();
         scaleProcess = null;
       }
-      const script = psContinuousScript(portPath, parseInt(baudRate));
+      const script = psContinuousScript(
+        portPath,
+        parseInt(baudRate),
+        SCALE_STREAM_MAX_RETRIES,
+      );
       const tmpFile = path.join(app.getPath("userData"), "scale-stream.ps1");
       fs.writeFileSync(tmpFile, script, "utf-8");
       scaleProcess = spawn("powershell", [
@@ -4694,10 +5288,12 @@ ipcMain.handle(
         "-File",
         tmpFile,
       ]);
-      scaleConnected = true;
+      scaleFailCount = 0;
+      updateScaleConnection(true, "start-stream");
       scalePortPath = portPath;
       scaleBaudRate = parseInt(baudRate) || 115200;
       const win = BrowserWindow.getAllWindows()[0];
+      let lastStreamTransient = "";
       const scaleSendError = (msg) => {
         console.error("[SCALE STDERR]", msg);
         if (win && !win.isDestroyed()) {
@@ -4709,23 +5305,45 @@ ipcMain.handle(
       });
       scaleProcess.on("error", (err) => {
         scaleSendError(err.message);
-        scaleConnected = false;
         scaleProcess = null;
+        updateScaleConnection(false, `stream-spawn-error: ${err.message}`);
       });
       scaleProcess.on("close", (code) => {
         console.log("[SCALE CLOSED] code:", code);
-        scaleConnected = false;
         scaleProcess = null;
+        updateScaleConnection(
+          false,
+          `stream-close-code:${code}${
+            lastStreamTransient
+              ? ` (previo transitorio: ${lastStreamTransient})`
+              : ""
+          }`,
+        );
       });
       scaleProcess.stdout.on("data", (data) => {
         const lines = String(data).split(/\r?\n/).filter(Boolean);
         for (const line of lines) {
-          const match = line.match(/(-?\d+\.?\d*)/);
-          if (match && win && !win.isDestroyed()) {
-            win.webContents.send("weight-update", {
-              weight: parseFloat(match[1]),
-              raw: line.trim(),
-            });
+          const trimmed = line.trim();
+          if (trimmed.startsWith("SCALE_TRANSIENT_ABORT:")) {
+            lastStreamTransient = trimmed.slice("SCALE_TRANSIENT_ABORT:".length).trim();
+            logScale(`stream agotó reintentos transitorios: ${lastStreamTransient}`);
+          } else if (trimmed.startsWith("SCALE_TRANSIENT:")) {
+            lastStreamTransient = trimmed.slice("SCALE_TRANSIENT:".length).trim();
+            logScale(`stream transitorio, reintentando: ${lastStreamTransient}`);
+            if (win && !win.isDestroyed()) {
+              win.webContents.send(
+                "scale-error",
+                "Báscula: interferencia transitoria, reintentando...",
+              );
+            }
+          } else if (win && !win.isDestroyed()) {
+            const match = trimmed.match(/^-?\d+\.?\d*$/);
+            if (match) {
+              win.webContents.send("weight-update", {
+                weight: parseFloat(match[0]),
+                raw: trimmed,
+              });
+            }
           }
         }
       });
@@ -4769,6 +5387,10 @@ ipcMain.handle("get-printers", async () => {
   }
 });
 
+// GHIA-GTP582 = 203 dpi (8 dots/mm). Forzar el raster a esa densidad evita
+// que Chromium renderice a ~96 dpi y el driver lo escale (texto borroso).
+const RECEIPT_DPI = 203;
+
 ipcMain.handle("print-receipt", async (event, htmlContent) => {
   let printWin = null;
   try {
@@ -4800,9 +5422,12 @@ ipcMain.handle("print-receipt", async (event, htmlContent) => {
         {
           silent: true,
           printBackground: true,
+          color: false,
           deviceName: "GHIA-GTP582",
           margins: { marginType: "none" },
           pageSize: { width: 58000, height: 200000 },
+          dpi: { horizontal: RECEIPT_DPI, vertical: RECEIPT_DPI },
+          scaleFactor: 1,
         },
         (success, errorType) => {
           if (success) resolve(true);

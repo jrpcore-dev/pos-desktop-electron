@@ -228,7 +228,7 @@ const DateRangePicker = React.forwardRef(
           <PopoverContent
             forceMount
             align={align}
-            className="w-auto min-w-max p-0"
+            className="z-[9999] w-auto min-w-max p-0"
             collisionPadding={12}
           >
             <div className="flex flex-col gap-0 sm:flex-row">

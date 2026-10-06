@@ -42,7 +42,7 @@ const SearchSection =
     onBarcodeChange,
     onBarcodeKeyDown,
     pendingQty,
-    onOpenRecarga,
+    onOpenServicios,
     searchResults,
     showSuggestions,
     selectedSuggestionIndex,
@@ -120,7 +120,7 @@ const SearchSection =
             {showGrid ? (
               <QuickProductsGrid
                 onAddProduct={onAddProduct}
-                onOpenRecarga={onOpenRecarga}
+                onOpenServicios={onOpenServicios}
               />
             ) : (
               <div className="flex flex-col gap-1 p-1">

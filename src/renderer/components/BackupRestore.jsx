@@ -186,9 +186,6 @@ const BackupRestore = () => {
     <div className="flex flex-col gap-4 p-1" style={{ animation: "fadeIn 0.4s ease-out" }}>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            Respaldo y Restauración
-          </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             Crea, importa y administra copias de seguridad de la base de datos
           </p>
@@ -248,7 +245,7 @@ const BackupRestore = () => {
                   <p className="truncate text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
                     {s.label}
                   </p>
-                  <p className="mt-2 break-all font-mono text-sm font-semibold leading-tight text-foreground">
+                  <p className="mt-2 break-all text-sm font-semibold leading-tight text-foreground">
                     {s.value}
                   </p>
                 </div>
@@ -344,14 +341,14 @@ const BackupRestore = () => {
               <TableBody>
                 {backups.map((b) => (
                   <TableRow key={b.name} className="border-b border-border">
-                    <TableCell className="font-mono text-[0.8rem] font-medium text-foreground">
+                    <TableCell className="text-[0.8rem] font-medium text-foreground">
                       <span className="inline-flex items-center gap-2">
                         <Database size={15} className="shrink-0 text-muted-foreground/60" />
                         <span className="break-all">{b.name}</span>
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Badge variant="outline" className="font-mono text-xs">
+                      <Badge variant="outline" className="text-xs">
                         {formatSize(b.size)}
                       </Badge>
                     </TableCell>
@@ -480,3 +477,5 @@ function cnAlert(type) {
 }
 
 export default BackupRestore;
+
+

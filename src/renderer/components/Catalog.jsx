@@ -71,9 +71,6 @@ const CatalogHeader = memo(function CatalogHeader() {
           <ScrollText size={18} />
         </span>
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            Catálogo de referencia
-          </h1>
           <p className="text-sm text-muted-foreground">
             Base de datos de productos para autocompletar al escanear — no es tu
             inventario activo
@@ -229,7 +226,7 @@ const CatalogRow = memo(function CatalogRow({
         </div>
       </TableCell>
       <TableCell className="px-4">
-        <span className="font-mono text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {product.barcode || "—"}
         </span>
       </TableCell>
@@ -476,7 +473,7 @@ const Catalog = () => {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="p-4 md:p-6">
+      <div className="p-1">
         <CatalogHeader />
 
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -616,3 +613,5 @@ const Catalog = () => {
 };
 
 export default Catalog;
+
+

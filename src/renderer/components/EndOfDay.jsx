@@ -6,7 +6,6 @@ import {
   CircleCheck,
   CreditCard,
   Download,
-  Eye,
   Info,
   Landmark,
   Lock,
@@ -18,6 +17,7 @@ import {
   Search,
   ShoppingCart,
   Store,
+  Trash2,
   TriangleAlert,
   Wallet,
   X,
@@ -77,6 +77,8 @@ import { useCashier } from "../contexts/CashierContext";
 
 import { jsPDF } from "jspdf";
 import { applyPlugin } from "jspdf-autotable";
+import interFontInline from "../assets/fonts/inter.ttf?inline";
+import { printDocument } from "../utils/printPdf";
 
 applyPlugin(jsPDF);
 
@@ -103,7 +105,6 @@ const TurnoRow = memo(function TurnoRow({
   canManageRegister,
   onSelect,
   onDetail,
-  onRequestCancelSale,
   onRequestCancelExpense,
 }) {
   const isCancelled = item.status === "cancelado";
@@ -168,31 +169,11 @@ const TurnoRow = memo(function TurnoRow({
       {canManageRegister && (
         <TableCell className="whitespace-nowrap text-center">
           {isSale && !isCancelled && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  className="mr-1"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDetail(item);
-                  }}
-                  aria-label="Ver detalle de la venta"
-                >
-                  <Eye size={14} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Ver detalle</TooltipContent>
-            </Tooltip>
-          )}
-
-          {isSale && !isCancelled && (
             <CancelButton
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
-                onRequestCancelSale(item.saleId);
+                onDetail(item);
               }}
             >
               Cancelar
@@ -571,6 +552,40 @@ const EndOfDay = () => {
     }
   };
 
+  const handleCancelSaleDirect = async (saleId) => {
+    if (!saleId) return;
+
+    setCancelLoading(true);
+
+    try {
+      const result = await window.api.invoke("cancel-sale", {
+        saleId,
+        cashierName: cashier?.name,
+        role: cashier?.role,
+        cashierId: cashier?.id,
+      });
+
+      setCancelItemData(null);
+      setSaleDetailData(null);
+
+      if (result.success) {
+        await fetchData();
+
+        setRegisterMessage({
+          type: "success",
+          text: `Venta #${saleId} cancelada. ` + "Se revirtió el stock.",
+        });
+      } else {
+        setRegisterMessage({
+          type: "error",
+          text: result.error,
+        });
+      }
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
   const handleCancelSaleItem = async () => {
     if (!cancelItemData) return;
 
@@ -657,374 +672,7 @@ const EndOfDay = () => {
     }
   };
 
-  const printDailyReport = async () => {
-    const store = await window.api.invoke("get-setting", "store_name");
-
-    const storeName = store || "MI TIENDA POS";
-
-    const now = new Date();
-
-    const today = now.toLocaleDateString("es-MX", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      timeZone: "America/Mexico_City",
-    });
-
-    const methodNames = {
-      cash: "Efectivo",
-      card: "Tarjeta",
-      transfer: "Transferencia",
-    };
-
-    const expensesHtml =
-      expensesList.length > 0
-        ? `
-          <div class="section-title">
-            Gastos / Egresos
-          </div>
-
-          <table>
-            <tr>
-              <th>#</th>
-              <th>Hora</th>
-              <th>Motivo</th>
-              <th>Monto</th>
-            </tr>
-
-            ${expensesList
-              .map(
-                (expense, index) => `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>${formatMXTime(expense.created_at)}</td>
-                    <td>${expense.reason}</td>
-                    <td align="right">
-                      $${Number(expense.amount).toFixed(2)}
-                    </td>
-                  </tr>
-                `,
-              )
-              .join("")}
-
-            <tr class="total-row">
-              <td colspan="3">
-                TOTAL GASTOS
-              </td>
-              <td align="right">
-                $${totalExpenses.toFixed(2)}
-              </td>
-            </tr>
-          </table>
-        `
-        : "";
-
-    const win = window.open("", "_blank");
-
-    if (!win) return;
-
-    win.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Reporte Diario</title>
-
-        <style>
-          body {
-            font-family:
-              'Segoe UI',
-              Arial,
-              sans-serif;
-
-            margin: 30px 40px;
-            color: #1e293b;
-            font-size: 13px;
-          }
-
-          h1 {
-            font-size: 22px;
-            margin-bottom: 2px;
-            letter-spacing: .5px;
-          }
-
-          .subtitle {
-            font-size: 13px;
-            color: #64748b;
-            margin-top: 0;
-            margin-bottom: 20px;
-          }
-
-          hr {
-            border: none;
-            border-top: 2px solid #2563eb;
-            margin: 15px 0;
-          }
-
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 12px 0;
-            font-size: 12px;
-          }
-
-          th {
-            background: #1e3a5f;
-            color: white;
-            padding: 8px 10px;
-            text-align: left;
-          }
-
-          td {
-            padding: 7px 10px;
-            border-bottom: 1px solid #e2e8f0;
-          }
-
-          tr:nth-child(even) {
-            background: #f8fafc;
-          }
-
-          .total-row td {
-            background: #1e3a5f;
-            color: white;
-            font-weight: 700;
-          }
-
-          .resumen-table td {
-            padding: 5px 10px;
-            border: none;
-          }
-
-          .section-title {
-            font-size: 14px;
-            font-weight: 700;
-            color: #1e3a5f;
-            margin: 18px 0 6px;
-          }
-
-          .footer {
-            text-align: center;
-            margin-top: 35px;
-            color: #94a3b8;
-            font-size: 11px;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 12px;
-          }
-
-          .signature {
-            display: flex;
-            justify-content: space-around;
-            margin-top: 40px;
-          }
-
-          .sig-box {
-            text-align: center;
-            width: 200px;
-          }
-
-          .sig-line {
-            display: block;
-            border-top: 2px solid #1e293b;
-            margin-top: 40px;
-            padding-top: 6px;
-            font-size: 12px;
-            color: #1e293b;
-          }
-
-          @media print {
-            body {
-              margin: .5in;
-            }
-
-            .no-print {
-              display: none;
-            }
-          }
-        </style>
-      </head>
-
-      <body>
-
-        <h1>
-          ${storeName.toUpperCase()}
-        </h1>
-
-        <p class="subtitle">
-          Reporte Diario — ${today}
-        </p>
-
-        <hr>
-
-        <div class="section-title">
-          Ventas del Día
-        </div>
-
-        <table>
-          <tr>
-            <th>#</th>
-            <th>Hora</th>
-            <th>Método</th>
-            <th>Total</th>
-          </tr>
-
-          ${sales
-            .filter((sale) => sale.status !== "cancelado")
-            .map(
-              (sale, index) => `
-                <tr>
-                  <td>${index + 1}</td>
-                  <td>${formatMXTime(sale.created_at)}</td>
-                  <td>
-                    ${methodNames[sale.payment_method] || sale.payment_method}
-                  </td>
-                  <td align="right">
-                    $${Number(sale.total).toFixed(2)}
-                  </td>
-                </tr>
-              `,
-            )
-            .join("")}
-
-          <tr class="total-row">
-            <td colspan="3">
-              TOTAL VENTAS
-            </td>
-
-            <td align="right">
-              $${totalSales.toFixed(2)}
-            </td>
-          </tr>
-        </table>
-
-        ${expensesHtml}
-
-        <hr>
-
-        <div class="section-title">
-          Resumen Final
-        </div>
-
-        <table class="resumen-table">
-          <tr>
-            <td>Ventas Totales</td>
-            <td align="right">
-              $${totalSales.toFixed(2)}
-            </td>
-          </tr>
-
-          <tr>
-            <td>Total Gastos</td>
-            <td align="right">
-              -$${totalExpenses.toFixed(2)}
-            </td>
-          </tr>
-
-          <tr>
-            <td>
-              <strong>
-                GANANCIA DEL DÍA
-              </strong>
-            </td>
-
-            <td align="right">
-              <strong>
-                $${(totalSales - totalExpenses).toFixed(2)}
-              </strong>
-            </td>
-          </tr>
-        </table>
-
-        <div class="section-title">
-          Desglose por método
-        </div>
-
-        <table class="resumen-table">
-          <tr>
-            <td>Efectivo</td>
-            <td align="right">
-              $${totalCash.toFixed(2)}
-            </td>
-          </tr>
-
-          <tr>
-            <td>Tarjeta</td>
-            <td align="right">
-              $${totalCard.toFixed(2)}
-            </td>
-          </tr>
-
-          <tr>
-            <td>Transferencia</td>
-            <td align="right">
-              $${totalTransfer.toFixed(2)}
-            </td>
-          </tr>
-        </table>
-
-        ${
-          register
-            ? `
-              <div class="section-title">
-                Control de Caja
-              </div>
-
-              <table class="resumen-table">
-                <tr>
-                  <td>Apertura</td>
-                  <td align="right">
-                    $${Number(register.opening_balance || 0).toFixed(2)}
-                  </td>
-                </tr>
-
-                <tr>
-                  <td>Efectivo en caja</td>
-                  <td align="right">
-                    $${cashInRegister.toFixed(2)}
-                  </td>
-                </tr>
-
-                <tr>
-                  <td>
-                    <strong>
-                      Cierre esperado
-                    </strong>
-                  </td>
-
-                  <td align="right">
-                    <strong>
-                      $${expectedClose.toFixed(2)}
-                    </strong>
-                  </td>
-                </tr>
-              </table>
-            `
-            : ""
-        }
-
-        <div class="signature">
-          <div class="sig-box">
-            <span class="sig-line">Cajero</span>
-          </div>
-          <div class="sig-box">
-            <span class="sig-line">Supervisor</span>
-          </div>
-        </div>
-
-        <div class="footer">
-          Generado el
-          ${formatMXDateTime(now)}
-          — Vendia
-        </div>
-
-      </body>
-      </html>
-    `);
-
-    win.document.close();
-    win.print();
-  };
-
-  const exportDailyPDF = async () => {
+  const buildDailyPDF = async () => {
     const store = await window.api.invoke("get-setting", "store_name");
 
     const storeName = store || "MI TIENDA POS";
@@ -1032,21 +680,54 @@ const EndOfDay = () => {
     const doc = new jsPDF();
 
     const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
 
     const margin = 18;
 
+    // ── FUENTE INTER (embebida desde asset del proyecto) ──
+    let fontName = "helvetica";
+    if (typeof interFontInline === "string" && interFontInline.includes(",")) {
+      try {
+        const b64 = interFontInline.split(",")[1];
+        doc.addFileToVFS("Inter.ttf", b64);
+        doc.addFont("Inter.ttf", "Inter", "normal");
+        doc.addFont("Inter.ttf", "Inter", "bold");
+        doc.setFont("Inter", "normal");
+        fontName = "Inter";
+      } catch (e) {
+        fontName = "helvetica";
+      }
+    }
+
+    // ── PALETA PROFESIONAL (neutros + acento de marca) ──
+    const C = {
+      ink: [15, 23, 42],
+      body: [51, 65, 85],
+      muted: [100, 116, 139],
+      line: [226, 232, 240],
+      grid: [148, 163, 184],
+      head: [241, 245, 249],
+      band: [248, 250, 252],
+      brand: [30, 64, 175],
+      white: [255, 255, 255],
+    };
+
+    // ── ENCABEZADO (nombre de tienda centrado) ──────────
     doc.setFontSize(18);
     doc.setFont(undefined, "bold");
+    doc.setTextColor(...C.ink);
 
-    doc.text(storeName.toUpperCase(), margin, 22);
+    doc.text(storeName.toUpperCase(), pageW / 2, 22, { align: "center" });
 
     doc.setFontSize(10);
     doc.setFont(undefined, "normal");
+    doc.setTextColor(...C.muted);
 
     doc.text(
       `Reporte Diario — ${new Date().toLocaleDateString("es-MX")}`,
-      margin,
+      pageW / 2,
       29,
+      { align: "center" },
     );
 
     doc.setDrawColor(37, 99, 235);
@@ -1054,11 +735,82 @@ const EndOfDay = () => {
 
     doc.line(margin, 33, pageW - margin, 33);
 
+    // ── FRANJA DE RESUMEN FINAL (GANANCIA DESTACADA) ────
+    const bandLeft = margin;
+    const bandRight = pageW - margin;
+    const bandW = bandRight - bandLeft;
+    const bandY = 40;
+    const showRegister = !!register;
+
+    const gainBaseline = bandY + 33;
+    const bandBottom = showRegister ? bandY + 61 : bandY + 41;
+
+    doc.setFillColor(...C.band);
+    doc.setDrawColor(...C.line);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(bandLeft, bandY, bandW, bandBottom - bandY, 1.2, 1.2, "FD");
+
+    doc.setFontSize(9.5);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(...C.muted);
+    doc.text("RESUMEN FINAL", bandLeft + 4, bandY + 8);
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(...C.body);
+    doc.text("Ventas Totales", bandLeft + 4, bandY + 17);
+    doc.text(`$${totalSales.toFixed(2)}`, bandRight - 4, bandY + 17, {
+      align: "right",
+    });
+    doc.text("Total Gastos", bandLeft + 4, bandY + 23.5);
+    doc.text(`-$${totalExpenses.toFixed(2)}`, bandRight - 4, bandY + 23.5, {
+      align: "right",
+    });
+
+    doc.setDrawColor(...C.line);
+    doc.setLineWidth(0.4);
+    doc.line(bandLeft + 4, gainBaseline - 7, bandRight - 4, gainBaseline - 7);
+    doc.setFillColor(...C.white);
+    doc.rect(bandLeft + 4, gainBaseline - 7, bandW - 8, 12.5, "F");
+    doc.setTextColor(...C.ink);
+    doc.setFontSize(11);
+    doc.text("GANANCIA DEL DÍA", bandLeft + 8, gainBaseline);
+    doc.setTextColor(...C.brand);
+    doc.setFontSize(17);
+    doc.text(
+      `$${(totalSales - totalExpenses).toFixed(2)}`,
+      bandRight - 8,
+      gainBaseline + 0.5,
+      { align: "right" },
+    );
+
+    if (showRegister) {
+      doc.setFontSize(9);
+      doc.setTextColor(...C.muted);
+      doc.text("Apertura de caja", bandLeft + 4, bandY + 44.5);
+      doc.text(
+        `$${Number(register.opening_balance || 0).toFixed(2)}`,
+        bandRight - 4,
+        bandY + 44.5,
+        { align: "right" },
+      );
+      doc.text("Efectivo en caja", bandLeft + 4, bandY + 50.5);
+      doc.text(`$${cashInRegister.toFixed(2)}`, bandRight - 4, bandY + 50.5, {
+        align: "right",
+      });
+      doc.text("Cierre esperado", bandLeft + 4, bandY + 56.5);
+      doc.text(`$${expectedClose.toFixed(2)}`, bandRight - 4, bandY + 56.5, {
+        align: "right",
+      });
+    }
+
+    // ── VENTAS DEL DÍA ──────────────────────────────────
+    let yy = bandBottom + 10;
     doc.setFontSize(12);
     doc.setFont(undefined, "bold");
-    doc.setTextColor(30);
+    doc.setTextColor(...C.ink);
 
-    doc.text("VENTAS DEL DÍA", margin, 44);
+    doc.text("VENTAS DEL DÍA", margin, yy);
 
     const saleRows = sales
       .filter((sale) => sale.status !== "cancelado")
@@ -1078,7 +830,7 @@ const EndOfDay = () => {
 
       body: saleRows,
 
-      startY: 48,
+      startY: yy + 4,
 
       margin: {
         left: margin,
@@ -1086,18 +838,29 @@ const EndOfDay = () => {
       },
 
       styles: {
-        fontSize: 8,
-        cellPadding: 2,
+        font: fontName,
+        fontSize: 9,
+        cellPadding: 3,
+        textColor: C.body,
+        lineColor: C.grid,
+        lineWidth: 0.4,
       },
 
       headStyles: {
-        fillColor: [37, 99, 235],
-        textColor: 255,
+        fillColor: C.head,
+        textColor: C.ink,
         fontStyle: "bold",
       },
 
-      alternateRowStyles: {
-        fillColor: [245, 247, 250],
+      footStyles: {
+        fillColor: C.head,
+        textColor: C.ink,
+        fontStyle: "bold",
+      },
+
+      columnStyles: {
+        0: { halign: "center" },
+        3: { halign: "right" },
       },
 
       foot: [
@@ -1115,11 +878,12 @@ const EndOfDay = () => {
       ],
     });
 
-    let yy = doc.lastAutoTable.finalY + 8;
+    yy = doc.lastAutoTable.finalY + 8;
 
     if (expensesList.length > 0) {
       doc.setFontSize(12);
       doc.setFont(undefined, "bold");
+      doc.setTextColor(...C.ink);
 
       doc.text("GASTOS / EGRESOS", margin, yy);
 
@@ -1145,18 +909,29 @@ const EndOfDay = () => {
         },
 
         styles: {
-          fontSize: 8,
-          cellPadding: 2,
+          font: fontName,
+          fontSize: 9,
+          cellPadding: 3,
+          textColor: C.body,
+          lineColor: C.grid,
+          lineWidth: 0.4,
         },
 
         headStyles: {
-          fillColor: [239, 68, 68],
-          textColor: 255,
+          fillColor: C.head,
+          textColor: C.ink,
           fontStyle: "bold",
         },
 
-        alternateRowStyles: {
-          fillColor: [255, 245, 245],
+        footStyles: {
+          fillColor: C.head,
+          textColor: C.ink,
+          fontStyle: "bold",
+        },
+
+        columnStyles: {
+          0: { halign: "center" },
+          3: { halign: "right" },
         },
 
         foot: [
@@ -1177,72 +952,9 @@ const EndOfDay = () => {
       yy = doc.lastAutoTable.finalY + 8;
     }
 
-    doc.setDrawColor(37, 99, 235);
-    doc.setLineWidth(0.5);
-
-    doc.line(margin, yy, pageW - margin, yy);
-
-    yy += 7;
-
-    doc.setFontSize(14);
-    doc.setFont(undefined, "bold");
-
-    doc.text("RESUMEN FINAL", margin, yy);
-
-    yy += 8;
-
-    const summaryRows = [
-      ["Ventas Totales", `$${totalSales.toFixed(2)}`],
-      ["Total Gastos", `-$${totalExpenses.toFixed(2)}`],
-      ["GANANCIA DEL DÍA", `$${(totalSales - totalExpenses).toFixed(2)}`],
-    ];
-
-    if (register) {
-      summaryRows.push(
-        [
-          "Apertura de caja",
-          `$${Number(register.opening_balance || 0).toFixed(2)}`,
-        ],
-        ["Efectivo en caja", `$${cashInRegister.toFixed(2)}`],
-        ["Cierre esperado", `$${expectedClose.toFixed(2)}`],
-      );
-    }
-
-    doc.autoTable({
-      body: summaryRows,
-
-      startY: yy,
-
-      margin: {
-        left: margin + 10,
-        right: margin + 10,
-      },
-
-      styles: {
-        fontSize: 9,
-        cellPadding: 2.5,
-      },
-
-      columnStyles: {
-        0: {
-          fontStyle: "bold",
-          cellWidth: 80,
-        },
-
-        1: {
-          fontStyle: "bold",
-          halign: "right",
-          cellWidth: 50,
-        },
-      },
-
-      theme: "plain",
-    });
-
-    yy = doc.lastAutoTable.finalY + 8;
-
     doc.setFontSize(10);
     doc.setFont(undefined, "bold");
+    doc.setTextColor(...C.ink);
 
     doc.text("Desglose por método:", margin + 10, yy);
 
@@ -1254,10 +966,12 @@ const EndOfDay = () => {
       ["Transferencia", `$${totalTransfer.toFixed(2)}`],
     ].forEach(([label, value]) => {
       doc.setFont(undefined, "normal");
+      doc.setTextColor(...C.body);
 
       doc.text(label, margin + 16, yy);
 
       doc.setFont(undefined, "bold");
+      doc.setTextColor(...C.ink);
 
       doc.text(value, pageW - margin - 16, yy, {
         align: "right",
@@ -1268,7 +982,7 @@ const EndOfDay = () => {
 
     yy += 8;
 
-    doc.setDrawColor(200);
+    doc.setDrawColor(...C.line);
     doc.setLineWidth(0.3);
 
     doc.line(margin, yy, pageW - margin, yy);
@@ -1277,6 +991,7 @@ const EndOfDay = () => {
 
     doc.setFontSize(9);
     doc.setFont(undefined, "normal");
+    doc.setTextColor(...C.body);
 
     doc.text("Cajero: ___________________", margin + 10, yy);
 
@@ -1284,18 +999,33 @@ const EndOfDay = () => {
 
     yy += 14;
 
-    doc.setFontSize(8);
-    doc.setTextColor(150);
+    // ── PIE DE PÁGINA (por página) ──────────────────────
+    const totalPages = doc.getNumberOfPages();
+    for (let pageIdx = 1; pageIdx <= totalPages; pageIdx++) {
+      doc.setPage(pageIdx);
+      const fy = pageH - 10;
+      doc.setFontSize(8);
+      doc.setFont(undefined, "normal");
+      doc.setTextColor(...C.muted);
+      doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, fy);
+      doc.text(`Página ${pageIdx} de ${totalPages}`, pageW / 2, fy, {
+        align: "center",
+      });
+      doc.setFont(undefined, "bold");
+      doc.text("Vendia", pageW - margin, fy, { align: "right" });
+    }
 
-    doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, yy);
+    return doc;
+  };
 
-    doc.setFont(undefined, "bold");
-
-    doc.text("Vendia", pageW - margin, yy, {
-      align: "right",
-    });
-
+  const exportDailyPDF = async () => {
+    const doc = await buildDailyPDF();
     doc.save(`reporte-diario-${mxToday()}.pdf`);
+  };
+
+  const printDailyReport = async () => {
+    const doc = await buildDailyPDF();
+    await printDocument(doc);
   };
 
   const dayItems = useMemo(
@@ -1489,6 +1219,23 @@ const EndOfDay = () => {
     );
   }, [sales, saleDetailData]);
 
+  // Venta de un solo renglón y una sola unidad: el Sheet muestra una
+  // confirmación simple en lugar de la tabla. Con 2+ unidades (ej. 2 cocas)
+  // se muestra la tabla para poder cancelar por renglón.
+  const singleSaleItem = useMemo(() => {
+    const items = saleDetailSale?.items || [];
+    if (items.length !== 1) return null;
+    const it = items[0];
+    const returned = Number(it.returned_qty || 0);
+    const activeQty = Math.max(0, Number(it.quantity || 0) - returned);
+    if (activeQty !== 1) return null;
+    const discount = Number(it.discount_percent || 0);
+    const subtotal = activeQty * Number(it.price_at_sale || 0) * (1 - discount / 100);
+    return { ...it, activeQty, subtotal };
+  }, [saleDetailSale]);
+
+  const isSingle = !!singleSaleItem;
+
   const openCancelItemForm = useCallback(
     (it) => {
       if (cancelItemLoading) return;
@@ -1511,11 +1258,6 @@ const EndOfDay = () => {
       });
     },
     [cancelItemLoading, saleDetailData],
-  );
-
-  const handleRequestCancelSale = useCallback(
-    (saleId) => setCancelSaleData({ id: saleId }),
-    [],
   );
 
   const handleRequestCancelExpense = useCallback(
@@ -1630,8 +1372,12 @@ const EndOfDay = () => {
         setWithdrawReason("");
       }
       setWithdrawDialogOpen(true);
+    } else if (action === "open-register") {
+      if (isOpen) return;
+      setOpeningBalance("");
+      setOpenRegisterModal(true);
     }
-  }, [loading, canManageRegister]);
+  }, [loading, canManageRegister, isOpen]);
 
   const summaryCards = [
     {
@@ -1981,7 +1727,7 @@ const EndOfDay = () => {
                 ) : (
                   <div
                     ref={turnoTableRef}
-                    className="max-h-[400px] overflow-y-auto rounded-lg border"
+                    className="max-h-[600px] overflow-y-auto rounded-lg border"
                   >
                     <Table>
                       <TableHeader className="sticky top-0 z-10 bg-background">
@@ -2009,7 +1755,6 @@ const EndOfDay = () => {
                             canManageRegister={canManageRegister}
                             onSelect={handleSelectTurno}
                             onDetail={handleOpenSaleDetail}
-                            onRequestCancelSale={handleRequestCancelSale}
                             onRequestCancelExpense={
                               handleRequestCancelExpense
                             }
@@ -2717,7 +2462,30 @@ const EndOfDay = () => {
           </SheetHeader>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-            {saleDetailSale && (
+            {saleDetailSale && isSingle && (
+              <div className="flex flex-col items-center gap-4 py-10 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive/10">
+                  <Trash2 size={26} className="text-destructive" />
+                </div>
+
+                <div>
+                  <p className="text-lg font-bold text-foreground">
+                    {singleSaleItem.product_name}
+                  </p>
+
+                  <p className="text-sm font-semibold tabular-nums text-muted-foreground">
+                    ×{singleSaleItem.activeQty} · $
+                    {singleSaleItem.subtotal.toFixed(2)}
+                  </p>
+                </div>
+
+                <p className="max-w-xs text-sm text-muted-foreground">
+                  Se eliminará esta venta y se revertirá el stock.
+                </p>
+              </div>
+            )}
+
+            {saleDetailSale && !isSingle && (
               <>
                 <div className="overflow-hidden rounded-xl border">
                   {(saleDetailSale.items || []).length === 0 ? (
@@ -3100,18 +2868,28 @@ const EndOfDay = () => {
           </div>
 
           <SheetFooter className="sm:justify-between">
-            <Button
-              variant="destructive"
-              disabled={cancelItemLoading}
-              onClick={() => {
-                const saleId = saleDetailSale?.id;
-                setCancelItemData(null);
-                setSaleDetailData(null);
-                setCancelSaleData({ id: saleId });
-              }}
-            >
-              Cancelar toda la venta
-            </Button>
+            {isSingle ? (
+              <Button
+                variant="destructive"
+                disabled={cancelLoading}
+                onClick={() => handleCancelSaleDirect(saleDetailSale?.id)}
+              >
+                {cancelLoading ? <Spinner size={18} /> : "Eliminar venta"}
+              </Button>
+            ) : (
+              <Button
+                variant="destructive"
+                disabled={cancelItemLoading}
+                onClick={() => {
+                  const saleId = saleDetailSale?.id;
+                  setCancelItemData(null);
+                  setSaleDetailData(null);
+                  setCancelSaleData({ id: saleId });
+                }}
+              >
+                Cancelar toda la venta
+              </Button>
+            )}
 
             <Button
               variant="outline"
@@ -3185,3 +2963,4 @@ const EndOfDay = () => {
 };
 
 export default EndOfDay;
+

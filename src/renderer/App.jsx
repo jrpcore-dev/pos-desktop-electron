@@ -21,6 +21,9 @@ const Cashiers = React.lazy(() => import("./components/Cashiers"));
 const ConfigurationScreen = React.lazy(() => import("./components/ConfigurationScreen"));
 const Categories = React.lazy(() => import("./components/Categories"));
 const Transacciones = React.lazy(() => import("./components/Transacciones"));
+const ServicesScreen = React.lazy(() =>
+  import("./components/servicios/ServicesScreen")
+);
 import { CashierProvider, useCashier } from "./contexts/CashierContext";
 import { ThemeModeContext } from "./contexts/ThemeContext";
 
@@ -198,6 +201,7 @@ const AppInner = () => {
             <Route path="categories" element={<Categories />} />
             <Route path="stock-movements" element={<StockMovements />} />
             <Route path="transacciones" element={<Transacciones />} />
+            <Route path="servicios" element={<ServicesScreen />} />
             <Route path="end-of-day" element={<EndOfDay />} />
             <Route path="register-history" element={<RegisterHistory />} />
             <Route path="reports" element={<Reports />} />

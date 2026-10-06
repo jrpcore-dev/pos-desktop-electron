@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Flame, PackagePlus, Smartphone, Plus, X } from "lucide-react";
+import { Flame, PackagePlus, Zap, Plus, X } from "lucide-react";
 
 import { Skeleton } from "./ui/skeleton";
 import { Input } from "./ui/input";
@@ -46,7 +46,7 @@ const writeFavorites = (ids) => {
  * Persistencia en localStorage por caja.
  */
 const QuickProductsGrid = React.memo(
-  ({ onAddProduct, onOpenRecarga, compact = false }) => {
+  ({ onAddProduct, onOpenServicios, compact = false }) => {
     const [products, setProducts] = useState(null);
     const [favorites, setFavorites] = useState(readFavorites);
     const [pickerOpen, setPickerOpen] = useState(false);
@@ -140,11 +140,11 @@ const QuickProductsGrid = React.memo(
               <Plus size={14} />
               Agregar
             </button>
-            {onOpenRecarga && (
-              <button type="button" onClick={onOpenRecarga} title="Venta de recarga"
+            {onOpenServicios && (
+              <button type="button" onClick={onOpenServicios} title="Recargas y pagos de servicios"
                 className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-md border border-dashed border-primary/40 bg-primary/5 px-2.5 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/70 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <Smartphone size={14} aria-hidden />
-                Recarga
+                <Zap size={14} aria-hidden />
+                Servicios
               </button>
             )}
           </div>

@@ -358,12 +358,9 @@ const Suppliers = () => {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="p-4 md:p-6">
+    <div className="p-1">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            Proveedores
-          </h1>
           <p className="text-sm text-muted-foreground">
             Gestiona tus proveedores y datos de contacto
           </p>
@@ -570,3 +567,5 @@ className="flex h-8 w-8 items-center justify-center rounded-lg"
 };
 
 export default Suppliers;
+
+

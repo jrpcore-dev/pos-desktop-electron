@@ -1,7 +1,13 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  memo,
+} from "react";
 import {
   Search, TrendingUp, TrendingDown, ArrowLeftRight, ArrowDownUp, CalendarDays,
-  Store, Undo2, Search as SearchIcon, History, List,
+  Store, Undo2, Search as SearchIcon,
 } from "lucide-react";
 import { useCashier } from "../contexts/CashierContext";
 import { formatMXDate, formatMXTime, mxToday, mxWeekRange } from "../utils/dateUtils";
@@ -64,20 +70,11 @@ const StockMovements = () => {
     return { from: today, to: today };
   });
 
-  const [viewMode, setViewMode] = useState(() => {
-    try {
-      return localStorage.getItem("stockView") === "timeline"
-        ? "timeline"
-        : "table";
-    } catch {
-      return "table";
-    }
-  });
+  const isSingleDay = Boolean(dateRange?.from) && dateRange.from === dateRange.to;
+  const [viewMode, setViewMode] = useState(isSingleDay ? "timeline" : "table");
   useEffect(() => {
-    try {
-      localStorage.setItem("stockView", viewMode);
-    } catch {}
-  }, [viewMode]);
+    setViewMode(isSingleDay ? "timeline" : "table");
+  }, [isSingleDay]);
 
   const {
     pagedRows,
@@ -195,35 +192,11 @@ const StockMovements = () => {
   };
 
   return (
-    <div className="p-4 md:p-6">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            Movimientos
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Historial de movimientos de stock
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            setViewMode((m) => (m === "timeline" ? "table" : "timeline"))
-          }
-          aria-label={
-            viewMode === "timeline"
-              ? "Ver como tabla"
-              : "Ver como línea de tiempo"
-          }
-        >
-          {viewMode === "timeline" ? (
-            <List className="mr-1.5 h-4 w-4" />
-          ) : (
-            <History className="mr-1.5 h-4 w-4" />
-          )}
-          {viewMode === "timeline" ? "Tabla" : "Línea de tiempo"}
-        </Button>
+    <div className="p-1">
+      <div className="mb-6">
+        <p className="text-sm text-muted-foreground">
+          Entradas, salidas, ajustes y devoluciones de inventario
+        </p>
       </div>
 
       {loading ? (
@@ -559,7 +532,7 @@ const StockMovements = () => {
                       </span>
                     </TableCell>
                     <TableCell className="px-4 py-3">
-                      <span className="text-xs font-mono text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {m.barcode}
                       </span>
                     </TableCell>
@@ -615,3 +588,7 @@ const StockMovements = () => {
 };
 
 export default StockMovements;
+
+
+
+

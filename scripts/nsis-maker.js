@@ -1,5 +1,6 @@
 const { MakerBase } = require("@electron-forge/maker-base");
 const { buildForge } = require("app-builder-lib");
+const fs = require("fs");
 const path = require("path");
 
 module.exports = class NsisMaker extends MakerBase {
@@ -51,6 +52,16 @@ module.exports = class NsisMaker extends MakerBase {
           ],
         },
       }
-    );
+    ).then((result) => {
+      // electron-builder NO incluye latest.yml en su lista de artefactos y el
+      // publisher de Forge solo sube lo que el maker reporta. Lo agregamos
+      // explícitamente para que npm run publish suba .exe + .blockmap + latest.yml.
+      const artifactPaths = result && result.artifactPaths ? [...result.artifactPaths] : [];
+      const latestYml = path.join(makeDir, "latest.yml");
+      if (fs.existsSync(latestYml) && !artifactPaths.includes(latestYml)) {
+        artifactPaths.push(latestYml);
+      }
+      return artifactPaths;
+    });
   }
 };

@@ -23,7 +23,6 @@ import WeightDialog from "./WeightDialog";
 import BoxChoiceDialog from "./BoxChoiceDialog";
 import QtyDialog from "./QtyDialog";
 import DiscountDialog from "./DiscountDialog";
-import RechargeDialog from "./RechargeDialog";
 import ManualProductDialog from "./ManualProductDialog";
 import { useMultiCart } from "./cart/useMultiCart";
 import { Button as ShadButton } from "./ui/button";
@@ -49,14 +48,24 @@ import {
   lineUnitPrice,
   committedStockFor,
 } from "../utils/cartMath";
+import { buildReceiptHTML } from "../utils/receiptTemplate";
+
+let roundEnabled = true;
+let roundStep = 0.5;
+let allowSaleWithoutStock = false;
+
+const applyRoundingConfig = (enabled, mode) => {
+  roundEnabled = enabled !== false;
+  const step = parseFloat(mode);
+  roundStep = Number.isFinite(step) && step > 0 ? step : 0.5;
+};
 
 const roundCash = (amount) => {
-  const base = Math.floor(amount);
-  const cents = Math.round((amount - base) * 100);
-  if (cents <= 29) return base;
-  if (cents <= 79) return base + 0.5;
-  return base + 1;
+  if (!roundEnabled || !roundStep) return amount;
+  return Number((Math.round(amount / roundStep) * roundStep).toFixed(2));
 };
+
+const noRound = (amount) => amount;
 
 const parseQtyPrefix = (str) => {
   const m = /^(\d+)\*(.+)$/.exec(str);
@@ -67,7 +76,6 @@ const parseQtyPrefix = (str) => {
   return { qty: null, rest: str };
 };
 
-const PRESET_RECHARGES = [12, 22, 32, 52, 62, 100];
 
 const useMediaQuery = (query) => {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
@@ -134,13 +142,12 @@ const SalesTerminal = () => {
   const [pendingQty, setPendingQty] = useState(1);
   const [qtyDialogOpen, setQtyDialogOpen] = useState(false);
   const [qtyInput, setQtyInput] = useState("");
-  const [recargaDialogOpen, setRecargaDialogOpen] = useState(false);
-  const [recargaAmount, setRecargaAmount] = useState("");
   const [storeSettings, setStoreSettings] = useState({
     name: "MI TIENDA POS",
     website: "www.mitienda.com",
     logo: "",
   });
+  const [receiptNotes, setReceiptNotes] = useState({ header: "", footer: "" });
   const [isSearching, setIsSearching] = useState(false);
   const [searchTimedOut, setSearchTimedOut] = useState(false);
   const [weightDialog, setWeightDialog] = useState({
@@ -300,10 +307,41 @@ const processSaleRef = useRef(null);
         const name = await window.api.invoke("get-setting", "store_name");
         const website = await window.api.invoke("get-setting", "store_website");
         const logo = await window.api.invoke("get-setting", "store_logo");
+        const headerNote = await window.api.invoke(
+          "get-setting",
+          "print_header_note"
+        );
+        const footerNote = await window.api.invoke(
+          "get-setting",
+          "print_footer_note"
+        );
+        const roundingEnabled = await window.api.invoke(
+          "get-setting",
+          "rounding_enabled"
+        );
+        const roundingMode = await window.api.invoke(
+          "get-setting",
+          "rounding_mode"
+        );
+        const saleWithoutStock = await window.api.invoke(
+          "get-setting",
+          "sale_without_stock"
+        );
         if (name)
           setStoreSettings((prev) => ({ ...prev, name: name.toUpperCase() }));
         if (website) setStoreSettings((prev) => ({ ...prev, website }));
         if (logo) setStoreSettings((prev) => ({ ...prev, logo }));
+        setReceiptNotes({
+          header: headerNote || "",
+          footer: footerNote || "",
+        });
+        if (roundingEnabled !== null || roundingMode !== null) {
+          applyRoundingConfig(
+            roundingEnabled === null ? true : roundingEnabled !== "false",
+            roundingMode === null ? "0.50" : roundingMode
+          );
+        }
+        allowSaleWithoutStock = saleWithoutStock === "true";
       } catch (e) {}
     };
     loadSettings();
@@ -313,8 +351,25 @@ const processSaleRef = useRef(null);
       if (storeName) setStoreSettings((prev) => ({ ...prev, name: storeName.toUpperCase() }));
       if (typeof storeLogo === "string") setStoreSettings((prev) => ({ ...prev, logo: storeLogo }));
     };
+    const handlePosSettingsUpdated = (event) => {
+      const { roundingEnabled, roundingMode, saleWithoutStock } =
+        event.detail || {};
+      if (roundingEnabled !== undefined || roundingMode !== undefined) {
+        applyRoundingConfig(
+          roundingEnabled === undefined ? roundEnabled : roundingEnabled,
+          roundingMode === undefined ? roundStep : roundingMode
+        );
+      }
+      if (saleWithoutStock !== undefined) {
+        allowSaleWithoutStock = saleWithoutStock === true;
+      }
+    };
     window.addEventListener("storeSettingsUpdated", handleSettingsUpdated);
-    return () => window.removeEventListener("storeSettingsUpdated", handleSettingsUpdated);
+    window.addEventListener("posSettingsUpdated", handlePosSettingsUpdated);
+    return () => {
+      window.removeEventListener("storeSettingsUpdated", handleSettingsUpdated);
+      window.removeEventListener("posSettingsUpdated", handlePosSettingsUpdated);
+    };
   }, []);
 
   useEffect(() => {
@@ -355,8 +410,7 @@ const processSaleRef = useRef(null);
         boxChoiceDialog.open ||
         weightDialog.open ||
         manualProductModalOpen ||
-        qtyDialogOpen ||
-        recargaDialogOpen
+        qtyDialogOpen
       ) {
         if (isEnter || e.key === "Escape")
           saleKeyLockRef.current = now + 200;
@@ -416,7 +470,7 @@ const processSaleRef = useRef(null);
       }
       if (e.key === "r" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        setRecargaDialogOpen(true);
+        navigate("/servicios");
       }
       if (e.key === "F2") {
         e.preventDefault();
@@ -762,11 +816,14 @@ if (e.key === "Tab" && !isEditable) {
       showNotification(`${product.name} agregado al carrito`, "success");
       return;
     }
-    if (product.stock <= 0) {
+    if (!allowSaleWithoutStock && product.stock <= 0) {
       showNotification("Producto sin stock", "error");
       return;
     }
-    if (product.stock - committedStockFor(product, cartRef.current) < 1) {
+    if (
+      !allowSaleWithoutStock &&
+      product.stock - committedStockFor(product, cartRef.current) < 1
+    ) {
       showNotification("Stock insuficiente", "warning");
       return;
     }
@@ -791,7 +848,10 @@ if (e.key === "Tab" && !isEditable) {
     const { product } = weightDialog;
     const kg = parseFloat(weightAmount) || 0;
     if (kg <= 0) return;
-    if (product.stock - committedStockFor(product, cartRef.current) < kg) {
+    if (
+      !allowSaleWithoutStock &&
+      product.stock - committedStockFor(product, cartRef.current) < kg
+    ) {
       setWeightDialog({ open: false, product: null });
       setWeightAmount("");
       refocusBarcode();
@@ -842,7 +902,11 @@ if (e.key === "Tab" && !isEditable) {
       : isPack
         ? product.pack_qty || 1
         : 1;
-    if (product.stock - committedStockFor(product, cartRef.current) < needPieces * qty) {
+    if (
+      !allowSaleWithoutStock &&
+      product.stock - committedStockFor(product, cartRef.current) <
+        needPieces * qty
+    ) {
       setBoxChoiceDialog({ open: false, product: null });
       refocusBarcode();
       showNotification("Stock insuficiente", "warning");
@@ -999,31 +1063,6 @@ if (e.key === "Tab" && !isEditable) {
     refocusBarcode();
   };
 
-  const confirmRecharge = () => {
-    const amount = parseFloat(recargaAmount);
-    if (!amount || amount <= 0) {
-      showNotification("Ingresa un monto válido", "warning");
-      return;
-    }
-    const item = {
-      id: `recarga-${amount}`,
-      name: `Recarga $${amount}`,
-      price: amount,
-      finalPrice: amount,
-      quantity: 1,
-      discount_percent: 0,
-      has_discount: 0,
-      barcode: `RECARGA-${amount}`,
-      stock: 999,
-      isManual: true,
-    };
-    setCart((prev) => [...prev, item]);
-    setRecargaDialogOpen(false);
-    setRecargaAmount("");
-    refocusBarcode();
-    showNotification(`Recarga $${amount} agregada al carrito`, "success");
-  };
-
   const updateQuantity = useCallback((item, delta) => {
     setCart((prev) =>
       prev
@@ -1037,7 +1076,9 @@ if (e.key === "Tab" && !isEditable) {
           const step = it.isWeightItem ? 0.1 : 1;
           const newQty = it.quantity + delta * step;
           if (newQty <= 0) return null;
-          const qty = Math.min(newQty, it.stock || 999);
+          const qty = allowSaleWithoutStock
+            ? newQty
+            : Math.min(newQty, it.stock || 999);
           const disc = it.discount || 0;
           const fp =
             disc > 0 && qty > 0
@@ -1158,39 +1199,15 @@ if (e.key === "Tab" && !isEditable) {
   };
 
   const generateReceiptHTML = (method) => {
-    const now = new Date();
-    const ticketNum = Date.now().toString().slice(-6);
-    const lines = [];
-
-    if (storeSettings.logo) {
-      lines.push(
-        `<div style="text-align:center;margin-bottom:4px"><img src="${storeSettings.logo}" style="height:100px;max-width:48mm;object-fit:contain"/></div>`,
-      );
-    }
-    lines.push(
-      `<div style="text-align:center;font-weight:bold;font-size:15px">${storeSettings.name}</div>`,
+    const effSubtotal = method === "cash" ? roundCash(subtotal) : subtotal;
+    const effTotal = method === "cash" ? roundCash(total) : total;
+    const showDiscounts = cart.some(
+      (i) =>
+        i.discount_percent > 0 ||
+        i.discount > 0 ||
+        promoInfo(i, i.quantity).applied,
     );
-    lines.push(
-      `<div style="text-align:center;font-size:11px">Sistema de Punto de Venta</div>`,
-    );
-    lines.push(`<div class="sep"></div>`);
-    lines.push(
-      `<div style="text-align:center;font-size:10px">${now.toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Mexico_City" })}<br>${now.toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}</div>`,
-    );
-    lines.push(`<div class="sep"></div>`);
-    lines.push(
-      `<div style="font-size:11px;display:flex;justify-content:space-between"><span>Cajero:</span><span>${cashier?.name || "Usuario Principal"}</span></div>`,
-    );
-    lines.push(
-      `<div style="font-size:11px;display:flex;justify-content:space-between"><span>Ticket #:</span><span>${ticketNum}</span></div>`,
-    );
-    lines.push(`<div class="sep"></div>`);
-    lines.push(
-      `<div style="text-align:center;font-weight:bold;font-size:12px">DETALLE DE COMPRA</div>`,
-    );
-    lines.push(`<div class="sep"></div>`);
-
-    cart.forEach((item) => {
+    const items = cart.map((item) => {
       const promo = promoInfo(item, item.quantity).applied;
       const fp = lineUnitPrice(item, item.quantity);
       const lt = lineTotal(item, item.quantity);
@@ -1206,94 +1223,55 @@ if (e.key === "Tab" && !isEditable) {
         : item.quantity;
       const name =
         item.name.length > 24 ? item.name.substring(0, 22) + ".." : item.name;
-      lines.push(`<div style="font-weight:bold;font-size:12px">${name}</div>`);
-      lines.push(
-        `<div style="display:flex;justify-content:space-between;font-size:10px"><span>${qtyDisplay} ${unit} x $${fp.toFixed(2)}</span><span>$${lt.toFixed(2)}</span></div>`,
-      );
-      if (promo)
-        lines.push(
-          `<div style="text-align:center;font-size:10px;color:purple">${
-            promo.type === "mayoreo"
-              ? `Mayoreo desde ${promo.qty} pz`
-              : `Oferta ${promo.qty} x $${promo.price.toFixed(2)}`
-          }</div>`,
-        );
+      const promoLabel = promo
+        ? promo.type === "mayoreo"
+          ? `Mayoreo desde ${promo.qty} pz`
+          : promo.type === "fijo"
+            ? `Precio fijo $${promo.price.toFixed(2)}`
+            : `Oferta ${promo.qty} x $${promo.price.toFixed(2)}`
+        : null;
+      const discountParts = [];
       if (item.discount_percent > 0)
-        lines.push(
-          `<div style="text-align:center;font-size:10px;color:red">Descuento: -${item.discount_percent}%</div>`,
-        );
-      if (item.discount > 0)
-        lines.push(
-          `<div style="text-align:center;font-size:10px;color:red">Descuento: -$${item.discount.toFixed(2)}</div>`,
-        );
-      lines.push(
-        `<div style="border-bottom:1px dotted #ccc;margin:3px 0"></div>`,
-      );
+        discountParts.push(`-${item.discount_percent}%`);
+      if (item.discount > 0) discountParts.push(`-$${item.discount.toFixed(2)}`);
+
+      return {
+        name,
+        qtyDisplay,
+        unit,
+        unitPrice: fp,
+        lineTotal: lt,
+        promoLabel,
+        discountLabel: discountParts.join(" + ") || null,
+      };
     });
 
-    lines.push(`<div class="sep"></div>`);
-    const effSubtotal =
-      method === "cash" ? roundCash(subtotal) : subtotal;
-    const effTotal = method === "cash" ? roundCash(total) : total;
-    const effDiscount = effSubtotal - effTotal;
-    lines.push(
-      `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Subtotal:</span><span>$${effSubtotal.toFixed(2)}</span></div>`,
-    );
-    if (
-      cart.some(
-        (i) =>
-          i.discount_percent > 0 ||
-          i.discount > 0 ||
-          promoInfo(i, i.quantity).applied,
-      )
-    )
-      lines.push(
-        `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Descuentos:</span><span>-$${effDiscount.toFixed(2)}</span></div>`,
-      );
-    lines.push(`<div class="sep"></div>`);
-    lines.push(
-      `<div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px"><span>TOTAL:</span><span>$${effTotal.toFixed(2)}</span></div>`,
-    );
-    lines.push(`<div class="sep"></div>`);
-    const metodo =
-      method === "card"
-        ? "TARJETA"
-        : method === "transfer"
-          ? "TRANSFERENCIA"
-          : "EFECTIVO";
-    lines.push(
-      `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Metodo:</span><span><strong>${metodo}</strong></span></div>`,
-    );
-    if (method === "cash") {
-      lines.push(
-        `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Recibido:</span><span>$${parseFloat(cashAmount).toFixed(2)}</span></div>`,
-      );
-      lines.push(
-        `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Cambio:</span><span>$${change.toFixed(2)}</span></div>`,
-      );
-    }
-    lines.push(`<div class="sep"></div>`);
-    lines.push(
-      `<div style="text-align:center;font-weight:bold;font-size:13px">¡GRACIAS POR SU COMPRA!</div>`,
-    );
-    lines.push(
-      `<div style="text-align:center;font-size:10px">Conserve este ticket</div>`,
-    );
-    lines.push(
-      `<div style="text-align:center;font-size:9px;margin-top:5px">Vendia</div>`,
-    );
-    lines.push(`<div style="height:20px"></div>`);
-
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-      @page{size:58mm auto;margin:0}
-      *{box-sizing:border-box}
-      body{font-family:'Courier New',monospace;font-size:11px;margin:0 auto;padding:2px 2px;width:48mm;max-width:48mm;background:white;color:black;overflow-wrap:break-word}
-      .sep{border-top:1px dashed #333;margin:5px 0}
-    </style></head><body>${lines.join("")}</body></html>`;
+    return buildReceiptHTML({
+      store: storeSettings,
+      headerNote: receiptNotes.header,
+      footerNote: receiptNotes.footer,
+      ticketNum: Date.now().toString().slice(-6),
+      date: new Date(),
+      cashierName: cashier?.name || "Usuario Principal",
+      items,
+      subtotal: effSubtotal,
+      showDiscounts,
+      discountTotal: effSubtotal - effTotal,
+      total: effTotal,
+      methodLabel:
+        method === "card"
+          ? "TARJETA"
+          : method === "transfer"
+            ? "TRANSFERENCIA"
+            : "EFECTIVO",
+      isCash: method === "cash",
+      received: parseFloat(cashAmount) || 0,
+      change: change || 0,
+    });
   };
 
   return (
-    <div className="flex h-[calc(100vh-120px)] flex-col overflow-hidden">
+      <div className="flex h-[calc(100vh-112px)] flex-col overflow-hidden">
       <ResizablePanelGroup orientation="horizontal" className="flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-md">
@@ -1309,7 +1287,7 @@ if (e.key === "Tab" && !isEditable) {
           onBarcodeChange={setBarcode}
           onBarcodeKeyDown={handleBarcodeSubmit}
           pendingQty={pendingQty}
-          onOpenRecarga={() => setRecargaDialogOpen(true)}
+          onOpenServicios={() => navigate("/servicios")}
           searchResults={searchResults}
           showSuggestions={showSuggestions}
           selectedSuggestionIndex={selectedSuggestionIndex}
@@ -1403,6 +1381,7 @@ if (e.key === "Tab" && !isEditable) {
                       onQuantityChange={updateQuantity}
                       onRemove={removeWithCollapse}
                       onDiscount={openDiscountDialog}
+                      round={isCashPayment ? roundCash : noRound}
                     />
                   </div>
                 </div>
@@ -1658,19 +1637,6 @@ if (e.key === "Tab" && !isEditable) {
         waitingDrawer={waitingDrawer}
         onConfirm={handleCashConfirm}
         onDrawerDone={handleDrawerDone}
-      />
-
-      <RechargeDialog
-        open={recargaDialogOpen}
-        onClose={() => {
-          setRecargaDialogOpen(false);
-          setRecargaAmount("");
-          refocusBarcode();
-        }}
-        amount={recargaAmount}
-        onAmountChange={setRecargaAmount}
-        onConfirm={confirmRecharge}
-        presets={PRESET_RECHARGES}
       />
 
       <QtyDialog

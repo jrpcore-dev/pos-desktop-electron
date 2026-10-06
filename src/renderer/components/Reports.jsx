@@ -36,6 +36,12 @@ import {
 } from "@/components/ui/sheet";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
   Banknote,
   ShoppingCart,
   Receipt,
@@ -80,6 +86,8 @@ import {
 } from "recharts";
 import { jsPDF } from "jspdf";
 import { applyPlugin } from "jspdf-autotable";
+import interFontInline from "../assets/fonts/inter.ttf?inline";
+import { printDocument } from "../utils/printPdf";
 applyPlugin(jsPDF);
 
 const MONTH_NAMES = [
@@ -114,22 +122,22 @@ const C = {
 };
 
 const CHART_PALETTE = [
-  "hsl(var(--chart-1))",
+  "hsl(var(--primary))",
   "hsl(var(--chart-2))",
-  "hsl(var(--chart-3))",
   "hsl(var(--chart-4))",
+  "hsl(var(--chart-1))",
   "hsl(var(--chart-5))",
-  "hsl(var(--success))",
-  "hsl(var(--warning))",
-  "hsl(var(--destructive))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-1) / 0.6)",
+  "hsl(var(--chart-2) / 0.6)",
 ];
 
 const UI_PALETTE = [
   "hsl(var(--primary))",
-  "hsl(var(--secondary))",
-  "hsl(var(--success))",
-  "hsl(var(--warning))",
-  "hsl(var(--destructive))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-5))",
+  "hsl(var(--chart-3))",
   "hsl(var(--info))",
 ];
 
@@ -255,7 +263,7 @@ const Delta = ({ value, invert, suffix = "periodo anterior" }) => {
 };
 
 // ─── TARJETA DE MÉTRICA CLAVE ───────────────────────────────
-const MetricCard = ({ icon, label, value, sub, delta, invert, accent, loading }) => {
+const MetricCard = ({ icon, label, value, sub, delta, deltaMeta, invert, accent, loading }) => {
   if (loading) {
     return (
       <Card className="overflow-hidden">
@@ -288,7 +296,12 @@ const MetricCard = ({ icon, label, value, sub, delta, invert, accent, loading })
             {value}
           </p>
           {typeof delta === "number" && (
-            <Delta value={delta} invert={invert} />
+            <>
+              <Delta value={delta} invert={invert} />
+              {deltaMeta && (
+                <p className="text-[0.68rem] text-muted-foreground tabular-nums">{deltaMeta}</p>
+              )}
+            </>
           )}
           {sub && !delta && (
             <p className="truncate text-[0.7rem] text-muted-foreground">{sub}</p>
@@ -400,6 +413,7 @@ const Reports = () => {
   const [dayLoading, setDayLoading] = useState(false);
 
   // Gráficas
+  const [prodChartMode, setProdChartMode] = useState("barras");
   const [chartMode, setChartMode] = useState("semanal");
   const [chartRefDate, setChartRefDate] = useState(() => new Date());
   const [trendData, setTrendData] = useState([]);
@@ -408,13 +422,16 @@ const Reports = () => {
   const [topProducts, setTopProducts] = useState([]);
   const [topLoading, setTopLoading] = useState(true);
 
-  // ─── FECHA INICIAL (mes en curso) ─────────────────────────
+  // ─── FECHA INICIAL (últimos 7 días, modo semanal) ─────────
   useEffect(() => {
     const today = mxToday();
-    const [y, m] = today.split("-");
-    setStartDate(`${y}-${m}-01`);
+    const [y, m, d] = today.split("-").map(Number);
+    const weekAgo = new Date(Date.UTC(y, m - 1, d - 6));
+    const from = `${weekAgo.getUTCFullYear()}-${String(weekAgo.getUTCMonth() + 1).padStart(2, "0")}-${String(weekAgo.getUTCDate()).padStart(2, "0")}`;
+    setStartDate(from);
     setEndDate(today);
-    setChartMode("mensual");
+    setChartMode("semanal");
+    setChartRefDate(new Date());
   }, []);
 
   useEffect(() => {
@@ -884,28 +901,73 @@ const Reports = () => {
     URL.revokeObjectURL(url);
   };
 
-  const exportPDF = async () => {
+  const buildReportPDF = async () => {
     const store = await window.api.invoke("get-setting", "store_name");
     const storeName = store || "MI TIENDA POS";
     const doc = new jsPDF();
     const pageW = doc.internal.pageSize.getWidth();
     const margin = 18;
 
+    let fontName = "helvetica";
+    if (typeof interFontInline === "string" && interFontInline.includes(",")) {
+      try {
+        const b64 = interFontInline.split(",")[1];
+        doc.addFileToVFS("Inter.ttf", b64);
+        doc.addFont("Inter.ttf", "Inter", "normal");
+        doc.addFont("Inter.ttf", "Inter", "bold");
+        doc.setFont("Inter", "normal");
+        fontName = "Inter";
+      } catch (e) {
+        fontName = "helvetica";
+      }
+    }
+
+    const C = {
+      ink: [15, 23, 42],
+      body: [51, 65, 85],
+      muted: [100, 116, 139],
+      line: [226, 232, 240],
+      grid: [148, 163, 184],
+      head: [241, 245, 249],
+      brand: [30, 64, 175],
+      white: [255, 255, 255],
+    };
+
+    const tblBase = {
+      font: fontName,
+      fontSize: 9,
+      cellPadding: 3,
+      textColor: C.body,
+      lineColor: C.grid,
+      lineWidth: 0.4,
+    };
+    const tblHead = {
+      fillColor: C.head,
+      textColor: C.ink,
+      fontStyle: "bold",
+    };
+
     doc.setFontSize(18);
     doc.setFont(undefined, "bold");
-    doc.text(storeName.toUpperCase(), margin, 22);
+    doc.setTextColor(...C.ink);
+    doc.text(storeName.toUpperCase(), pageW / 2, 22, { align: "center" });
     doc.setFontSize(10);
     doc.setFont(undefined, "normal");
-    doc.setTextColor(100);
-    doc.text(`Reporte analítico — ${startDate} al ${endDate}`, margin, 29);
+    doc.setTextColor(...C.muted);
+    doc.text(
+      `Reporte analítico — ${startDate} al ${endDate}`,
+      pageW / 2,
+      29,
+      { align: "center" },
+    );
 
-    doc.setDrawColor(37, 99, 235);
+    doc.setDrawColor(...C.brand);
     doc.setLineWidth(0.8);
     doc.line(margin, 33, pageW - margin, 33);
 
     doc.setFontSize(14);
     doc.setFont(undefined, "bold");
-    doc.setTextColor(30);
+    doc.setTextColor(...C.ink);
     doc.text("RESUMEN", margin, 44);
     doc.setFontSize(10);
     doc.setFont(undefined, "normal");
@@ -924,10 +986,11 @@ const Reports = () => {
       const y = 54 + Math.floor(i / 3) * 16;
       doc.setFontSize(8);
       doc.setFont(undefined, "bold");
-      doc.setTextColor(37, 99, 235);
+      doc.setTextColor(...C.muted);
       doc.text(c[0].toUpperCase(), x, y);
       doc.setFontSize(13);
-      doc.setTextColor(30);
+      doc.setFont(undefined, "bold");
+      doc.setTextColor(...C.ink);
       doc.text(c[1], x, y + 6);
     });
     yy += 40;
@@ -935,7 +998,7 @@ const Reports = () => {
     if (summary.byMethod.length > 0) {
       doc.setFontSize(11);
       doc.setFont(undefined, "bold");
-      doc.setTextColor(30);
+      doc.setTextColor(...C.ink);
       doc.text("Métodos de pago", margin, yy);
       yy += 4;
       doc.autoTable({
@@ -947,15 +1010,16 @@ const Reports = () => {
           `$${Number(m.total).toFixed(2)}`,
         ]),
         margin: { left: margin, right: margin },
-        styles: { fontSize: 8, cellPadding: 2 },
-        headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
+        styles: tblBase,
+        headStyles: tblHead,
+        columnStyles: { 2: { halign: "right" } },
       });
       yy = doc.lastAutoTable.finalY + 8;
     }
 
     doc.setFontSize(11);
     doc.setFont(undefined, "bold");
+    doc.setTextColor(...C.ink);
     doc.text("Gastos por tipo", margin, yy);
     yy += 4;
     doc.autoTable({
@@ -966,22 +1030,23 @@ const Reports = () => {
         ["Retiros", String(summary.retiroCount), `$${summary.retiro.toFixed(2)}`],
       ],
       margin: { left: margin, right: margin },
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
-      alternateRowStyles: { fillColor: [245, 247, 250] },
+      styles: tblBase,
+      headStyles: tblHead,
+      columnStyles: { 2: { halign: "right" } },
       foot: [
         [
           { content: "TOTAL", colSpan: 2, styles: { fontStyle: "bold", halign: "right" } },
           `$${summary.expensesTotal.toFixed(2)}`,
         ],
       ],
-      footStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
+      footStyles: { fillColor: C.head, textColor: C.ink, fontStyle: "bold" },
     });
     yy = doc.lastAutoTable.finalY + 8;
 
     if (topProducts.length > 0) {
       doc.setFontSize(11);
       doc.setFont(undefined, "bold");
+      doc.setTextColor(...C.ink);
       doc.text("Productos más vendidos", margin, yy);
       yy += 4;
       doc.autoTable({
@@ -989,93 +1054,50 @@ const Reports = () => {
         head: [["Producto", "Unidades"]],
         body: topProducts.slice(0, 10).map((p, i) => [`${i + 1}. ${p.name}`, String(p.total_sold)]),
         margin: { left: margin, right: margin },
-        styles: { fontSize: 8, cellPadding: 2 },
-        headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
+        styles: tblBase,
+        headStyles: tblHead,
       });
       yy = doc.lastAutoTable.finalY + 8;
     }
 
-    doc.setFontSize(8);
-    doc.setFont(undefined, "normal");
-    doc.setTextColor(150);
-    doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, yy);
-    doc.setFont(undefined, "bold");
-    doc.text("Vendia", pageW - margin, yy, { align: "right" });
+    const totalPages = doc.getNumberOfPages();
+    for (let pageIdx = 1; pageIdx <= totalPages; pageIdx++) {
+      doc.setPage(pageIdx);
+      const fy = doc.internal.pageSize.getHeight() - 10;
+      doc.setFontSize(8);
+      doc.setFont(undefined, "normal");
+      doc.setTextColor(...C.muted);
+      doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, fy);
+      doc.text(`Página ${pageIdx} de ${totalPages}`, pageW / 2, fy, {
+        align: "center",
+      });
+      doc.setFont(undefined, "bold");
+      doc.setTextColor(...C.ink);
+      doc.text("Vendia", pageW - margin, fy, { align: "right" });
+    }
 
+    return doc;
+  };
+
+  const exportPDF = async () => {
+    const doc = await buildReportPDF();
     doc.save(`reporte-analitico-${startDate}-a-${endDate}.pdf`);
   };
 
   const printReport = async () => {
-    const store = await window.api.invoke("get-setting", "store_name");
-    const storeName = store || "MI TIENDA POS";
-    const win = window.open("", "_blank");
-    const methodRows = (summary.byMethod || [])
-      .map(
-        (m) =>
-          `<tr><td>${methodLabels[m.payment_method] || m.payment_method}</td><td align="right">${m.count}</td><td align="right">$${Number(m.total).toFixed(2)}</td></tr>`
-      )
-      .join("");
-    const productRows = topProducts
-      .slice(0, 10)
-      .map(
-        (p, i) =>
-          `<tr><td>${i + 1}. ${p.name}</td><td align="right">${p.total_sold}</td></tr>`
-      )
-      .join("");
-    win.document.write(`<!DOCTYPE html><html lang="es"><head><title>Reporte analítico</title>
-      <style>
-        body{font-family:'Segoe UI',Arial,sans-serif;margin:30px 40px;color:#1e293b;font-size:13px}
-        h1{font-size:22px;color:#1e3a5f;margin-bottom:2px}
-        .subtitle{color:#64748b;margin:0 0 20px}
-        hr{border:none;border-top:2px solid #2563eb;margin:15px 0}
-        table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
-        th{background:#1e3a5f;color:#fff;padding:8px 10px;text-align:left}
-        td{padding:7px 10px;border-bottom:1px solid #e2e8f0}
-        tr:nth-child(even){background:#f8fafc}
-        .kpis{display:flex;gap:8px;flex-wrap:wrap}
-        .kpi{flex:1;min-width:120px;border:1px solid #e2e8f0;border-radius:8px;padding:10px}
-        .kpi .t{font-size:10px;text-transform:uppercase;color:#64748b}
-        .kpi .v{font-size:18px;font-weight:700;margin-top:2px}
-        .section-title{font-size:14px;font-weight:700;color:#1e3a5f;margin:18px 0 6px}
-        .footer{text-align:center;margin-top:35px;color:#94a3b8;font-size:11px;border-top:1px solid #e2e8f0;padding-top:12px}
-        @media print{body{margin:0.5in}}
-      </style></head><body>
-      <h1>${storeName.toUpperCase()}</h1>
-      <p class="subtitle">Reporte analítico — ${startDate} al ${endDate}</p>
-      <hr>
-      <div class="kpis">
-        <div class="kpi"><div class="t">Ventas</div><div class="v">$${summary.salesTotal.toFixed(2)}</div></div>
-        <div class="kpi"><div class="t">Transacciones</div><div class="v">${summary.salesCount}</div></div>
-        <div class="kpi"><div class="t">Ticket Prom.</div><div class="v">$${summary.avgTicket.toFixed(2)}</div></div>
-        <div class="kpi"><div class="t">Gastos</div><div class="v">$${summary.expensesTotal.toFixed(2)}</div></div>
-        <div class="kpi"><div class="t">Utilidad</div><div class="v">$${summary.profit.toFixed(2)}</div></div>
-        <div class="kpi"><div class="t">Margen</div><div class="v">${summary.profitMargin.toFixed(1)}%</div></div>
-      </div>
-      ${methodRows ? `<div class="section-title">Métodos de pago</div>
-      <table><tr><th>Método</th><th>Ventas</th><th>Total</th></tr>${methodRows}</table>` : ""}
-      <div class="section-title">Gastos por tipo</div>
-      <table>
-        <tr><th>Tipo</th><th>Cantidad</th><th>Total</th></tr>
-        <tr><td>Compras</td><td align="right">${summary.compraCount}</td><td align="right">$${summary.compra.toFixed(2)}</td></tr>
-        <tr><td>Retiros</td><td align="right">${summary.retiroCount}</td><td align="right">$${summary.retiro.toFixed(2)}</td></tr>
-        <tr><td colspan="2" align="right"><b>TOTAL</b></td><td align="right"><b>$${summary.expensesTotal.toFixed(2)}</b></td></tr>
-      </table>
-      ${productRows ? `<div class="section-title">Productos más vendidos</div>
-      <table><tr><th>Producto</th><th>Unidades</th></tr>${productRows}</table>` : ""}
-      <div class="footer">Generado el ${new Date().toLocaleString("es-MX")} - Vendia</div>
-    </body></html>`);
-    win.document.close();
-    win.print();
+    const doc = await buildReportPDF();
+    await printDocument(doc);
   };
 
   // ─── DATOS DERIVADOS PARA GRÁFICAS ─────────────────────────
-  const pieData = (summary.byMethod || []).map((m, i) => ({
-    name: methodLabels[m.payment_method] || m.payment_method,
-    value: Number(m.total) || 0,
-    count: m.count,
-    fill: UI_PALETTE[i % UI_PALETTE.length],
-  }));
+  const pieData = [...(summary.byMethod || [])]
+    .sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0))
+    .map((m, i) => ({
+      name: methodLabels[m.payment_method] || m.payment_method,
+      value: Number(m.total) || 0,
+      count: m.count,
+      fill: UI_PALETTE[i % UI_PALETTE.length],
+    }));
 
   const bestProduct = topProducts[0] || null;
   const prodRows = topProducts.slice(0, 10);
@@ -1149,11 +1171,8 @@ const Reports = () => {
         {/* ─── CABECERA ─────────────────────────────────────── */}
         <header className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Reportes y analítica
-            </h1>
             <p className="text-sm text-muted-foreground">
-              Dashboard de rendimiento del período{" "}
+              Rendimiento del período{" "}
               <span className="font-semibold tabular-nums text-foreground">
                 {startDate} → {endDate}
               </span>
@@ -1180,35 +1199,48 @@ const Reports = () => {
               </TooltipTrigger>
               <TooltipContent>Inspección diaria por calendario</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCSV}>
-                  <FileSpreadsheet className="h-4 w-4" />
-                  CSV
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Exportar CSV</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={exportPDF}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5">
                   <Download className="h-4 w-4" />
-                  PDF
+                  Exportar
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>Exportar PDF</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={printReport}>
-                  <Printer className="h-4 w-4" />
-                  Imprimir
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Imprimir reporte</TooltipContent>
-            </Tooltip>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportCSV}>
+                  <FileSpreadsheet className="h-4 w-4" /> CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportPDF}>
+                  <Download className="h-4 w-4" /> PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={printReport}>
+                  <Printer className="h-4 w-4" /> Imprimir
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
+
+        {/* ─── RESUMEN EN LENGUAJE CLARO ─────────────────────── */}
+        <section className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3">
+          <p className="text-sm leading-relaxed text-foreground">
+            En este período vendiste{" "}
+            <span className="font-semibold tabular-nums">{fmtMoney(summary.salesTotal)}</span> en{" "}
+            <span className="font-semibold tabular-nums">{summary.salesCount}</span>             ventas{" "}
+            ({(() => {
+              const d = pctOf(summary.salesTotal, summary.prevSales);
+              return `${d >= 0 ? "+" : ""}${d.toFixed(0)}%`;
+            })()}{" "}
+            vs período anterior)
+            . Tu producto estrella fue{" "}
+            <span className="font-semibold">{bestProduct ? bestProduct.name : "—"}</span>
+            {bestProduct ? ` con ${bestProduct.total_sold} unidades` : ""}, y tu hora pico es{" "}
+            <span className="font-semibold tabular-nums">
+              {summary.peakHour != null ? `${summary.peakHour}:00` : "—"}
+            </span>
+            .
+          </p>
+        </section>
 
         {/* ─── KPIs ─────────────────────────────────────────── */}
         <section className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
@@ -1219,6 +1251,7 @@ const Reports = () => {
             label="Ventas totales"
             value={fmtMoney(summary.salesTotal)}
             delta={pctOf(summary.salesTotal, summary.prevSales)}
+            deltaMeta={`${fmtMoney(summary.prevSales)} → ${fmtMoney(summary.salesTotal)}`}
           />
           <MetricCard
             loading={loading}
@@ -1227,6 +1260,7 @@ const Reports = () => {
             label="Transacciones"
             value={String(summary.salesCount)}
             delta={pctOf(summary.salesCount, summary.prevCount)}
+            deltaMeta={`${summary.prevCount} → ${summary.salesCount} ventas`}
           />
           <MetricCard
             loading={loading}
@@ -1238,6 +1272,7 @@ const Reports = () => {
               summary.avgTicket,
               summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0
             )}
+            deltaMeta={`${fmtMoney(summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0)} → ${fmtMoney(summary.avgTicket)}`}
           />
           <MetricCard
             loading={loading}
@@ -1249,6 +1284,7 @@ const Reports = () => {
               summary.profit,
               summary.prevSales - summary.prevExpenses
             )}
+            deltaMeta={`${fmtMoney(summary.prevSales - summary.prevExpenses)} → ${fmtMoney(summary.profit)}`}
           />
           <MetricCard
             loading={loading}
@@ -1266,7 +1302,7 @@ const Reports = () => {
             value={fmtMoney(summary.expensesTotal)}
             delta={pctOf(summary.expensesTotal, summary.prevExpenses)}
             invert
-            sub={`${summary.expensesCount} movimientos`}
+            deltaMeta={`${fmtMoney(summary.prevExpenses)} → ${fmtMoney(summary.expensesTotal)} · ${summary.expensesCount} movs`}
           />
           <MetricCard
             loading={loading}
@@ -1301,7 +1337,13 @@ const Reports = () => {
 
         {/* ─── CONTROLES DE GRÁFICAS ────────────────────────── */}
         <section className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <Tabs value={chartMode} onValueChange={(v) => setChartMode(v)}>
+          <Tabs
+            value={chartMode}
+            onValueChange={(v) => {
+              setChartMode(v);
+              syncRangeWithChart(chartRefDate, v);
+            }}
+          >
             <TabsList>
               <TabsTrigger value="semanal">Semanal</TabsTrigger>
               <TabsTrigger value="mensual">Mensual</TabsTrigger>
@@ -1521,11 +1563,19 @@ const Reports = () => {
 
           {/* Top productos */}
           <Card className="min-w-0">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Productos más vendidos</CardTitle>
-              <CardDescription className="text-xs">
-                Ranking histórico de unidades vendidas
-              </CardDescription>
+            <CardHeader className="flex-row items-start justify-between pb-0">
+              <div>
+                <CardTitle className="text-sm">Productos más vendidos</CardTitle>
+                <CardDescription className="text-xs">
+                  Ranking histórico de unidades vendidas
+                </CardDescription>
+              </div>
+              <Tabs value={prodChartMode} onValueChange={setProdChartMode}>
+                <TabsList className="h-7">
+                  <TabsTrigger value="barras" className="px-2 text-[11px]">Barras</TabsTrigger>
+                  <TabsTrigger value="pastel" className="px-2 text-[11px]">Pastel</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </CardHeader>
             <CardContent className="pt-2">
               {topLoading ? (
@@ -1534,7 +1584,7 @@ const Reports = () => {
                     <Skeleton key={i} className="h-7 w-full" />
                   ))}
                 </div>
-              ) : prodRows.length > 0 ? (
+              ) : prodRows.length > 0 && prodChartMode === "barras" ? (
                 <div className="h-[220px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -1565,12 +1615,41 @@ const Reports = () => {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+              ) : prodChartMode === "pastel" && productDonut.length > 0 ? (
+                <>
+                  <div className="relative h-[196px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={productDonut} dataKey="value" nameKey="name" innerRadius={64} outerRadius={86} paddingAngle={2} strokeWidth={2} stroke="hsl(var(--card))">
+                          {productDonut.map((p, i) => (
+                            <Cell key={i} fill={p.fill} />
+                          ))}
+                        </Pie>
+                        <ReTooltip content={UnitTooltip} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                      <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground">Unidades</p>
+                      <p className="text-base font-bold tabular-nums text-foreground">{totalUnits.toLocaleString("es-MX")}</p>
+                    </div>
+                  </div>
+                  <div className="mt-1 grid gap-1.5">
+                    {productDonut.map((p) => (
+                      <div key={p.name} className="flex items-center justify-between gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs">
+                        <span className="inline-flex min-w-0 items-center gap-2 font-semibold text-foreground">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
+                          <span className="truncate">{p.name}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2.5">
+                          <span className="tabular-nums text-muted-foreground">{p.value.toLocaleString("es-MX")} uds</span>
+                          <span className="font-bold tabular-nums">{p.pct.toFixed(1)}%</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
               ) : (
-                <EmptyState
-                  icon={<ShoppingCart className="h-6 w-6" />}
-                  title="Sin productos"
-                  description="Aún no hay ventas registradas"
-                />
+                <EmptyState icon={<ShoppingCart className="h-6 w-6" />} title="Sin productos" description="Aún no hay ventas registradas" />
               )}
             </CardContent>
           </Card>
@@ -1619,83 +1698,6 @@ const Reports = () => {
                 <EmptyState
                   icon={<ShoppingCart className="h-6 w-6" />}
                   title="Sin categorías"
-                  description="Aún no hay ventas registradas"
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Participación de productos vendidos */}
-          <Card className="min-w-0">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Participación de productos vendidos</CardTitle>
-              <CardDescription className="text-xs">
-                Porcentaje de unidades de los más vendidos
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {topLoading ? (
-                <div className="flex flex-col items-center gap-4 py-3">
-                  <Skeleton className="h-[180px] w-[180px] rounded-full" />
-                  <Skeleton className="h-4 w-40" />
-                </div>
-              ) : productDonut.length > 0 ? (
-                <>
-                  <div className="relative h-[196px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={productDonut}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius={64}
-                          outerRadius={86}
-                          paddingAngle={2}
-                          strokeWidth={2}
-                          stroke="hsl(var(--card))"
-                        >
-                          {productDonut.map((p, i) => (
-                            <Cell key={i} fill={p.fill} />
-                          ))}
-                        </Pie>
-                        <ReTooltip content={UnitTooltip} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Unidades
-                      </p>
-                      <p className="text-base font-bold tabular-nums text-foreground">
-                        {totalUnits.toLocaleString("es-MX")}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-1 grid gap-1.5">
-                    {productDonut.map((p) => (
-                      <div
-                        key={p.name}
-                        className="flex items-center justify-between gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs"
-                      >
-                        <span className="inline-flex min-w-0 items-center gap-2 font-semibold text-foreground">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
-                          <span className="truncate">{p.name}</span>
-                        </span>
-                        <span className="flex shrink-0 items-center gap-2.5">
-                          <span className="tabular-nums text-muted-foreground">
-                            {p.value.toLocaleString("es-MX")} uds
-                          </span>
-                          <span className="font-bold tabular-nums">
-                            {p.pct.toFixed(1)}%
-                          </span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <EmptyState
-                  icon={<ShoppingCart className="h-6 w-6" />}
-                  title="Sin productos"
                   description="Aún no hay ventas registradas"
                 />
               )}

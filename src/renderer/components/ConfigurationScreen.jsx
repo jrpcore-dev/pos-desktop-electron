@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
+  Check,
   CloudUpload,
+  FlaskConical,
   Loader2,
   Printer,
   ReceiptText,
   Save,
-  ShieldCheck,
   SlidersHorizontal,
+  Smartphone,
   Store,
   Trash2,
 } from "lucide-react";
@@ -34,6 +36,55 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ToastProvider";
 import { cn } from "@/lib/utils";
 
+const trimWhitespace = (canvas) => {
+  const { width, height } = canvas;
+  const ctx = canvas.getContext("2d");
+  let data;
+  try {
+    data = ctx.getImageData(0, 0, width, height).data;
+  } catch {
+    return canvas;
+  }
+  const threshold = 245;
+  let top = height;
+  let left = width;
+  let right = -1;
+  let bottom = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const isWhite =
+        data[i + 3] < 16 ||
+        (data[i] >= threshold &&
+          data[i + 1] >= threshold &&
+          data[i + 2] >= threshold);
+      if (!isWhite) {
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+  }
+  if (right < left || bottom < top) return canvas;
+  const pad = 2;
+  left = Math.max(0, left - pad);
+  top = Math.max(0, top - pad);
+  right = Math.min(width - 1, right + pad);
+  bottom = Math.min(height - 1, bottom + pad);
+  const w = right - left + 1;
+  const h = bottom - top + 1;
+  if (w === width && h === height) return canvas;
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext("2d");
+  octx.fillStyle = "#ffffff";
+  octx.fillRect(0, 0, w, h);
+  octx.drawImage(canvas, left, top, w, h, 0, 0, w, h);
+  return out;
+};
+
 const resizeImage = (dataUrl, maxSize = 256) =>
   new Promise((resolve) => {
     const img = new Image();
@@ -49,7 +100,7 @@ const resizeImage = (dataUrl, maxSize = 256) =>
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/png"));
+      resolve(trimWhitespace(canvas).toDataURL("image/png"));
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
@@ -59,7 +110,7 @@ const TABS = [
   { id: "store", label: "Datos Generales", icon: Store },
   { id: "ticket", label: "Tickets", icon: ReceiptText },
   { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal },
-  { id: "security", label: "Seguridad y NIP", icon: ShieldCheck },
+  { id: "mobile", label: "App Móvil", icon: Smartphone },
   { id: "printer", label: "Impresora", icon: Printer },
 ];
 
@@ -81,10 +132,11 @@ const TABS_META = {
     title: "Parámetros del POS",
     description: "Impuestos, redondeo y reglas de operación de la terminal.",
   },
-  security: {
-    icon: ShieldCheck,
-    title: "Seguridad y NIP",
-    description: "Bloqueo automático y restricciones con contraseña del cajero.",
+  mobile: {
+    icon: Smartphone,
+    title: "App Móvil",
+    description:
+      "Código de activación y dispositivos autorizados para la app móvil.",
   },
   printer: {
     icon: Printer,
@@ -96,7 +148,6 @@ const TABS_META = {
 const PREVIEW_ITEMS = [
   { name: "Coca-Cola 600 ml", qty: 2, price: 21.5 },
   { name: "Pan Blanco Bimbo", qty: 1, price: 38.0 },
-  { name: "Galletas Emperador", qty: 3, price: 24.5 },
 ];
 
 const fmt = (n) =>
@@ -104,6 +155,13 @@ const fmt = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+
+const ROUNDING_MODES = [
+  { value: "0.10", label: "Cada $0.10", example: "$10.23 → $10.20" },
+  { value: "0.20", label: "Cada $0.20", example: "$10.15 → $10.20" },
+  { value: "0.50", label: "Cada $0.50", example: "$10.30 → $10.50" },
+  { value: "1.00", label: "Cada peso", example: "$10.30 → $10.00" },
+];
 
 const SELECT_TRIGGER = "h-10 w-full";
 
@@ -117,9 +175,14 @@ const PRINTER_STATUS = {
   4: "Desconocida",
 };
 
-function FieldRow({ label, description, children, wide }) {
+function FieldRow({ label, description, children, wide, disabled }) {
   return (
-    <div className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+    <div
+      className={cn(
+        "flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-8",
+        disabled && "opacity-40",
+      )}
+    >
       <div className="min-w-0 sm:w-64 sm:shrink-0">
         <p className="text-sm font-medium text-foreground">{label}</p>
         {description && (
@@ -128,16 +191,30 @@ function FieldRow({ label, description, children, wide }) {
           </p>
         )}
       </div>
-      <div className={cn("w-full shrink-0", wide ? "sm:w-96" : "sm:w-72")}>
+      <div
+        className={cn(
+          "w-full shrink-0",
+          wide ? "sm:w-96" : "sm:w-72",
+          disabled && "pointer-events-none",
+        )}
+      >
         {children}
       </div>
     </div>
   );
 }
 
-function ToggleBlock({ title, description, checked, onCheckedChange, children }) {
+function ToggleBlock({
+  title,
+  description,
+  checked,
+  onCheckedChange,
+  children,
+  disabled,
+  fullWidth,
+}) {
   return (
-    <div className="flex flex-col gap-4 py-5">
+    <div className={cn("flex flex-col gap-4 py-5", disabled && "opacity-40")}>
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
           <p className="text-sm font-medium text-foreground">{title}</p>
@@ -150,10 +227,21 @@ function ToggleBlock({ title, description, checked, onCheckedChange, children })
         <Switch
           checked={checked}
           onCheckedChange={onCheckedChange}
+          disabled={disabled}
           className="mt-0.5 shrink-0"
         />
       </div>
-      {children && <div className="w-full sm:pl-72">{children}</div>}
+      {children && (
+        <div
+          className={cn(
+            "w-full",
+            !fullWidth && "sm:pl-72",
+            disabled && "pointer-events-none",
+          )}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -184,7 +272,12 @@ function ConfigurationScreen() {
         if (settings.store_rfc !== undefined) setStoreRfc(settings.store_rfc);
         if (settings.store_phone !== undefined) setStorePhone(settings.store_phone);
         if (settings.store_email !== undefined) setStoreEmail(settings.store_email);
-        if (settings.store_logo !== undefined) setStoreLogo(settings.store_logo);
+        if (settings.store_logo) {
+          const trimmed = await resizeImage(settings.store_logo);
+          setStoreLogo(trimmed);
+        } else if (settings.store_logo !== undefined) {
+          setStoreLogo("");
+        }
       } catch (err) {
         console.error("Error loading store settings:", err);
       } finally {
@@ -256,9 +349,11 @@ function ConfigurationScreen() {
     }
   };
 
-  const [printHeaderNote, setPrintHeaderNote] = useState("Gracias por su compra");
+  const [printHeaderNote, setPrintHeaderNote] = useState(
+    "Sistema de Punto de Venta"
+  );
   const [printFooterNote, setPrintFooterNote] = useState(
-    "Vuelva pronto • Cambios con ticket"
+    "¡GRACIAS POR SU COMPRA!"
   );
   const [printTaxBreakdown, setPrintTaxBreakdown] = useState(true);
   const [printTwoTickets, setPrintTwoTickets] = useState(false);
@@ -266,21 +361,232 @@ function ConfigurationScreen() {
 
   const [taxRate, setTaxRate] = useState(16);
   const [roundingEnabled, setRoundingEnabled] = useState(true);
-  const [roundingMode, setRoundingMode] = useState("half");
-  const [manualDiscount, setManualDiscount] = useState(true);
+  const [roundingMode, setRoundingMode] = useState("0.50");
   const [saleWithoutStock, setSaleWithoutStock] = useState(false);
-
-  const [lockTimeout, setLockTimeout] = useState("5");
-  const [pinForDiscount, setPinForDiscount] = useState(true);
-  const [maxDiscountPercent, setMaxDiscountPercent] = useState(25);
   const [pinForVoid, setPinForVoid] = useState(false);
+
+  const [savingTicket, setSavingTicket] = useState(false);
+  const [savingPos, setSavingPos] = useState(false);
+
+  useEffect(() => {
+    const loadTicketSettings = async () => {
+      try {
+        const s = await window.api.invoke("get-all-settings");
+        if (s.print_enabled !== undefined)
+          setPrintEnabled(s.print_enabled !== "false");
+        if (s.print_two_tickets !== undefined)
+          setPrintTwoTickets(s.print_two_tickets === "true");
+        if (s.print_tax_breakdown !== undefined)
+          setPrintTaxBreakdown(s.print_tax_breakdown !== "false");
+        if (s.print_header_note !== undefined)
+          setPrintHeaderNote(s.print_header_note);
+        if (s.print_footer_note !== undefined)
+          setPrintFooterNote(s.print_footer_note);
+        if (s.rounding_enabled !== undefined)
+          setRoundingEnabled(s.rounding_enabled !== "false");
+        if (s.rounding_mode !== undefined) setRoundingMode(s.rounding_mode);
+        if (s.sale_without_stock !== undefined)
+          setSaleWithoutStock(s.sale_without_stock === "true");
+        if (s.pin_for_void !== undefined)
+          setPinForVoid(s.pin_for_void === "true");
+      } catch (err) {
+        console.error("Error loading ticket settings:", err);
+      }
+    };
+    loadTicketSettings();
+  }, []);
+
+  const handleSaveTicket = async () => {
+    setSavingTicket(true);
+    try {
+      const b = (v) => (v ? "true" : "false");
+      await window.api.invoke("save-setting", "print_enabled", b(printEnabled));
+      await window.api.invoke(
+        "save-setting",
+        "print_two_tickets",
+        b(printTwoTickets)
+      );
+      await window.api.invoke(
+        "save-setting",
+        "print_tax_breakdown",
+        b(printTaxBreakdown)
+      );
+      await window.api.invoke(
+        "save-setting",
+        "print_header_note",
+        printHeaderNote
+      );
+      await window.api.invoke(
+        "save-setting",
+        "print_footer_note",
+        printFooterNote
+      );
+      notify("Ajustes de tickets guardados correctamente.", "success");
+    } catch (err) {
+      console.error("Error saving ticket settings:", err);
+      notify("Error al guardar los ajustes de tickets.", "error");
+    } finally {
+      setSavingTicket(false);
+    }
+  };
+
+  const handleSavePos = async () => {
+    setSavingPos(true);
+    try {
+      const b = (v) => (v ? "true" : "false");
+      await window.api.invoke(
+        "save-setting",
+        "rounding_enabled",
+        b(roundingEnabled)
+      );
+      await window.api.invoke("save-setting", "rounding_mode", roundingMode);
+      await window.api.invoke(
+        "save-setting",
+        "sale_without_stock",
+        b(saleWithoutStock)
+      );
+      await window.api.invoke("save-setting", "pin_for_void", b(pinForVoid));
+      window.dispatchEvent(
+        new CustomEvent("posSettingsUpdated", {
+          detail: { roundingEnabled, roundingMode, saleWithoutStock },
+        })
+      );
+      notify("Parámetros del POS guardados correctamente.", "success");
+    } catch (err) {
+      console.error("Error saving POS settings:", err);
+      notify("Error al guardar los parámetros del POS.", "error");
+    } finally {
+      setSavingPos(false);
+    }
+  };
+
+  const [activation, setActivation] = useState(null);
+  const [loadingActivation, setLoadingActivation] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const status = await window.api.invoke("get-activation-status");
+        setActivation(status);
+      } catch (err) {
+        console.error("Error loading activation status:", err);
+      } finally {
+        setLoadingActivation(false);
+      }
+    };
+    load();
+  }, []);
+
+  const reloadActivation = async () => {
+    const status = await window.api.invoke("get-activation-status");
+    setActivation(status);
+    return status;
+  };
+
+  const handleSetActivation = async (enabled) => {
+    if (enabled) {
+      const ok = window.confirm(
+        "Al activar la seguridad, los nuevos teléfonos necesitarán el código de activación para emparejar la app. Los dispositivos que ya están en uso se emparejarán solos durante los próximos 7 días (período de gracia). ¿Deseas continuar?"
+      );
+      if (!ok) return;
+    }
+    const res = await window.api.invoke("set-activation-enabled", enabled);
+    if (res.success) {
+      setActivation(res.status);
+      notify(
+        enabled
+          ? "Seguridad de App Móvil activada."
+          : "Seguridad de App Móvil desactivada.",
+        "success"
+      );
+    } else {
+      notify(res.error || "No se pudo cambiar la seguridad.", "error");
+    }
+  };
+
+  const handleCopyCode = async () => {
+    if (!activation?.code) return;
+    try {
+      await navigator.clipboard.writeText(activation.code);
+      notify("Código de activación copiado.", "success");
+    } catch (err) {
+      notify("No se pudo copiar el código.", "error");
+    }
+  };
+
+  const handleRotateCode = async () => {
+    if (
+      !window.confirm(
+        "Generar un código nuevo invalida el actual. Los dispositivos ya emparejados seguirán funcionando; solo los no emparejados necesitarán el nuevo código. ¿Deseas continuar?"
+      )
+    )
+      return;
+    const res = await window.api.invoke("rotate-activation-code");
+    if (res.success) {
+      setActivation(res.status);
+      notify("Código de activación regenerado.", "success");
+    } else {
+      notify(res.error || "No se pudo regenerar el código.", "error");
+    }
+  };
+
+  const handleRevokeDevice = async (deviceId) => {
+    if (
+      !window.confirm(
+        "¿Revocar este dispositivo? Perderá el acceso y deberá introducir el código de activación para volver a emparejarse."
+      )
+    )
+      return;
+    const res = await window.api.invoke("revoke-device", deviceId);
+    if (res.success) {
+      notify("Dispositivo revocado.", "success");
+      const status = await reloadActivation();
+      setActivation(status);
+    } else {
+      notify("No se pudo revocar el dispositivo.", "error");
+    }
+  };
+
+  const handleSetActivationGrace = async (mode) => {
+    const isExpire = mode === "expire";
+    if (
+      !window.confirm(
+        isExpire
+          ? "Solo pruebas: marcar como vencido el período de gracia. A partir de ahora, todo teléfono no emparejado pedirá el código. ¿Continuar?"
+          : "Solo pruebas: restablecer el período de gracia a 7 días completos a partir de ahora. ¿Continuar?"
+      )
+    )
+      return;
+    const res = await window.api.invoke("set-activation-grace", mode);
+    if (res.success) {
+      setActivation(res.status);
+      notify(
+        isExpire ? "Gracia vencida (simulado)." : "Gracia reiniciada a 7 días.",
+        "success"
+      );
+    } else {
+      notify(res.error || "No se pudo ajustar la gracia.", "error");
+    }
+  };
+
+  const fmtDate = (s) =>
+    s
+      ? new Date(String(s).replace(" ", "T") + "Z").toLocaleString("es-MX", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—";
 
   const meta = TABS_META[activeTab];
   const MetaIcon = meta.icon;
 
-  const subtotal = PREVIEW_ITEMS.reduce((sum, i) => sum + i.qty * i.price, 0);
-  const iva = (subtotal * taxRate) / 100;
-  const total = subtotal + iva;
+  const previewSubtotal = PREVIEW_ITEMS.reduce(
+    (sum, i) => sum + i.qty * i.price,
+    0
+  );
 
   const renderStoreTab = () => (
     <>
@@ -426,14 +732,27 @@ function ConfigurationScreen() {
     <>
       <section className="divide-y divide-border/40">
         <ToggleBlock
+          title="Impresión habilitada"
+          description="Emitir el ticket automáticamente al cobrar. Si está desactivada, el resto de las opciones quedan bloqueadas."
+          checked={printEnabled}
+          onCheckedChange={setPrintEnabled}
+        />
+      </section>
+
+      <Separator className="my-2" />
+
+      <section className="divide-y divide-border/40">
+        <ToggleBlock
           title="Desglose de impuestos"
           description="Incluir la línea de IVA dentro del recibo."
           checked={printTaxBreakdown}
           onCheckedChange={setPrintTaxBreakdown}
+          disabled={!printEnabled}
         />
         <FieldRow
           label="Encabezado personalizado"
           description="Mensaje que aparece debajo del logo."
+          disabled={!printEnabled}
         >
           <Input
             value={printHeaderNote}
@@ -443,6 +762,7 @@ function ConfigurationScreen() {
         <FieldRow
           label="Pie de página"
           description="Agradecimientos, políticas o publicidad."
+          disabled={!printEnabled}
         >
           <Textarea
             rows={2}
@@ -450,22 +770,12 @@ function ConfigurationScreen() {
             onChange={(e) => setPrintFooterNote(e.target.value)}
           />
         </FieldRow>
-      </section>
-
-      <Separator className="my-2" />
-
-      <section className="divide-y divide-border/40">
         <ToggleBlock
           title="Copia del cliente"
           description="Imprimir dos copias por cada venta."
           checked={printTwoTickets}
           onCheckedChange={setPrintTwoTickets}
-        />
-        <ToggleBlock
-          title="Impresión habilitada"
-          description="Emitir el ticket automáticamente al cobrar."
-          checked={printEnabled}
-          onCheckedChange={setPrintEnabled}
+          disabled={!printEnabled}
         />
       </section>
 
@@ -478,67 +788,96 @@ function ConfigurationScreen() {
         <p className="mt-1 text-sm leading-snug text-muted-foreground">
           Así se imprimirá el recibo al cobrar, con los valores de esta pantalla.
         </p>
-        <div className="mt-6 flex justify-center rounded-2xl border border-border/40 bg-muted/40 p-8">
-          <div className="w-full max-w-[300px] shrink-0 bg-white p-5 font-mono text-[11px] leading-relaxed text-black shadow-xl">
-            <div className="text-center">
-              <p className="text-[13px] font-bold uppercase tracking-tight">
-                {storeName}
-              </p>
-              <p className="mt-0.5">{storeAddress}</p>
-              <p className="mt-0.5">RFC: {storeRfc}</p>
-            </div>
-            <div className="my-2 border-t border-dashed border-black/40" />
-            {printHeaderNote && (
-              <p className="text-center italic">{printHeaderNote}</p>
-            )}
-            <div className="my-2 border-t border-dashed border-black/40" />
-            <div className="flex justify-between">
-              <span>{new Date().toLocaleDateString("es-MX")}</span>
-              <span>Ticket #00125</span>
-            </div>
-            <div className="mt-1 flex justify-between">
-              <span>Cajero</span>
-              <span>Ana López</span>
-            </div>
-            <div className="my-2 border-t border-dashed border-black/40" />
-            <div className="space-y-1">
-              {PREVIEW_ITEMS.map((item) => (
-                <div key={item.name}>
-                  <p className="font-semibold">{item.name}</p>
-                  <div className="flex justify-between">
-                    <span>
-                      {item.qty} × {fmt(item.price)}
-                    </span>
-                    <span>{fmt(item.qty * item.price)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="my-2 border-t border-dashed border-black/40" />
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{fmt(subtotal)}</span>
-            </div>
-            {printTaxBreakdown && (
-              <div className="flex justify-between">
-                <span>IVA ({taxRate}%)</span>
-                <span>{fmt(iva)}</span>
+        <div className="mt-6 flex justify-center rounded-2xl border border-border/40 bg-muted/40 p-6">
+          <div className="max-h-[620px] w-full max-w-[340px] shrink-0 overflow-y-auto rounded-xl bg-white p-5 text-[12px] leading-relaxed text-black shadow-xl">
+            <p className="m-0 text-center text-[16px] font-bold uppercase leading-none tracking-[0.5px]">
+              {storeName || "MI TIENDA POS"}
+            </p>
+            {storeLogo && (
+              <div className="mt-1.5 flex justify-center">
+                <img
+                  src={storeLogo}
+                  alt="Logo de la tienda"
+                  className="max-h-14 w-auto max-w-full"
+                />
               </div>
             )}
-            <div className="mt-1 flex justify-between text-[13px] font-bold">
-              <span>TOTAL</span>
-              <span>${fmt(total)}</span>
+            {printHeaderNote && (
+              <p className="mt-0.5 text-center">{printHeaderNote}</p>
+            )}
+            <div className="my-2 border-t border-dashed border-black/40" />
+            <p className="text-center">
+              {new Date().toLocaleDateString("es-MX", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })}
+              <br />
+              {new Date().toLocaleTimeString("es-MX", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+            <div className="my-2 border-t border-dashed border-black/40" />
+            <div className="flex justify-between">
+              <span>Cajero:</span>
+              <span>Ana López</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Ticket #:</span>
+              <span>00125</span>
+            </div>
+            <div className="my-2 border-t border-dashed border-black/40" />
+            <p className="text-center font-bold">DETALLE DE COMPRA</p>
+            <div className="my-2 border-t border-dashed border-black/40" />
+            {PREVIEW_ITEMS.map((item) => (
+              <div key={item.name}>
+                <p className="font-bold">{item.name}</p>
+                <div className="flex justify-between">
+                  <span>
+                    {item.qty} pza x ${fmt(item.price)}
+                  </span>
+                  <span>${fmt(item.qty * item.price)}</span>
+                </div>
+                <div className="my-1 border-b border-dotted border-black/30" />
+              </div>
+            ))}
+            <div className="my-2 border-t border-dashed border-black/40" />
+            <div className="flex justify-between">
+              <span>Subtotal:</span>
+              <span>${fmt(previewSubtotal)}</span>
+            </div>
+            <div className="my-2 border-t border-dashed border-black/40" />
+            <div className="flex justify-between py-0.5 text-[15px] font-bold">
+              <span>TOTAL:</span>
+              <span>${fmt(previewSubtotal)}</span>
+            </div>
+            <div className="my-2 border-t border-dashed border-black/40" />
+            <div className="flex justify-between">
+              <span>Metodo:</span>
+              <span className="font-bold">EFECTIVO</span>
             </div>
             <div className="my-2 border-t border-dashed border-black/40" />
             {printFooterNote && (
-              <p className="text-center italic">{printFooterNote}</p>
+              <p className="text-center font-bold">{printFooterNote}</p>
             )}
-            <div className="mt-3 text-center text-[13px] tracking-[0.35em] text-black/70">
-              || || || || || || || ||
-            </div>
+            <p className="text-center">Conserve este ticket</p>
+            <p className="mt-1 text-center text-[9px]">Vendia</p>
           </div>
         </div>
       </section>
+
+      <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
+        <Button onClick={handleSaveTicket} disabled={savingTicket}>
+          {savingTicket ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          {savingTicket ? "Guardando..." : "Guardar cambios"}
+        </Button>
+      </div>
     </>
   );
 
@@ -562,21 +901,40 @@ function ConfigurationScreen() {
         </FieldRow>
         <ToggleBlock
           title="Redondeo de efectivo"
-          description="Ajustar el cambio a la denominación más cercana."
+          description="Ajustar el total en efectivo al múltiplo más cercano."
           checked={roundingEnabled}
           onCheckedChange={setRoundingEnabled}
+          fullWidth
         >
           {roundingEnabled && (
-            <Select value={roundingMode} onValueChange={setRoundingMode}>
-              <SelectTrigger className={SELECT_TRIGGER}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="half">Al $0.50 más cercano</SelectItem>
-                <SelectItem value="whole">Al peso completo</SelectItem>
-                <SelectItem value="coin">A la moneda de $0.05</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="grid grid-cols-4 gap-2">
+              {ROUNDING_MODES.map((opt) => {
+                const active = roundingMode === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setRoundingMode(opt.value)}
+                    className={cn(
+                      "rounded-lg border p-3 text-left transition-colors",
+                      active
+                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                        : "border-border/60 bg-background hover:bg-muted/50"
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-lg font-semibold">
+                        {opt.label}
+                      </span>
+                      {active && <Check className="h-5 w-5 text-primary" />}
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-foreground/80">
+                      {opt.example}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           )}
         </ToggleBlock>
       </section>
@@ -584,74 +942,204 @@ function ConfigurationScreen() {
       <Separator className="my-2" />
 
       <section className="divide-y divide-border/40">
-        <ToggleBlock
-          title="Descuento manual"
-          description="Permitir aplicar descuento libre por producto."
-          checked={manualDiscount}
-          onCheckedChange={setManualDiscount}
-        />
         <ToggleBlock
           title="Ventas sin stock"
           description="Permitir vender aunque el producto no tenga existencias."
           checked={saleWithoutStock}
           onCheckedChange={setSaleWithoutStock}
         />
-      </section>
-    </>
-  );
-
-  const renderSecurityTab = () => (
-    <>
-      <section className="divide-y divide-border/40">
-        <FieldRow
-          label="Bloqueo automático"
-          description="La terminal pide NIP tras un periodo de inactividad."
-        >
-          <Select value={lockTimeout} onValueChange={setLockTimeout}>
-            <SelectTrigger className={SELECT_TRIGGER}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">1 minuto</SelectItem>
-              <SelectItem value="5">5 minutos</SelectItem>
-              <SelectItem value="15">15 minutos</SelectItem>
-              <SelectItem value="0">Nunca</SelectItem>
-            </SelectContent>
-          </Select>
-        </FieldRow>
-        <ToggleBlock
-          title="NIP para descuentos"
-          description="Pedir contraseña antes de autorizar un descuento."
-          checked={pinForDiscount}
-          onCheckedChange={setPinForDiscount}
-        >
-          {pinForDiscount && (
-            <InputGroup>
-              <InputGroupInput
-                type="number"
-                min={0}
-                max={100}
-                value={maxDiscountPercent}
-                onChange={(e) => setMaxDiscountPercent(Number(e.target.value) || 0)}
-              />
-              <InputGroupText align="inline-end">
-                % de descuento máximo
-              </InputGroupText>
-            </InputGroup>
-          )}
-        </ToggleBlock>
-      </section>
-
-      <Separator className="my-2" />
-
-      <section className="divide-y divide-border/40">
         <ToggleBlock
           title="NIP para anular ventas"
-          description="Solicitar contraseña al eliminar un ticket completo."
+          description="Solicitar el NIP del usuario al cancelar una venta en Turnos y Cortes."
           checked={pinForVoid}
           onCheckedChange={setPinForVoid}
         />
       </section>
+
+      <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
+        <Button onClick={handleSavePos} disabled={savingPos}>
+          {savingPos ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          {savingPos ? "Guardando..." : "Guardar cambios"}
+        </Button>
+      </div>
+    </>
+  );
+
+  const renderMobileTab = () => (
+    <>
+      <section className="divide-y divide-border/40">
+        <ToggleBlock
+          title="Requerir código de activación"
+          description="La app móvil solo se puede emparejar con este negocio. Apagado por defecto: los clientes existentes no notan cambio alguno."
+          checked={activation?.enabled || false}
+          onCheckedChange={handleSetActivation}
+        >
+          {activation?.enabled && activation.graceActive && (
+            <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs leading-snug text-warning">
+              Período de gracia activo: los teléfonos en uso se emparejan solos
+              hasta el {fmtDate(activation.graceEndsAt)} ({activation.graceDaysLeft} días).
+              Después, todo teléfono nuevo necesitará el código.
+            </p>
+          )}
+        </ToggleBlock>
+
+        {activation?.enabled && (
+          <div className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+            <div className="min-w-0 sm:w-64 sm:shrink-0">
+              <p className="text-sm font-medium text-foreground">
+                Código de activación
+              </p>
+              <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                Compártelo con empleados nuevos, no con dispositivos no
+                autorizados.
+              </p>
+            </div>
+            <div className="flex w-full shrink-0 items-center gap-2 sm:w-96">
+              <Input
+                value={activation?.code || ""}
+                readOnly
+                className="text-sm tracking-widest"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopyCode}
+              >
+                Copiar
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleRotateCode}
+                title="Generar un código nuevo"
+              >
+                Regenerar
+              </Button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {activation?.enabled && (
+        <>
+          <Separator className="my-2" />
+
+          <section>
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Dispositivos emparejados ({activation?.devices?.length || 0})
+                </p>
+                <p className="mt-0.5 text-sm leading-snug text-muted-foreground">
+                  Teléfonos con acceso a este negocio vía la app móvil.
+                </p>
+              </div>
+            </div>
+            {loadingActivation ? (
+              <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cargando dispositivos...
+              </div>
+            ) : (activation?.devices?.length || 0) === 0 ? (
+              <p className="py-2 text-sm text-muted-foreground">
+                Aún no hay dispositivos emparejados.
+              </p>
+            ) : (
+              <ul className="mt-1 space-y-2">
+                {activation.devices.map((d) => {
+                  const dotClass =
+                    d.state === "revoked"
+                      ? "bg-muted-foreground/40"
+                      : d.state === "online"
+                        ? "bg-emerald-500"
+                        : "bg-warning";
+                  return (
+                    <li
+                      key={d.deviceId}
+                      className="flex items-center gap-3 rounded-xl border border-border/40 px-3.5 py-3"
+                    >
+                      <span
+                        className={cn(
+                          "h-2 w-2 shrink-0 rounded-full",
+                          dotClass
+                        )}
+                        title={
+                          d.state === "revoked"
+                            ? "Revocado"
+                            : d.state === "online"
+                              ? "Visto recientemente"
+                              : "Visto hace más de 24 h"
+                        }
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {d.deviceName}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {d.cashierName ? `Emparejado por ${d.cashierName} · ` : ""}
+                          Activado el {fmtDate(d.activatedAt)}
+                          {d.lastSeenAt && ` · Visto ${fmtDate(d.lastSeenAt)}`}
+                          {d.state === "revoked" && " · Revocado"}
+                        </p>
+                      </div>
+                      {d.state !== "revoked" && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => handleRevokeDevice(d.deviceId)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Revocar
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <Separator className="my-4" />
+
+          <section className="rounded-xl border border-dashed border-amber-500/40 bg-warning/5 p-4">
+            <div className="flex items-center gap-2">
+              <FlaskConical className="h-4 w-4 text-amber-500" />
+              <p className="text-sm font-medium text-foreground">Pruebas</p>
+            </div>
+            <p className="mt-1 text-xs leading-snug text-muted-foreground">
+              Acciones de desarrollo para validar el comportamiento del
+              período de gracia. Cambios inmediatos; dejan de valer al
+              volver a activar la seguridad o aplicando la acción contraria.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleSetActivationGrace("expire")}
+              >
+                Simular vencimiento de gracia
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleSetActivationGrace("reset")}
+              >
+                Reiniciar gracia (7 días)
+              </Button>
+            </div>
+          </section>
+        </>
+      )}
     </>
   );
 
@@ -737,14 +1225,7 @@ function ConfigurationScreen() {
   return (
     <div className="mx-auto w-full max-w-7xl">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">
-            Configuración del sistema
-          </p>
-          <h1 className="text-display text-2xl font-bold text-foreground sm:text-3xl">
-            Configuración
-          </h1>
-        </div>
+        <div />
         <Button variant="outline" onClick={() => navigate("/")}>
           <ArrowLeft className="h-4 w-4" />
           Volver a Ventas
@@ -802,7 +1283,7 @@ function ConfigurationScreen() {
               {activeTab === "store" && renderStoreTab()}
               {activeTab === "ticket" && renderTicketTab()}
               {activeTab === "pos" && renderPosTab()}
-              {activeTab === "security" && renderSecurityTab()}
+              {activeTab === "mobile" && renderMobileTab()}
               {activeTab === "printer" && renderPrinterTab()}
             </div>
           </Card>

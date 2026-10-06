@@ -1,10 +1,32 @@
 export const calcFinalPrice = (price, discount) =>
   price * (1 - (discount || 0) / 100);
 
-export const canManualDiscount = (item) =>
-  !!item.has_discount &&
-  item.discount_percent <= 0 &&
-  !(item.prices && item.prices.length > 0);
+const todayISO = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+// Vigencia global de la promoción. Fechas vacías = vigente siempre.
+export const promoActiveNow = (item) => {
+  const t = todayISO();
+  const start = item.promo_start_date || "";
+  const end = item.promo_end_date || "";
+  if (start && t < start) return false;
+  if (end && t > end) return false;
+  return true;
+};
+
+export const canManualDiscount = (item) => {
+  if (item.allow_manual_discount !== 1) return false;
+  if (!promoActiveNow(item)) return true;
+  if (item.discount_percent > 0) return false;
+  if (item.promo_fixed_price > 0) return false;
+  if ((item.prices || []).length > 0) return false;
+  return true;
+};
 
 export const lineKeyOf = (item) =>
   `${item.id}:${item.isWeightItem ? "w" : item.isBoxItem ? "b" : item.isPackItem ? "p" : "s"}`;
@@ -15,19 +37,32 @@ export const piecePriceOf = (p) =>
   p.sale_unit === "boxpack" ? p.pack_price : p.price;
 
 export const promoInfo = (item, qty) => {
-  const baseUnit = calcFinalPrice(item.price, item.discount_percent);
+  const active = promoActiveNow(item);
+  const autoOn =
+    active && (item.discount_percent > 0 || item.promo_fixed_price > 0);
+
+  if (active && item.promo_fixed_price > 0) {
+    const unit = item.promo_fixed_price;
+    return { total: unit * qty, unit, applied: { type: "fijo", qty: 0, price: unit } };
+  }
+
+  const baseUnit =
+    active && item.discount_percent > 0
+      ? calcFinalPrice(item.price, item.discount_percent)
+      : item.price;
   const baseTotal = baseUnit * qty;
+  const prices = active && !autoOn ? item.prices : [];
   if (
     item.isBoxItem ||
     item.isPackItem ||
     item.isWeightItem ||
-    !item.prices ||
-    item.prices.length === 0
+    !prices ||
+    prices.length === 0
   ) {
     return { total: baseTotal, unit: baseUnit, applied: null };
   }
   let best = { total: baseTotal, unit: baseUnit, applied: null };
-  for (const e of item.prices) {
+  for (const e of prices) {
     let t;
     if (e.type === "mayoreo") {
       if (qty < e.qty) continue;

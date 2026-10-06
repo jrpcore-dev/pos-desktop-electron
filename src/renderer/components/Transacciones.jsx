@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { applyPlugin } from "jspdf-autotable";
+import interFontInline from "../assets/fonts/inter.ttf?inline";
+import { printDocument } from "../utils/printPdf";
 import {
   formatMXDate,
   formatMXTime,
@@ -43,6 +45,12 @@ import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from "./ui/tabs";
 import { DateRangePicker } from "./ui/date-range-picker";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./ui/dropdown-menu";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "./ui/dialog";
@@ -123,7 +131,7 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
   return (
     <TableRow key={sale.id}>
       <TableCell className="px-4 py-3">
-        <span className="font-mono text-sm font-semibold text-foreground">#{sale.id}</span>
+        <span className="text-sm font-semibold text-foreground">#{sale.id}</span>
       </TableCell>
       <TableCell className="px-4 py-3">
         <p className="text-sm font-medium text-foreground">{formatMXDate(sale.created_at)}</p>
@@ -247,26 +255,54 @@ const exportCSV = (sales, expenses, dateRange) => {
   URL.revokeObjectURL(url);
 };
 
-const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledSales, dateRange, rangeLabel) => {
+const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count, canceledSales, rangeLabel) => {
   const store = (await window.api.invoke("get-setting", "store_name")) || "MI TIENDA";
   const doc = new jsPDF();
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 18;
 
+  let fontName = "helvetica";
+  if (typeof interFontInline === "string" && interFontInline.includes(",")) {
+    try {
+      const b64 = interFontInline.split(",")[1];
+      doc.addFileToVFS("Inter.ttf", b64);
+      doc.addFont("Inter.ttf", "Inter", "normal");
+      doc.addFont("Inter.ttf", "Inter", "bold");
+      doc.setFont("Inter", "normal");
+      fontName = "Inter";
+    } catch (e) {
+      fontName = "helvetica";
+    }
+  }
+
+  const C = {
+    ink: [15, 23, 42],
+    body: [51, 65, 85],
+    muted: [100, 116, 139],
+    line: [226, 232, 240],
+    grid: [148, 163, 184],
+    head: [241, 245, 249],
+    brand: [30, 64, 175],
+    white: [255, 255, 255],
+  };
+
   doc.setFontSize(18);
   doc.setFont(undefined, "bold");
-  doc.text(store.toUpperCase(), margin, 22);
+  doc.setTextColor(...C.ink);
+  doc.text(store.toUpperCase(), pageW / 2, 22, { align: "center" });
   doc.setFontSize(10);
   doc.setFont(undefined, "normal");
-  doc.setTextColor(100);
-  doc.text(`Reporte de Transacciones — ${rangeLabel}`, margin, 29);
-  doc.setDrawColor(37, 99, 235);
+  doc.setTextColor(...C.muted);
+  doc.text(`Reporte de Transacciones — ${rangeLabel}`, pageW / 2, 29, {
+    align: "center",
+  });
+  doc.setDrawColor(...C.brand);
   doc.setLineWidth(0.8);
   doc.line(margin, 33, pageW - margin, 33);
 
   doc.setFontSize(14);
   doc.setFont(undefined, "bold");
-  doc.setTextColor(30);
+  doc.setTextColor(...C.ink);
   doc.text("RESUMEN", margin, 44);
   doc.setFontSize(10);
   doc.setFont(undefined, "normal");
@@ -279,22 +315,23 @@ const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledS
     { x: margin + colR * 3.5, label: "Canceladas", value: String(canceledSales.length) },
   ];
   doc.setFont(undefined, "bold");
+  doc.setTextColor(...C.muted);
   cols.forEach((c) => doc.text(c.label, c.x, yy, { align: "center" }));
   yy += 6;
   doc.setFontSize(16);
-  doc.setTextColor(37, 99, 235);
+  doc.setTextColor(...C.ink);
   cols.forEach((c) => doc.text(c.value, c.x, yy, { align: "center" }));
 
   yy += 10;
-  doc.setDrawColor(200);
+  doc.setDrawColor(...C.line);
   doc.setLineWidth(0.3);
   doc.line(margin, yy, pageW - margin, yy);
   yy += 6;
 
-  const buildTable = (title, head, body, startY, foot) => {
+  const buildTable = (title, head, body, startY, foot, columnStyles) => {
     doc.setFontSize(11);
     doc.setFont(undefined, "bold");
-    doc.setTextColor(30);
+    doc.setTextColor(...C.ink);
     doc.text(title, margin, startY);
     let table = null;
     if (body.length > 0) {
@@ -303,10 +340,10 @@ const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledS
         body,
         startY: startY + 4,
         margin: { left: margin, right: margin },
-        styles: { fontSize: 8, cellPadding: 2 },
-        headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
-        footStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
+        styles: { font: fontName, fontSize: 9, cellPadding: 3, textColor: C.body, lineColor: C.grid, lineWidth: 0.4 },
+        headStyles: { fillColor: C.head, textColor: C.ink, fontStyle: "bold" },
+        footStyles: { fillColor: C.head, textColor: C.ink, fontStyle: "bold" },
+        columnStyles,
         foot,
       });
     }
@@ -329,6 +366,7 @@ const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledS
     saleData.length > 0
       ? [[{ content: `TOTAL: $${total.toFixed(2)}`, colSpan: 4, styles: { halign: "center" } }]]
       : undefined,
+    { 3: { halign: "right" } },
   );
 
   const expData = expenses
@@ -347,122 +385,57 @@ const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledS
     expData.length > 0
       ? [[{ content: `TOTAL EGRESOS: $${totalExpenses.toFixed(2)}`, colSpan: 4, styles: { halign: "center" } }]]
       : undefined,
+    { 3: { halign: "right" } },
   );
 
-  doc.setFontSize(8);
-  doc.setFont(undefined, "normal");
-  doc.setTextColor(150);
-  doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, margin, doc.internal.pageSize.getHeight() - 12);
-  doc.setFont(undefined, "bold");
-  doc.text("Vendia", pageW - margin, doc.internal.pageSize.getHeight() - 12, { align: "right" });
+  const totalPages = doc.getNumberOfPages();
+  const bottomY = doc.internal.pageSize.getHeight() - 12;
+  for (let pageIdx = 1; pageIdx <= totalPages; pageIdx++) {
+    doc.setPage(pageIdx);
+    doc.setFontSize(8);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(...C.muted);
+    doc.text(
+      `Generado el ${new Date().toLocaleString("es-MX")}`,
+      margin,
+      bottomY,
+    );
+    doc.text(`Página ${pageIdx} de ${totalPages}`, pageW / 2, bottomY, {
+      align: "center",
+    });
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(...C.ink);
+    doc.text("Vendia", pageW - margin, bottomY, { align: "right" });
+  }
 
+  return doc;
+};
+
+const exportPDF = async (sales, expenses, total, totalExpenses, count, canceledSales, dateRange, rangeLabel) => {
+  const doc = await buildTransactionsPDF(
+    sales,
+    expenses,
+    total,
+    totalExpenses,
+    count,
+    canceledSales,
+    rangeLabel,
+  );
   doc.save(`transacciones-${dateRange.from}-a-${dateRange.to}.pdf`);
 };
 
-const printReport = async (sales, expenses, byMethod, total, totalExpenses, count, canceledSales, rangeLabel) => {
-  const store = (await window.api.invoke("get-setting", "store_name")) || "MI TIENDA";
-  const win = window.open("", "_blank");
-  const byMethodHtml = byMethod
-    .map(
-      (m) =>
-        `<tr><td>${methodNames[m.payment_method] || m.payment_method}</td><td>${m.count}</td><td align="right">$${Number(m.total).toFixed(2)}</td></tr>`,
-    )
-    .join("");
-  const salesHtml = sales
-    .filter((s) => s.status !== "cancelado")
-    .map(
-      (s) =>
-        `<tr><td>#${s.id}</td><td>${formatMXDateTime(s.created_at)}</td><td>${methodNames[s.payment_method] || s.payment_method}</td><td align="right">$${s.total.toFixed(2)}</td></tr>`,
-    )
-    .join("");
-  const expensesHtml = expenses
-    .filter((e) => e.status !== "cancelado")
-    .map(
-      (e) =>
-        `<tr><td>${formatMXDateTime(e.created_at)}</td><td>${e.reason || ""}</td><td>${expenseType(e)}</td><td align="right">-$${Number(e.amount || 0).toFixed(2)}</td></tr>`,
-    )
-    .join("");
-  win.document.write(`<!DOCTYPE html><html><head><title>Reporte de Transacciones</title>
-    <style>
-      body{font-family:'Segoe UI',Arial,sans-serif;margin:30px 40px;color:#1e293b;font-size:13px}
-      h1{font-size:22px;color:#1e3a5f;margin-bottom:2px;letter-spacing:0.5px}
-      .subtitle{font-size:13px;color:#64748b;margin-top:0;margin-bottom:20px}
-      hr{border:none;border-top:2px solid #2563eb;margin:15px 0}
-      table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
-      th{background:#1e3a5f;color:#fff;padding:8px 10px;text-align:left;font-weight:600}
-      td{padding:7px 10px;border-bottom:1px solid #e2e8f0}
-      tr:nth-child(even){background:#f8fafc}
-      .total-row td{background:#1e3a5f;color:#fff;font-weight:700;padding:8px 10px}
-      .resumen-table td{padding:6px 10px;border:none;font-size:12px}
-      .resumen-table tr:last-child td{border-top:2px solid #1e3a5f;font-weight:700;font-size:14px}
-      .section-title{font-size:14px;font-weight:700;color:#1e3a5f;margin:18px 0 6px 0}
-      .footer{text-align:center;margin-top:35px;color:#94a3b8;font-size:11px;border-top:1px solid #e2e8f0;padding-top:12px}
-      @media print{body{margin:0.5in} .no-print{display:none}}
-    </style></head><body>
-    <h1>${store.toUpperCase()}</h1>
-    <p class="subtitle">Reporte de Transacciones — ${rangeLabel}</p>
-    <hr>
-    <div class="section-title">Resumen</div>
-    <table class="resumen-table">
-      <tr><td>Total Ventas</td><td align="right"><b>$${total.toFixed(2)}</b></td></tr>
-      <tr><td>Egresos</td><td align="right"><b>$${totalExpenses.toFixed(2)}</b></td></tr>
-      <tr><td>Ventas</td><td align="right"><b>${count}</b></td></tr>
-      <tr><td>Canceladas</td><td align="right"><b>${canceledSales.length}</b></td></tr>
-      <tr><td>Ticket Promedio</td><td align="right"><b>$${(count > 0 ? total / count : 0).toFixed(2)}</b></td></tr>
-    </table>
-    ${byMethodHtml ? `<div class="section-title">Desglose por método de pago</div>
-    <table><tr><th>Método</th><th>Ventas</th><th>Total</th></tr>${byMethodHtml}</table>` : ""}
-    <div class="section-title">Ventas del Período</div>
-    <table><tr><th>#</th><th>Fecha</th><th>Método</th><th>Total</th></tr>
-    ${salesHtml}
-    <tr class="total-row"><td colspan="3">TOTAL VENTAS</td><td align="right">$${total.toFixed(2)}</td></tr>
-    </table>
-    <div class="section-title">Egresos del Período</div>
-    <table><tr><th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Monto</th></tr>
-    ${expensesHtml}
-    <tr class="total-row"><td colspan="3">TOTAL EGRESOS</td><td align="right">-$${totalExpenses.toFixed(2)}</td></tr>
-    </table>
-    <div class="footer">Generado el ${new Date().toLocaleString("es-MX")} - Vendia</div>
-  </body></html>`);
-  win.document.close();
-  win.print();
-};
-
-const ExpenseRow = memo(function ExpenseRow({ expense }) {
-  const isCanceled = expense.status === "cancelado";
-  return (
-    <TableRow key={expense.id}>
-      <TableCell className="px-4 py-3">
-        <p className="text-sm font-medium text-foreground">{formatMXDate(expense.created_at)}</p>
-        <p className="text-xs text-muted-foreground">{formatMXTime(expense.created_at)}</p>
-      </TableCell>
-      <TableCell className="px-4 py-3">
-        <span className={cn("text-sm text-foreground", isCanceled && "line-through text-muted-foreground")}>
-          {expense.reason || "—"}
-        </span>
-      </TableCell>
-      <TableCell className="px-4 py-3">
-        <Badge
-          variant="outline"
-          className={cn(
-            "whitespace-nowrap",
-            isCanceled
-              ? "border-destructive/50 text-destructive"
-              : "border-red-500/50 text-red-600 dark:border-red-400/50 dark:text-red-400",
-          )}
-        >
-          {expenseType(expense)}
-        </Badge>
-      </TableCell>
-      <TableCell className="px-4 py-3">{statusBadge(expense)}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
-        <span className={cn("text-sm font-bold tabular-nums", isCanceled ? "line-through text-muted-foreground" : "text-red-600 dark:text-red-400")}>
-          -{fmtMoney(expense.amount)}
-        </span>
-      </TableCell>
-    </TableRow>
+const printReport = async (sales, expenses, total, totalExpenses, count, canceledSales, rangeLabel) => {
+  const doc = await buildTransactionsPDF(
+    sales,
+    expenses,
+    total,
+    totalExpenses,
+    count,
+    canceledSales,
+    rangeLabel,
   );
-});
+  await printDocument(doc);
+};
 
 const Transacciones = () => {
   const initialLoadRef = useRef(true);
@@ -670,27 +643,31 @@ const Transacciones = () => {
   const rangeLabel = [dateRange.from, dateRange.to].filter(Boolean).join(" a ") || "sin rango";
 
   return (
-    <div className="p-4 md:p-6">
+    <div className="p-1">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">Transacciones</h1>
           <p className="text-sm text-muted-foreground">Historial de ventas y egresos</p>
         </div>
         {!loading && (sales.length > 0 || expenses.length > 0) && (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => printReport(sales, expenses, byMethod, total, totalExpenses, count, canceledSales, rangeLabel)}>
-              <Printer className="h-4 w-4" />
-              Imprimir
-            </Button>
-            <Button variant="outline" onClick={() => exportCSV(sales, expenses, dateRange)}>
-              <FileSpreadsheet className="h-4 w-4" />
-              CSV
-            </Button>
-            <Button variant="outline" onClick={() => exportPDF(sales, expenses, total, totalExpenses, count, canceledSales, dateRange, rangeLabel)}>
-              <FileDown className="h-4 w-4" />
-              PDF
-            </Button>
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <FileDown className="h-4 w-4" />
+                Exportar
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => exportCSV(sales, expenses, dateRange)}>
+                <FileSpreadsheet className="h-4 w-4" /> CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportPDF(sales, expenses, total, totalExpenses, count, canceledSales, dateRange, rangeLabel)}>
+                <FileDown className="h-4 w-4" /> PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => printReport(sales, expenses, total, totalExpenses, count, canceledSales, rangeLabel)}>
+                <Printer className="h-4 w-4" /> Imprimir
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 
@@ -1100,7 +1077,7 @@ const Transacciones = () => {
                                 {it.name || it.product_name || "—"}
                               </span>
                             </TableCell>
-                            <TableCell className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
+                            <TableCell className="px-4 py-2.5 text-xs text-muted-foreground">
                               {it.barcode || "—"}
                             </TableCell>
                             <TableCell className="px-4 py-2.5 text-right text-sm tabular-nums text-foreground">
@@ -1149,3 +1126,6 @@ const Transacciones = () => {
 };
 
 export default Transacciones;
+
+
+

@@ -19,6 +19,7 @@ const ConfirmDialog = ({
   confirmProps,
   onConfirm,
   onCancel,
+  children,
 }) => {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -34,6 +35,7 @@ const ConfirmDialog = ({
             {description}
           </DialogDescription>
         </DialogHeader>
+        {children ? <div className="space-y-2">{children}</div> : null}
         <DialogFooter style={{ paddingTop: "2px", marginBottom: "-8px" }}>
           <Button variant="outline" onClick={onCancel} disabled={loading}>
             {cancelLabel}

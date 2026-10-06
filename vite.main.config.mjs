@@ -30,7 +30,9 @@ export default defineConfig({
         try { copyFileSync("src/db/database.js", ".vite/build/db/database.js"); } catch(e) {}
         try { copyFileSync("src/db/pos-system.db", ".vite/build/db/pos-system.db"); } catch(e) {}
         try { copyFileSync("src/main/api-server.js", ".vite/build/api-server.js"); } catch(e) {}
+        try { copyFileSync("src/main/activation.js", ".vite/build/activation.js"); } catch(e) {}
         try { copyFileSync("src/main/discovery.js", ".vite/build/discovery.js"); } catch(e) {}
+        try { copyFileSync("src/main/pins.js", ".vite/build/pins.js"); } catch(e) {}
         copyRuntimeDeps(join(buildDir, "node_modules"));
         console.log("Archivos copiados al build exitosamente");
       },

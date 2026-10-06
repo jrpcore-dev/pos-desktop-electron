@@ -115,7 +115,7 @@ mobile/.expo/
 /off-mexico-checkpoint.json
 /sheet-preview.html
 /scripts/fetch-off-mexico.mjs
-
+chk-settings.cjs
 # Scripts / auditorias temporales de la limpieza del catalogo
 *.tmp.js
 *.tmp.cjs
@@ -128,3 +128,6 @@ mobile/.expo/
 # Volcados de build y artefactos de Windows
 /build-out.txt
 Thumbs.db
+
+# Configuració entorno IA
+AGENTS.MD

@@ -168,11 +168,11 @@
   --category-5: 258.31 89.53% 66.27%;
   --category-6: 330.37 81.19% 60.39%;
 
-  --chart-1: 217 91% 60%;
-  --chart-2: 160 84% 39%;
-  --chart-3: 38 92% 50%;
-  --chart-4: 280 65% 60%;
-  --chart-5: 340 75% 55%;
+  --chart-1: 218 55% 35%;
+  --chart-2: 218 55% 55%;
+  --chart-3: 218 40% 20%;
+  --chart-4: 218 50% 72%;
+  --chart-5: 222 47% 12%;
 
   --radius: 0.75rem;
 }
@@ -232,10 +232,10 @@
   --category-6: 330.37 81.19% 60.39%;
 
   --chart-1: 217 91% 65%;
-  --chart-2: 160 70% 45%;
-  --chart-3: 38 92% 55%;
-  --chart-4: 280 65% 65%;
-  --chart-5: 340 75% 60%;
+  --chart-2: 213 94% 68%;
+  --chart-3: 211 100% 78%;
+  --chart-4: 221 83% 45%;
+  --chart-5: 224 76% 30%;
 }
 
 * { box-sizing: border-box; }
@@ -264,6 +264,18 @@ html { height: 100%; }
   button:disabled, select:disabled, input:disabled, textarea:disabled,
   [aria-disabled="true"] {
     cursor: not-allowed !important;
+  }
+
+  /* Ocultar las flechitas nativas de los inputs numéricos: la UI usa
+     steppers propios y las del sistema (blancas) aparecían al hacer hover. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
   }
 }
 
@@ -636,3 +648,10 @@ html.theme-switching * {
   from { transform: translateY(0); }
   to   { transform: translateY(-50%); }
 }
+
+
+
+
+
+
+

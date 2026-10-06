@@ -20,6 +20,7 @@ import {
   Trash2,
   Warehouse,
   BadgePercent,
+  CalendarRange,
 } from "lucide-react";
 
 import { Button } from "./ui/button";
@@ -34,6 +35,7 @@ import {
 } from "./ui/dialog";
 import { Separator } from "./ui/separator";
 import { Switch } from "./ui/switch";
+import { DateRangePicker } from "./ui/date-range-picker";
 import {
   Select,
   SelectContent,
@@ -61,6 +63,10 @@ const productSchema = z.object({
   min_stock: z.string().optional(),
   discount_percent: z.string().optional(),
   has_discount: z.boolean().optional(),
+  allow_manual_discount: z.boolean().optional(),
+  promo_fixed_price: z.string().optional(),
+  promo_start_date: z.string().optional(),
+  promo_end_date: z.string().optional(),
   sale_unit: z.string().optional(),
   box_qty: z.string().optional(),
   box_price: z.string().optional(),
@@ -350,6 +356,7 @@ const AddProductModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [barcodeStatus, setBarcodeStatus] = useState({ type: null, name: "" });
   const [priceTiers, setPriceTiers] = useState([]);
+  const [promoOpen, setPromoOpen] = useState(false);
 
   const addPriceTier = () =>
     setPriceTiers((prev) => [
@@ -395,6 +402,8 @@ const AddProductModal = ({
 
   const wSaleUnit = watch("sale_unit") || "piece";
   const wHasDiscount = watch("has_discount");
+  const wAllowManual = watch("allow_manual_discount");
+  const wPromoFixed = watch("promo_fixed_price");
   const [wPrice, wCostPrice, wBoxPrice, wPackPrice, wDiscount, wPacksPerBox, wPackQty, wBoxQty] =
     useWatch({
       control,
@@ -479,6 +488,118 @@ const AddProductModal = ({
     [wBoxQty, wPacksPerBox, wPackQty, wSaleUnit],
   );
 
+  const basePrice = useMemo(
+    () => parseFloat(wPrice || "0") || 0,
+    [wPrice],
+  );
+  const promoPercent = useMemo(
+    () => parseFloat(watchMargins.discount_percent || "0") || 0,
+    [watchMargins.discount_percent],
+  );
+  const hasTiers = priceTiers.length > 0;
+  const wPromoStart = watch("promo_start_date");
+  const wPromoEnd = watch("promo_end_date");
+  const datesNowIso = (() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  })();
+  const promoNowActive =
+    (!wPromoStart || datesNowIso >= wPromoStart) &&
+    (!wPromoEnd || datesNowIso <= wPromoEnd);
+  const dateIssue =
+    wPromoStart && wPromoEnd && wPromoStart > wPromoEnd
+      ? "La fecha de inicio no puede ser posterior a la de fin."
+      : null;
+  const fmtDate = (iso) => {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return d && m && y ? `${d}/${m}/${y}` : iso;
+  };
+  const promoFixed = parseFloat(wPromoFixed || "0") || 0;
+  const autoConfigured = promoPercent > 0 || promoFixed > 0;
+  const tiersConfigured = hasTiers;
+  const autoActive = promoNowActive && autoConfigured;
+  const tiersActive = promoNowActive && tiersConfigured;
+  const manualBlocked = autoActive || tiersActive;
+  const autoBlocked = tiersConfigured;
+  const tiersBlocked = autoConfigured;
+  const promoChips = [];
+  if (promoPercent > 0) promoChips.push(`-${promoPercent}%`);
+  if (promoFixed > 0) promoChips.push(`Fijo $${promoFixed.toFixed(2)}`);
+  priceTiers.forEach((t) => {
+    const q = parseInt(t.qty, 10) || 0;
+    const p = parseFloat(t.price) || 0;
+    if (q <= 0 || p <= 0) return;
+    if (t.type === "combo") promoChips.push(`${q}×$${p.toFixed(2)}`);
+    else promoChips.push(`Mayoreo ${q}+`);
+  });
+  if (wAllowManual && !manualBlocked) promoChips.push("Manual en caja");
+  const tierIssues = [];
+  const seenTiers = new Set();
+  priceTiers.forEach((t) => {
+    const q = parseInt(t.qty, 10) || 0;
+    if (q <= 0) return;
+    const key = `${t.type}:${q}`;
+    if (seenTiers.has(key)) {
+      tierIssues.push(
+        t.type === "combo"
+          ? `La promo de ${q} se repite. Cambia la cantidad o elimina una.`
+          : `El mayoreo desde ${q} se repite. Cambia el rango o elimina uno.`,
+      );
+    }
+    seenTiers.add(key);
+  });
+  const effective =
+    promoFixed > 0 ? promoFixed : basePrice * (1 - promoPercent / 100);
+  const autoHelper =
+    promoFixed > 0
+      ? "Precio fijo de promoción: aplica a cualquier cantidad."
+      : promoPercent > 0
+        ? "Este % se aplicará automáticamente en cada venta."
+        : hasTiers
+          ? "Con 0% no hay descuento automático; solo cuentan las promos por cantidad."
+          : wAllowManual
+            ? "Con 0% el descuento manual en caja controla esta promoción."
+            : "Con 0% no se aplica ningún descuento.";
+  const tierPreview = (t) => {
+    const q = parseInt(t.qty, 10) || 0;
+    const p = parseFloat(t.price) || 0;
+    if (q <= 0 || p <= 0) return null;
+    if (t.type === "combo") {
+      const per = p / q;
+      return basePrice > 0
+        ? `≈ $${per.toFixed(2)}/pieza (ahorro $${(basePrice - per).toFixed(2)})`
+        : `≈ $${per.toFixed(2)}/pieza`;
+    }
+    return basePrice > 0
+      ? `Ahorro de $${(basePrice - p).toFixed(2)}/pieza`
+      : null;
+  };
+
+  const statusPill = (() => {
+    if (!wHasDiscount) return null;
+    const hasConfig =
+      promoPercent > 0 || promoFixed > 0 || priceTiers.length > 0;
+    if (!hasConfig) return null;
+    if (promoNowActive)
+      return {
+        label: "Activa",
+        cls: "border-emerald-500/20 bg-emerald-500/10 text-emerald-600",
+      };
+    if (wPromoStart && datesNowIso < wPromoStart)
+      return {
+        label: "Programada",
+        cls: "border-amber-500/20 bg-amber-500/10 text-amber-600",
+      };
+    return {
+      label: "Expirada",
+      cls: "border-border bg-muted text-muted-foreground",
+    };
+  })();
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -502,6 +623,10 @@ const AddProductModal = ({
           min_stock: editProduct.min_stock?.toString() || "",
           discount_percent: editProduct.discount_percent?.toString() || "0",
           has_discount: !!editProduct.has_discount,
+          allow_manual_discount: !!editProduct.allow_manual_discount,
+          promo_fixed_price: editProduct.promo_fixed_price?.toString() || "0",
+          promo_start_date: editProduct.promo_start_date || "",
+          promo_end_date: editProduct.promo_end_date || "",
           sale_unit: editProduct.sale_unit || "piece",
           box_qty: boxQty.toString(),
           box_price: editProduct.box_price?.toString() || "",
@@ -521,6 +646,7 @@ const AddProductModal = ({
             price: String(p.price),
           })),
         );
+        setPromoOpen(!!editProduct.has_discount);
       } else if (catalogProduct) {
         reset({
           barcode: catalogProduct.barcode || "",
@@ -534,6 +660,10 @@ const AddProductModal = ({
           min_stock: "",
           discount_percent: "0",
           has_discount: false,
+          allow_manual_discount: false,
+          promo_fixed_price: "0",
+          promo_start_date: "",
+          promo_end_date: "",
           sale_unit: catalogProduct.sale_unit || "piece",
           box_qty: (catalogProduct.box_qty || "").toString(),
           box_price: "",
@@ -542,6 +672,7 @@ const AddProductModal = ({
           packs_per_box: "0",
         });
         setPriceTiers([]);
+        setPromoOpen(false);
       } else {
         reset({
           barcode: initialBarcode || "",
@@ -555,6 +686,10 @@ const AddProductModal = ({
           min_stock: "",
           discount_percent: "",
           has_discount: false,
+          allow_manual_discount: false,
+          promo_fixed_price: "",
+          promo_start_date: "",
+          promo_end_date: "",
           sale_unit: "piece",
           box_qty: "",
           box_price: "",
@@ -622,6 +757,13 @@ const AddProductModal = ({
           ? parseFloat(data.discount_percent) || 0
           : 0,
         has_discount: data.has_discount ? 1 : 0,
+        allow_manual_discount:
+          data.has_discount && data.allow_manual_discount ? 1 : 0,
+        promo_fixed_price: data.has_discount
+          ? parseFloat(data.promo_fixed_price) || 0
+          : 0,
+        promo_start_date: data.has_discount ? data.promo_start_date || "" : "",
+        promo_end_date: data.has_discount ? data.promo_end_date || "" : "",
         sale_unit: data.sale_unit || "piece",
         box_qty: boxQty,
         box_price: parseFloat(data.box_price) || 0,
@@ -1107,141 +1249,355 @@ const AddProductModal = ({
 
             <section className="space-y-4">
               <SectionTitle icon={BadgePercent} title="Descuento / Promoción" />
-              <Controller
-                name="has_discount"
-                control={control}
-                render={({ field }) => (
-                  <div className="flex items-center justify-between rounded-lg border border-border bg-card/50 px-4 py-3">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        Descuento/Promoción
-                      </p>
-                      <p className="text-[0.8rem] text-muted-foreground">
-{wHasDiscount
-                          ? "Activo. Define el % o deja en 0 para descontar manual en caja."
-                          : "Sin descuento/promoción para este producto."}
-                      </p>
+
+              <div className="overflow-hidden rounded-xl border border-border bg-card/50 shadow-sm">
+                <div className="relative flex flex-col gap-2 px-4 py-3.5">
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-transparent" />
+                  <div className="relative flex items-center justify-between gap-3">
+                    <div className="relative min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-foreground">
+                          {wHasDiscount ? "Promoción" : "Descuento/Promoción"}
+                        </p>
+                        {statusPill && (
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide ${statusPill.cls}`}
+                          >
+                            {statusPill.label}
+                          </span>
+                        )}
+                      </div>
+                      {promoChips.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {promoChips.map((chip, i) => (
+                            <span
+                              key={i}
+                              className="rounded-full border border-border bg-muted px-2 py-0.5 text-[0.7rem] font-medium text-muted-foreground"
+                            >
+                              {chip}
+                            </span>
+                          ))}
+                          {(wPromoStart || wPromoEnd) && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[0.7rem] font-medium text-blue-600">
+                              <CalendarRange className="h-3 w-3" />
+                              {fmtDate(wPromoStart) || "siempre"} → {fmtDate(wPromoEnd) || "siempre"}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-[0.8rem] text-muted-foreground">
+                          Sin descuento/promoción para este producto.
+                        </p>
+                      )}
                     </div>
-                    <Switch
-                      checked={!!field.value}
-                      onCheckedChange={(checked) => {
-                        field.onChange(checked);
-                        if (!checked) setPriceTiers([]);
-                      }}
-                    />
+                    <div className="relative flex shrink-0 items-center gap-2">
+                      {wHasDiscount && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setPromoOpen((o) => !o)}
+                        >
+                          {promoOpen ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
+                      <Controller
+                        name="has_discount"
+                        control={control}
+                        render={({ field }) => (
+                          <Switch
+                            checked={!!field.value}
+                            onCheckedChange={(checked) => {
+                              field.onChange(checked);
+                              if (!checked) {
+                                setPriceTiers([]);
+                                setValue("allow_manual_discount", false);
+                              } else {
+                                setPromoOpen(true);
+                                setValue("allow_manual_discount", true);
+                              }
+                            }}
+                          />
+                        )}
+                      />
+                    </div>
+                  </div>
+                  {wHasDiscount && (
+                    <div className="relative flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1.5 text-[0.75rem] font-medium text-muted-foreground">
+                        <CalendarRange className="h-3.5 w-3.5" />
+                        Vigencia de la promoción
+                      </div>
+                      <DateRangePicker
+                        value={{
+                          from: wPromoStart || undefined,
+                          to: wPromoEnd || undefined,
+                        }}
+                        onApply={(r) => {
+                          setValue("promo_start_date", r?.from || "");
+                          setValue("promo_end_date", r?.to || "");
+                        }}
+                        placeholder="Sin vigencia — siempre activa"
+                        showClear
+                        align="start"
+                        className="h-8 text-xs sm:w-[210px]"
+                      />
+                      {dateIssue && (
+                        <p className="w-full text-[0.75rem] text-destructive">
+                          {dateIssue}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {wHasDiscount && promoOpen && (
+                  <div className="border-t border-border p-4">
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className={`space-y-3 rounded-lg border border-border p-3 ${autoBlocked ? "opacity-60" : ""}`}>
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+                            <Percent className="h-3.5 w-3.5" />
+                          </span>
+                          <p className="text-sm font-semibold text-foreground">
+                            Descuento automático
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={promoFixed > 0 ? "outline" : "default"}
+                            disabled={autoBlocked}
+                            onClick={() => setValue("promo_fixed_price", "0")}
+                          >
+                            %
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={promoFixed > 0 ? "default" : "outline"}
+                            disabled={autoBlocked}
+                            onClick={() => {
+                              setValue("discount_percent", "0");
+                              setValue(
+                                "promo_fixed_price",
+                                basePrice > 0 ? basePrice.toFixed(2) : "",
+                              );
+                            }}
+                          >
+                            Precio fijo
+                          </Button>
+                        </div>
+                        {promoFixed > 0 ? (
+                          <NumberField
+                            icon={DollarSign}
+                            label="Precio de promoción ($)"
+                            value={wPromoFixed}
+                            onChange={(e) =>
+                              setValue("promo_fixed_price", e.target.value)
+                            }
+                            min={0}
+                            step={0.01}
+                            placeholder="0.00"
+                            helper={autoHelper}
+                            disabled={autoBlocked}
+                          />
+                        ) : (
+                          <Controller
+                            name="discount_percent"
+                            control={control}
+                            render={({ field }) => (
+                              <NumberField
+                                icon={Percent}
+                                label="Descuento (%)"
+                                value={field.value}
+                                onChange={field.onChange}
+                                min={0}
+                                max={100}
+                                step={1}
+                                placeholder="0"
+                                helper={autoHelper}
+                                disabled={autoBlocked}
+                              />
+                            )}
+                          />
+                        )}
+                        {basePrice > 0 && promoFixed > 0 && (
+                          <p className="text-[0.75rem] font-medium text-emerald-600">
+                            Precio de promoción: ${promoFixed.toFixed(2)} — ahorras $
+                            {(basePrice - promoFixed).toFixed(2)}.
+                          </p>
+                        )}
+                        {basePrice > 0 && promoPercent > 0 && promoFixed <= 0 && (
+                          <p className="text-[0.75rem] font-medium text-emerald-600">
+                            Queda en ${effective.toFixed(2)} — ahorras $
+                            {(basePrice - effective).toFixed(2)}.
+                          </p>
+                        )}
+                        {autoBlocked && (
+                          <p className="text-[0.75rem] text-destructive">
+                            Desactiva las promos por cantidad para usar el descuento
+                            automático.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className={`space-y-3 rounded-lg border border-border p-3 ${tiersBlocked ? "opacity-60" : ""}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/10 text-blue-600">
+                              <Boxes className="h-3.5 w-3.5" />
+                            </span>
+                            <p className="text-sm font-semibold text-foreground">
+                              Promociones por cantidad
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={addPriceTier}
+                            disabled={tiersBlocked}
+                          >
+                            <Plus className="h-4 w-4" />
+                            Agregar
+                          </Button>
+                        </div>
+                        {tiersBlocked && (
+                          <p className="text-[0.75rem] text-destructive">
+                            Desactiva el descuento automático para usar promos por
+                            cantidad.
+                          </p>
+                        )}
+
+                        {priceTiers.length === 0 ? (
+                          <p className="text-[0.8rem] text-muted-foreground">
+                            Sin promos. Haz clic en "Agregar" para crear una promo o un precio de
+                            mayoreo.
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {priceTiers.map((tier, i) => (
+                              <div
+                                key={i}
+                                className="space-y-1 rounded-lg border border-border bg-background p-2"
+                              >
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-muted-foreground">Tipo</Label>
+                                    <Select
+                                      value={tier.type}
+                                      onValueChange={(v) => updatePriceTier(i, "type", v)}
+                                      disabled={tiersBlocked}
+                                    >
+                                      <SelectTrigger className="w-44">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="combo">Promo X por $Y</SelectItem>
+                                        <SelectItem value="mayoreo">Mayoreo desde X</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <NumberField
+                                      icon={Hash}
+                                      label={tier.type === "combo" ? "Cantidad (X)" : "Desde (X)"}
+                                      value={tier.qty}
+                                      onChange={(e) => updatePriceTier(i, "qty", e.target.value)}
+                                      min={1}
+                                      placeholder="0"
+                                      disabled={tiersBlocked}
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <NumberField
+                                      label={
+                                        tier.type === "mayoreo"
+                                          ? "Precio por pieza ($)"
+                                          : "Precio ($)"
+                                      }
+                                      value={tier.price}
+                                      onChange={(e) =>
+                                        updatePriceTier(i, "price", e.target.value)
+                                      }
+                                      min={0}
+                                      step={0.01}
+                                      placeholder="0.00"
+                                      disabled={tiersBlocked}
+                                    />
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="text-destructive hover:text-destructive"
+                                    onClick={() => removePriceTier(i)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                                <p className="text-[0.7rem] text-muted-foreground">
+                                  {tier.type === "combo"
+                                    ? "Precio fijo al comprar esa cantidad exacta; si piden de más, el sobrante va a precio normal."
+                                    : "Precio por pieza con descuento al comprar desde esa cantidad."}
+                                </p>
+                                {tierPreview(tier) && (
+                                  <p className="text-[0.7rem] font-medium text-emerald-600">
+                                    {tierPreview(tier)}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                            {tierIssues.length > 0 && (
+                              <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                                {tierIssues.map((issue, j) => (
+                                  <p key={j} className="text-[0.75rem] text-destructive">
+                                    {issue}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 space-y-2 rounded-lg border border-border p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">
+                            Descuento manual en caja
+                          </p>
+                          <p className="text-[0.8rem] text-muted-foreground">
+                            Permite al cajero aplicar un descuento libre (tecla F6) al vender este
+                            producto.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={!!wAllowManual && !manualBlocked}
+                          disabled={!!manualBlocked}
+                          onCheckedChange={(v) =>
+                            setValue("allow_manual_discount", v)
+                          }
+                          className={manualBlocked ? "opacity-40" : ""}
+                        />
+                      </div>
+                      {manualBlocked && (
+                        <p className="text-[0.75rem] text-destructive">
+                          Desactiva el descuento automático y las promociones por cantidad para
+                          permitir descuento manual.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
-              />
-
-              {wHasDiscount && (
-                <div className="space-y-4">
-                  <Controller
-                    name="discount_percent"
-                    control={control}
-                    render={({ field }) => (
-                      <NumberField
-                        icon={Percent}
-                        label="Descuento (%)"
-                        value={field.value}
-                        onChange={field.onChange}
-                        min={0}
-                        max={100}
-                        step={1}
-                        placeholder="0"
-                        helper={
-                          parseFloat(watchMargins.discount_percent || "0") === 0
-                            ? "Con 0%, el botón de descuento aparecerá en el carrito."
-                            : "Este % se aplicará automáticamente en cada venta."
-                        }
-                      />
-                    )}
-                  />
-
-                  <div className="rounded-lg border border-dashed p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
-                          Mayoreo / Promociones por cantidad
-                        </p>
-                        <p className="text-[0.8rem] text-muted-foreground">
-                          Combos: precio fijo al comprar una cantidad exacta (p. ej. 10 por $25; si piden 11, todo va a precio normal). Mayoreo: precio por pieza al comprar desde cierta cantidad (p. ej. desde 15, $30 por las 15).
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={addPriceTier}
-                      >
-                        <Plus className="h-4 w-4" />
-                        Agregar
-                      </Button>
-                    </div>
-
-                    {priceTiers.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {priceTiers.map((tier, i) => (
-                          <div
-                            key={i}
-                            className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-background p-2"
-                          >
-                            <div className="space-y-1">
-                              <Label className="text-muted-foreground">Tipo</Label>
-                              <Select
-                                value={tier.type}
-                                onValueChange={(v) => updatePriceTier(i, "type", v)}
-                              >
-                                <SelectTrigger className="w-44">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="combo">Combo X por $Y</SelectItem>
-                                  <SelectItem value="mayoreo">Mayoreo desde X</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <NumberField
-                                icon={Hash}
-                                label={tier.type === "combo" ? "Cantidad (X)" : "Desde (X)"}
-                                value={tier.qty}
-                                onChange={(e) => updatePriceTier(i, "qty", e.target.value)}
-                                min={1}
-                                placeholder="0"
-                              />
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <NumberField
-                                label={
-                                  tier.type === "mayoreo"
-                                    ? "Precio por pieza ($)"
-                                    : "Precio ($)"
-                                }
-                                value={tier.price}
-                                onChange={(e) =>
-                                  updatePriceTier(i, "price", e.target.value)
-                                }
-                                min={0}
-                                step={0.01}
-                                placeholder="0.00"
-                              />
-                            </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => removePriceTier(i)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              </div>
             </section>
           </div>
 

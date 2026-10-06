@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useDeferredValue,
+  memo,
+} from "react";
 import {
   X,
   Banknote,
@@ -21,12 +28,18 @@ import {
   User,
   UserCheck,
   Timer,
+  ChevronDown,
+  Copy,
+  Printer,
+  ArrowUpDown,
+  MoreVertical,
 } from "lucide-react";
 import { CardSkeleton } from "./Skeletons";
 import CancelButton from "./CancelButton";
 import { formatMXTime, formatMXDate, getMXDateString } from "../utils/dateUtils";
 import { jsPDF } from "jspdf";
 import { applyPlugin } from "jspdf-autotable";
+import interFontInline from "../assets/fonts/inter.ttf?inline";
 import { useCashier } from "../contexts/CashierContext";
 import { Badge as ShBadge } from "./ui/badge";
 import { Button as ShButton } from "./ui/button";
@@ -64,6 +77,23 @@ import {
 } from "./ui/sheet";
 import { DateRangePicker } from "./ui/date-range-picker";
 import { ConfirmDialog } from "./ui/confirm";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "./ui/dropdown-menu";
+import { EmptyState } from "./ui/empty-state";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "./ui/tooltip";
+import { Spinner } from "./ui/spinner";
 import { cn } from "@/lib/utils";
 applyPlugin(jsPDF);
 
@@ -72,6 +102,23 @@ const fmtMX = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+
+const MOV_PER_PAGE = 25;
+const PROD_PER_PAGE = 25;
+
+const MOV_SORT_OPTIONS = [
+  { value: "recent", label: "Más recientes" },
+  { value: "oldest", label: "Más antiguos" },
+  { value: "amount_desc", label: "Mayor monto" },
+  { value: "amount_asc", label: "Menor monto" },
+];
+
+const MOV_METHOD_OPTIONS = [
+  { value: "all", label: "Todos" },
+  { value: "cash", label: "Efectivo" },
+  { value: "card", label: "Tarjeta" },
+  { value: "transfer", label: "Transferencia" },
+];
 
 const registerName = (cr) => {
   const n = cr.name;
@@ -212,7 +259,48 @@ const RegisterHistory = () => {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [page, setPage] = useState(0);
+  const [requirePinForVoid, setRequirePinForVoid] = useState(false);
   const isAdmin = cashier?.role === "admin";
+
+  // ── Panel de "Ver": pestañas, feed de movimientos y productos ──
+  const [tab, setTab] = useState("resumen");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [movements, setMovements] = useState([]);
+  const [movementsTotal, setMovementsTotal] = useState(0);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movPage, setMovPage] = useState(0);
+  const [movSearch, setMovSearch] = useState("");
+  const [movKind, setMovKind] = useState("all");
+  const [movMethod, setMovMethod] = useState("all");
+  const [movStatus, setMovStatus] = useState("all");
+  const [movSort, setMovSort] = useState("recent");
+  const [products, setProducts] = useState([]);
+  const [productsTotal, setProductsTotal] = useState(0);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [prodPage, setProdPage] = useState(0);
+  const [prodSearch, setProdSearch] = useState("");
+  const [expandedKey, setExpandedKey] = useState(null);
+  const [saleItemsCache, setSaleItemsCache] = useState({});
+  const deferredMovSearch = useDeferredValue(movSearch);
+  const deferredProdSearch = useDeferredValue(prodSearch);
+  const registerId = detail?.register?.id;
+
+  useEffect(() => {
+    let active = true;
+    const loadPosSettings = async () => {
+      try {
+        const pinForVoid = await window.api.invoke(
+          "get-setting",
+          "pin_for_void"
+        );
+        if (active) setRequirePinForVoid(pinForVoid === "true");
+      } catch (e) {}
+    };
+    loadPosSettings();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -281,27 +369,155 @@ const RegisterHistory = () => {
     safePage * perPage + perPage,
   );
 
-  const handleViewRegisterDetail = useCallback(async (registerId) => {
+  const handleViewRegisterDetail = useCallback(async (id) => {
     setDetailLoading(true);
     setDetail(null);
     setDetailOpen(true);
-    const result = await window.api.invoke(
-      "get-register-sales-detail",
-      registerId,
-    );
+    setTab("resumen");
+    setMovPage(0);
+    setMovSearch("");
+    setMovKind("all");
+    setMovMethod("all");
+    setMovStatus("all");
+    setMovSort("recent");
+    setProdPage(0);
+    setProdSearch("");
+    setExpandedKey(null);
+    const result = await window.api.invoke("get-register-sales-detail", id);
     if (result.success) {
       setDetail(result);
     }
     setDetailLoading(false);
   }, []);
 
+  const reloadSummary = useCallback(async (id) => {
+    if (!id) return;
+    const result = await window.api.invoke("get-register-sales-detail", id);
+    if (result.success) setDetail(result);
+  }, []);
+
+  const refreshPanel = useCallback(
+    (id) => {
+      reloadSummary(id);
+      setRefreshKey((k) => k + 1);
+    },
+    [reloadSummary],
+  );
+
+  // Feed de movimientos (paginado / filtrable)
+  useEffect(() => {
+    if (!detailOpen || !registerId || tab !== "transacciones") return;
+    let active = true;
+    setMovementsLoading(true);
+    window.api
+      .invoke("get-register-movements", {
+        registerId,
+        search: deferredMovSearch,
+        kind: movKind,
+        method: movMethod,
+        status: movStatus,
+        sort: movSort,
+        page: movPage + 1,
+        pageSize: MOV_PER_PAGE,
+      })
+      .then((res) => {
+        if (!active) return;
+        if (res?.success) {
+          setMovements(res.rows || []);
+          setMovementsTotal(res.total || 0);
+        }
+        setMovementsLoading(false);
+      })
+      .catch(() => active && setMovementsLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [
+    detailOpen,
+    registerId,
+    tab,
+    deferredMovSearch,
+    movKind,
+    movMethod,
+    movStatus,
+    movSort,
+    movPage,
+    refreshKey,
+  ]);
+
+  // Productos vendidos (paginado / filtrable)
+  useEffect(() => {
+    if (!detailOpen || !registerId || tab !== "productos") return;
+    let active = true;
+    setProductsLoading(true);
+    window.api
+      .invoke("get-register-products", {
+        registerId,
+        search: deferredProdSearch,
+        page: prodPage + 1,
+        pageSize: PROD_PER_PAGE,
+      })
+      .then((res) => {
+        if (!active) return;
+        if (res?.success) {
+          setProducts(res.rows || []);
+          setProductsTotal(res.total || 0);
+        }
+        setProductsLoading(false);
+      })
+      .catch(() => active && setProductsLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [detailOpen, registerId, tab, deferredProdSearch, prodPage, refreshKey]);
+
+  const handleToggleExpand = useCallback(
+    async (mov) => {
+      const key = `${mov.kind}-${mov.ref_id}`;
+      setExpandedKey((prev) => (prev === key ? null : key));
+      if (mov.kind !== "income") return;
+      if (saleItemsCache[mov.ref_id]) return;
+      const res = await window.api.invoke("get-sale-details", mov.ref_id);
+      if (res?.success) {
+        setSaleItemsCache((prev) => ({
+          ...prev,
+          [mov.ref_id]: res.items || [],
+        }));
+      }
+    },
+    [saleItemsCache],
+  );
+
   const [cancelSaleData, setCancelSaleData] = useState(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelPin, setCancelPin] = useState("");
+  const [cancelPinError, setCancelPinError] = useState("");
 
   const handleCancelSale = async () => {
     if (!cancelSaleData) return;
+    if (requirePinForVoid) {
+      if (!cashier?.id) {
+        setCancelPinError("Sesión no válida");
+        return;
+      }
+      if (!cancelPin) {
+        setCancelPinError("Ingresa tu NIP para continuar");
+        return;
+      }
+    }
     setCancelLoading(true);
     try {
+      if (requirePinForVoid) {
+        const auth = await window.api.invoke(
+          "verify-cashier-pin",
+          cashier.id,
+          cancelPin
+        );
+        if (!auth?.success) {
+          setCancelPinError(auth?.error || "NIP incorrecto");
+          return;
+        }
+      }
       const result = await window.api.invoke("cancel-sale", {
         saleId: cancelSaleData.saleId,
         cashierName: cashier?.name,
@@ -310,8 +526,9 @@ const RegisterHistory = () => {
       });
       const saleId = cancelSaleData.saleId;
       setCancelSaleData(null);
+      setCancelPin("");
       if (result.success) {
-        await handleViewRegisterDetail(cancelSaleData.registerId);
+        refreshPanel(cancelSaleData.registerId);
       } else {
         setError(result.error || "No se pudo cancelar la venta");
       }
@@ -335,7 +552,7 @@ const RegisterHistory = () => {
       const registerId = cancelExpenseData.registerId;
       setCancelExpenseData(null);
       if (result.success) {
-        await handleViewRegisterDetail(registerId);
+        refreshPanel(registerId);
       } else {
         setError(result.error || "No se pudo cancelar el gasto");
       }
@@ -350,26 +567,89 @@ const RegisterHistory = () => {
       (await window.api.invoke("get-setting", "store_name")) || "MI TIENDA POS";
     const doc = new jsPDF();
     const r = detail.register;
+    const pageW = doc.internal.pageSize.getWidth();
+
+    const [movRes, prodRes] = await Promise.all([
+      window.api.invoke("get-register-movements", {
+        registerId: r.id,
+        pageSize: 200,
+      }),
+      window.api.invoke("get-register-products", {
+        registerId: r.id,
+        pageSize: 200,
+      }),
+    ]);
+    const movs = movRes?.rows || [];
+    const prods = prodRes?.rows || [];
+
+    let fontName = "helvetica";
+    if (typeof interFontInline === "string" && interFontInline.includes(",")) {
+      try {
+        const b64 = interFontInline.split(",")[1];
+        doc.addFileToVFS("Inter.ttf", b64);
+        doc.addFont("Inter.ttf", "Inter", "normal");
+        doc.addFont("Inter.ttf", "Inter", "bold");
+        doc.setFont("Inter", "normal");
+        fontName = "Inter";
+      } catch (e) {
+        fontName = "helvetica";
+      }
+    }
+
+    const C = {
+      ink: [15, 23, 42],
+      body: [51, 65, 85],
+      muted: [100, 116, 139],
+      line: [226, 232, 240],
+      grid: [148, 163, 184],
+      head: [241, 245, 249],
+      brand: [30, 64, 175],
+      white: [255, 255, 255],
+    };
 
     doc.setFontSize(16);
-    doc.text(store, 14, 18);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(...C.ink);
+    doc.text(store.toUpperCase(), pageW / 2, 18, { align: "center" });
     doc.setFontSize(10);
-    doc.setTextColor(90);
-    doc.text(`Turnos y Cortes — ${registerName(r)}`, 14, 24);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(...C.muted);
+    doc.text(`Turnos y Cortes — ${registerName(r)}`, pageW / 2, 24, {
+      align: "center",
+    });
     doc.text(
       `Responsable: ${r.opener_name || "—"}   Cerrado por: ${r.closer_name || "—"}`,
-      14,
+      pageW / 2,
       30,
+      { align: "center" },
     );
     doc.text(
       `Abierta: ${formatMXDate(r.opened_at)} ${formatMXTime(r.opened_at)}   Cerrada: ${r.closed_at ? `${formatMXDate(r.closed_at)} ${formatMXTime(r.closed_at)}` : "—"}`,
-      14,
+      pageW / 2,
       36,
+      { align: "center" },
     );
-    doc.setTextColor(0);
+
+    doc.setDrawColor(...C.brand);
+    doc.setLineWidth(0.8);
+    doc.line(14, 41, pageW - 14, 41);
+
+    const tblBase = {
+      font: fontName,
+      fontSize: 9,
+      cellPadding: 3,
+      textColor: C.body,
+      lineColor: C.grid,
+      lineWidth: 0.4,
+    };
+    const tblHead = {
+      fillColor: C.head,
+      textColor: C.ink,
+      fontStyle: "bold",
+    };
 
     doc.autoTable({
-      startY: 42,
+      startY: 45,
       head: [["Resumen Financiero", "Monto"]],
       body: [
         ["Apertura", `$${fmtMX(r.opening_balance)}`],
@@ -379,27 +659,51 @@ const RegisterHistory = () => {
         ["Gastos", `-$${fmtMX(detail.totalExpenses)}`],
         ["Neto", `$${fmtMX(detail.totalSales - (detail.totalExpenses || 0))}`],
       ],
+      styles: tblBase,
+      headStyles: tblHead,
+      columnStyles: { 1: { halign: "right" } },
+      margin: { left: 14, right: 14 },
     });
 
-    const txn = [
-      ...detail.sales.map((s) => ({
-        time: s.created_at,
-        id: `#V-${s.id}`,
-        type: s.status === "cancelado" ? "Cancelado" : "Venta",
-        method: methodNames[s.payment_method] || s.payment_method,
-        amount: s.status === "cancelado" ? 0 : s.total,
-      })),
-      ...detail.expenses.map((e) => ({
-        time: e.created_at,
-        id: `#G-${e.id}`,
-        type: e.status === "cancelado" ? "Cancelado" : "Gasto",
-        method: e.reason || "—",
-        amount: e.status === "cancelado" ? 0 : -e.amount,
-      })),
-    ].sort((a, b) => new Date(b.time) - new Date(a.time));
+    let cursorY = doc.lastAutoTable.finalY;
+    if (postCloseDeltas.length > 0) {
+      doc.setFontSize(8);
+      doc.setFont(undefined, "normal");
+      doc.setTextColor(...C.muted);
+      const adjText = postCloseDeltas
+        .map(
+          (m) =>
+            `${m.label} ${m.delta > 0 ? "+" : "-"}$${fmtMX(Math.abs(m.delta))}`,
+        )
+        .join("   ");
+      doc.text(
+        `Ajustes post-corte: ${adjText} (difiere del estado actual: ventas, cancelaciones o devoluciones posteriores al cierre)`,
+        14,
+        cursorY + 4,
+      );
+      cursorY += 6;
+    }
+
+    const txn = movs
+      .map((m) => ({
+        time: m.created_at,
+        id: `#${m.kind === "income" ? "V" : "G"}-${m.ref_id}`,
+        type:
+          m.state === "cancelled"
+            ? "Cancelado"
+            : m.kind === "income"
+              ? "Venta"
+              : "Gasto",
+        method:
+          m.kind === "income"
+            ? methodNames[m.method] || m.method
+            : m.reason || "—",
+        amount: m.state === "cancelled" ? 0 : m.amount,
+      }))
+      .sort((a, b) => new Date(b.time) - new Date(a.time));
 
     doc.autoTable({
-      startY: doc.lastAutoTable.finalY + 8,
+      startY: cursorY + 8,
       head: [["Hora", "ID", "Tipo", "Método", "Monto"]],
       body: txn.map((t) => [
         formatMXTime(t.time),
@@ -408,17 +712,25 @@ const RegisterHistory = () => {
         t.method,
         `${t.amount >= 0 ? "+" : "-"}$${fmtMX(Math.abs(t.amount))}`,
       ]),
+      styles: tblBase,
+      headStyles: tblHead,
+      columnStyles: { 4: { halign: "right" } },
+      margin: { left: 14, right: 14 },
     });
 
     doc.autoTable({
       startY: doc.lastAutoTable.finalY + 8,
       head: [["Producto", "Cantidad", "Precio", "Subtotal"]],
-      body: detail.items.map((i) => [
-        i.product_name || "Producto",
-        String(i.quantity),
-        `$${fmtMX(i.price_at_sale)}`,
-        `$${fmtMX(i.quantity * i.price_at_sale)}`,
+      body: prods.map((p) => [
+        p.product_name || "Producto",
+        String(p.quantity),
+        `$${fmtMX(p.quantity ? p.gross / p.quantity : 0)}`,
+        `$${fmtMX(p.subtotal)}`,
       ]),
+      styles: tblBase,
+      headStyles: tblHead,
+      columnStyles: { 1: { halign: "center" }, 3: { halign: "right" } },
+      margin: { left: 14, right: 14 },
     });
 
     doc.autoTable({
@@ -429,7 +741,27 @@ const RegisterHistory = () => {
         ["Declarado", `$${fmtMX(r.declared_close)}`],
         ["Diferencia", `$${fmtMX(r.difference)}`],
       ],
+      styles: tblBase,
+      headStyles: tblHead,
+      columnStyles: { 1: { halign: "right" } },
+      margin: { left: 14, right: 14 },
     });
+
+    const totalPages = doc.getNumberOfPages();
+    for (let pageIdx = 1; pageIdx <= totalPages; pageIdx++) {
+      doc.setPage(pageIdx);
+      const fy = doc.internal.pageSize.getHeight() - 10;
+      doc.setFontSize(8);
+      doc.setFont(undefined, "normal");
+      doc.setTextColor(...C.muted);
+      doc.text(`Generado el ${new Date().toLocaleString("es-MX")}`, 14, fy);
+      doc.text(`Página ${pageIdx} de ${totalPages}`, pageW / 2, fy, {
+        align: "center",
+      });
+      doc.setFont(undefined, "bold");
+      doc.setTextColor(...C.ink);
+      doc.text("Vendia", pageW - 14, fy, { align: "right" });
+    }
 
     const when = new Date(r.closed_at || r.opened_at);
     const suffix = Number.isNaN(when.getTime())
@@ -457,14 +789,61 @@ const RegisterHistory = () => {
     return `${h}h ${m}m`;
   };
 
+  const difference = Number(detail?.register?.difference || 0);
+  const hasDifference = Math.abs(difference) >= 0.005;
+  const diffTone = hasDifference
+    ? "text-red-600 dark:text-red-400 bg-red-500/10"
+    : "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10";
+  const diffText = hasDifference
+    ? "text-red-600 dark:text-red-400"
+    : "text-emerald-600 dark:text-emerald-400";
+  const postCloseDeltas = (() => {
+    const live = detail?.live;
+    const reg = detail?.register;
+    if (!live || !reg) return [];
+    return [
+      { label: "Efectivo", stored: reg.cash_sales, live: live.cashSales },
+      { label: "Tarjeta", stored: reg.card_sales, live: live.cardSales },
+      {
+        label: "Transferencia",
+        stored: reg.transfer_sales,
+        live: live.transferSales,
+      },
+    ]
+      .map((m) => ({
+        ...m,
+        delta:
+          Math.round((Number(m.live || 0) - Number(m.stored || 0)) * 100) / 100,
+      }))
+      .filter((m) => Math.abs(m.delta) >= 0.005);
+  })();
+  const hasMovFilters =
+    movSearch.trim() !== "" ||
+    movKind !== "all" ||
+    movMethod !== "all" ||
+    movStatus !== "all" ||
+    movSort !== "recent";
+  const statusBadge = hasDifference ? (
+    <ShBadge
+      variant="outline"
+      className="shrink-0 whitespace-nowrap border-red-500/60 text-red-600 dark:border-red-400/50 dark:text-red-400"
+    >
+      <TriangleAlert size={12} className="mr-1" /> Diferencia
+    </ShBadge>
+  ) : (
+    <ShBadge
+      variant="outline"
+      className="shrink-0 whitespace-nowrap border-emerald-500/60 text-emerald-600 dark:border-emerald-400/50 dark:text-emerald-400"
+    >
+      <CheckCircle2 size={12} className="mr-1" /> Completo
+    </ShBadge>
+  );
+
   return (
-    <div className="p-2 md:p-4">
+    <div className="p-1">
       <div className="mb-3">
-        <h1 className="text-xl font-bold tracking-tight text-foreground">
-          Turnos y Cortes
-        </h1>
         <p className="text-sm text-muted-foreground">
-          Historial de turnos de caja y cortes realizados
+          Consulta, filtra y reimprime cortes por fecha, caja o cajero
         </p>
       </div>
 
@@ -619,35 +998,55 @@ const RegisterHistory = () => {
           </div>
 
         {detailOpen && (
-          <div className="flex min-w-0 max-h-[calc(100vh-9rem)] flex-col overflow-hidden rounded-md border border-border bg-card shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
-            <div className="border-b bg-muted/30 px-5 py-4">
+          <Tabs
+            value={tab}
+            onValueChange={setTab}
+            className="flex min-w-0 max-h-[calc(100vh-9rem)] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
+          >
+            <div className="shrink-0 border-b bg-muted/30 px-5 py-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="truncate text-lg font-bold text-foreground">
-                    {detail
-                      ? `Turno de ${registerName(detail.register)}`
-                      : "Cargando detalle..."}
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-lg font-bold text-foreground">
+                      {detail
+                        ? `Turno de ${registerName(detail.register)}`
+                        : "Cargando detalle..."}
+                    </h3>
+                    {detail && statusBadge}
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={exportDetailPDF}
-                    title="Exportar PDF"
-                    disabled={!detail}
-                    className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-muted-foreground/40 bg-card text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    <Download size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDetailOpen(false)}
-                    title="Cerrar"
-                    className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-muted-foreground/40 bg-card text-muted-foreground transition-colors hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-600"
-                  >
-                    <X size={17} />
-                  </button>
-                </div>
+                <TooltipProvider delayDuration={200}>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <ShButton
+                          variant="outline"
+                          size="icon"
+                          onClick={exportDetailPDF}
+                          disabled={!detail}
+                          aria-label="Exportar PDF"
+                        >
+                          <Download size={16} />
+                        </ShButton>
+                      </TooltipTrigger>
+                      <TooltipContent>Exportar PDF</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <ShButton
+                          variant="outline"
+                          size="icon"
+                          className="hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-600"
+                          onClick={() => setDetailOpen(false)}
+                          aria-label="Cerrar"
+                        >
+                          <X size={17} />
+                        </ShButton>
+                      </TooltipTrigger>
+                      <TooltipContent>Cerrar</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </TooltipProvider>
               </div>
 
               {detail && (
@@ -713,6 +1112,59 @@ const RegisterHistory = () => {
                   </div>
                 </div>
               )}
+
+              {detail && (
+                <div className="mt-3 grid grid-cols-3 gap-2 border-t pt-3">
+                  {[
+                    {
+                      label: "Ventas",
+                      value: `$${fmtMX(detail.totalSales)}`,
+                      tone: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+                    },
+                    {
+                      label: "Neto",
+                      value: `$${fmtMX(detail.totalSales - (detail.totalExpenses || 0))}`,
+                      tone: "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10",
+                    },
+                    {
+                      label: "Diferencia",
+                      value: `$${fmtMX(detail.register.difference)}`,
+                      tone: diffTone,
+                    },
+                  ].map((k) => (
+                    <div
+                      key={k.label}
+                      className="rounded-lg border border-border/70 bg-card px-2.5 py-2"
+                    >
+                      <span
+                        className={cn(
+                          "inline-flex rounded-md px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wider",
+                          k.tone,
+                        )}
+                      >
+                        {k.label}
+                      </span>
+                      <p className="mt-1 truncate text-base font-extrabold tabular-nums text-foreground">
+                        {k.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-3 flex justify-center">
+                <TabsList className="h-10">
+                  <TabsTrigger value="resumen" className="px-4">
+                    Resumen
+                  </TabsTrigger>
+                  <TabsTrigger value="transacciones" className="px-4">
+                    Transacciones
+                  </TabsTrigger>
+                  <TabsTrigger value="productos" className="px-4">
+                    Productos
+                  </TabsTrigger>
+                </TabsList>
+              </div>
             </div>
               {detailLoading ? (
                 <div className="p-4">
@@ -720,12 +1172,12 @@ const RegisterHistory = () => {
                 </div>
               ) : detail ? (
                 <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="space-y-6 px-5 py-5">
+            <TabsContent value="resumen" className="m-0 space-y-6 px-5 py-5">
               <div className="grid grid-cols-3 gap-4">
                 {[
                   {
                     label: "Ventas",
-                    value: `$${detail.totalSales.toFixed(2)}`,
+                    value: `$${fmtMX(detail.totalSales)}`,
                     icon: CircleDollarSign,
                     color: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
                   },
@@ -762,379 +1214,595 @@ const RegisterHistory = () => {
               </div>
 
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <SCard className="rounded-xl border-border/80 shadow-sm">
-                <SCardContent className="space-y-3 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wider text-foreground">
-                    Resumen Financiero
-                  </p>
-                  {[
-                    {
-                      label: "Apertura",
-                      value: `${(detail.register.opening_balance || 0).toFixed(2)}`,
-                      neg: false,
-                    },
-                    {
-                      label: "Efectivo",
-                      value: `${(detail.register.cash_sales || 0).toFixed(2)}`,
-                      neg: false,
-                    },
-                    {
-                      label: "Tarjeta",
-                      value: `${(detail.register.card_sales || 0).toFixed(2)}`,
-                      neg: false,
-                    },
-                    {
-                      label: "Transferencia",
-                      value: `${(detail.register.transfer_sales || 0).toFixed(2)}`,
-                      neg: false,
-                    },
-                    {
-                      label: "Gastos",
-                      value: `${(detail.totalExpenses || 0).toFixed(2)}`,
-                      neg: true,
-                    },
-                  ].map((row) => (
-                    <div
-                      key={row.label}
-                      className="flex items-center justify-between"
-                    >
-                      <span
-                        className={`text-sm ${row.neg ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}
+                <SCard className="rounded-xl border-border/80 shadow-sm">
+                  <SCardContent className="space-y-3 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Resumen Financiero
+                    </p>
+                    {[
+                      {
+                        label: "Apertura",
+                        value: fmtMX(detail.register.opening_balance),
+                        neg: false,
+                      },
+                      {
+                        label: "Efectivo",
+                        value: fmtMX(detail.register.cash_sales),
+                        neg: false,
+                      },
+                      {
+                        label: "Tarjeta",
+                        value: fmtMX(detail.register.card_sales),
+                        neg: false,
+                      },
+                      {
+                        label: "Transferencia",
+                        value: fmtMX(detail.register.transfer_sales),
+                        neg: false,
+                      },
+                      {
+                        label: "Gastos",
+                        value: fmtMX(detail.totalExpenses),
+                        neg: true,
+                      },
+                    ].map((row) => (
+                      <div
+                        key={row.label}
+                        className="flex items-center justify-between"
                       >
-                        {row.label}
-                      </span>
-                      <span
-                        className={`text-sm font-bold tabular-nums ${row.neg ? "text-red-600 dark:text-red-400" : "text-foreground"}`}
-                      >
-                        {row.neg ? "-" : ""}${row.value}
+                        <span
+                          className={`text-sm ${row.neg ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}
+                        >
+                          {row.label}
+                        </span>
+                        <span
+                          className={`text-sm font-bold tabular-nums ${row.neg ? "text-red-600 dark:text-red-400" : "text-foreground"}`}
+                        >
+                          {row.neg ? "-" : ""}${row.value}
+                        </span>
+                      </div>
+                    ))}
+                    {postCloseDeltas.length > 0 && (
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+                              <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+                              <span>
+                                Ajustes post-corte:{" "}
+                                {postCloseDeltas
+                                  .map(
+                                    (m) =>
+                                      `${m.label} ${m.delta > 0 ? "+" : "−"}$${fmtMX(Math.abs(m.delta))}`,
+                                  )
+                                  .join(" · ")}
+                              </span>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Difiere del estado actual: incluye ventas,
+                            cancelaciones o devoluciones posteriores al cierre.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                    <Separator />
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-sm font-extrabold text-foreground">Neto</span>
+                      <span className="text-xl font-extrabold tabular-nums text-foreground">
+                        ${fmtMX(detail.totalSales - (detail.totalExpenses || 0))}
                       </span>
                     </div>
-                  ))}
-                  <Separator />
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-sm font-extrabold text-foreground">Neto</span>
-                    <span className="text-xl font-extrabold tabular-nums text-foreground">
-                      ${(detail.totalSales - (detail.totalExpenses || 0)).toFixed(2)}
-                    </span>
-                  </div>
-                </SCardContent>
-              </SCard>
+                  </SCardContent>
+                </SCard>
 
-              <SCard className="rounded-xl border-border/80 shadow-sm">
-                <SCardContent className="space-y-3 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wider text-foreground">
-                    Verificación de Cierre
-                  </p>
+                <SCard className="rounded-xl border-border/80 shadow-sm">
+                  <SCardContent className="space-y-3 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Verificación de Cierre
+                    </p>
+                    {[
+                      {
+                        label: "Cierre Esperado",
+                        value: fmtMX(detail.register.expected_close),
+                        tone: "text-foreground",
+                      },
+                      {
+                        label: "Declarado",
+                        value: fmtMX(detail.register.declared_close),
+                        tone: "text-foreground",
+                      },
+                      {
+                        label: "Diferencia",
+                        value: fmtMX(detail.register.difference),
+                        tone: diffText,
+                      },
+                    ].map((row) => (
+                      <div
+                        key={row.label}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="text-sm text-muted-foreground">{row.label}</span>
+                        <span className={`text-sm font-bold tabular-nums ${row.tone}`}>
+                          ${row.value}
+                        </span>
+                      </div>
+                    ))}
+                  </SCardContent>
+                </SCard>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="transacciones" className="m-0 flex flex-col">
+              <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 px-4 py-2.5">
+                <div className="relative min-w-[180px] flex-1">
+                  <Search
+                    size={15}
+                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    value={movSearch}
+                    onChange={(e) => {
+                      setMovSearch(e.target.value);
+                      setMovPage(0);
+                    }}
+                    placeholder="Buscar producto, folio o monto..."
+                    className="h-9 pl-8"
+                    aria-label="Buscar movimiento"
+                  />
+                </div>
+                <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
                   {[
-                    {
-                      label: "Cierre Esperado",
-                      value: `${(detail.register.expected_close || 0).toFixed(2)}`,
-                    },
-                    {
-                      label: "Declarado",
-                      value: `${(detail.register.declared_close || 0).toFixed(2)}`,
-                    },
-                    {
-                      label: "Diferencia",
-                      value: `${(detail.register.difference || 0).toFixed(2)}`,
-                    },
-                  ].map((row) => (
-                    <div
-                      key={row.label}
-                      className="flex items-center justify-between"
+                    { value: "all", label: "Todos" },
+                    { value: "income", label: "Ingresos" },
+                    { value: "expense", label: "Egresos" },
+                  ].map((k) => (
+                    <button
+                      key={k.value}
+                      type="button"
+                      onClick={() => {
+                        setMovKind(k.value);
+                        setMovPage(0);
+                      }}
+                      className={cn(
+                        "cursor-pointer rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
+                        movKind === k.value
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:bg-accent/60",
+                      )}
                     >
-                      <span className="text-sm text-muted-foreground">{row.label}</span>
-                      <span className="text-sm font-bold tabular-nums text-foreground">
-                        ${row.value}
-                      </span>
-                    </div>
+                      {k.label}
+                    </button>
                   ))}
-                </SCardContent>
-              </SCard>
+                </div>
+                <ShSelect
+                  value={movMethod}
+                  onValueChange={(v) => {
+                    setMovMethod(v);
+                    setMovPage(0);
+                  }}
+                >
+                  <ShSelectTrigger className="h-9 w-[150px]">
+                    <ShSelectValue />
+                  </ShSelectTrigger>
+                  <ShSelectContent>
+                    {MOV_METHOD_OPTIONS.map((m) => (
+                      <ShSelectItem key={m.value} value={m.value}>
+                        {m.value === "all" ? "Todo método" : m.label}
+                      </ShSelectItem>
+                    ))}
+                  </ShSelectContent>
+                </ShSelect>
+                <ShSelect
+                  value={movStatus}
+                  onValueChange={(v) => {
+                    setMovStatus(v);
+                    setMovPage(0);
+                  }}
+                >
+                  <ShSelectTrigger className="h-9 w-[140px]">
+                    <ShSelectValue />
+                  </ShSelectTrigger>
+                  <ShSelectContent>
+                    <ShSelectItem value="all">Todo estado</ShSelectItem>
+                    <ShSelectItem value="active">Activos</ShSelectItem>
+                    <ShSelectItem value="cancelled">Cancelados</ShSelectItem>
+                  </ShSelectContent>
+                </ShSelect>
+                <ShSelect
+                  value={movSort}
+                  onValueChange={(v) => {
+                    setMovSort(v);
+                    setMovPage(0);
+                  }}
+                >
+                  <ShSelectTrigger className="h-9 w-[160px]">
+                    <ShSelectValue />
+                  </ShSelectTrigger>
+                  <ShSelectContent>
+                    {MOV_SORT_OPTIONS.map((s) => (
+                      <ShSelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </ShSelectItem>
+                    ))}
+                  </ShSelectContent>
+                </ShSelect>
               </div>
-            </div>
 
-            <div className="space-y-6 border-t border-border bg-muted/20 px-5 py-5">
-              <div className="flex items-center gap-2">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-foreground">
-                  Transacciones
-                </h3>
-                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">
-                  {detail.saleCount}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 items-start gap-5 sm:grid-cols-2">
-                <div className="min-w-0">
-                  <div className="mb-2 flex items-center gap-1.5">
-                    <TrendingUp size={16} className="text-emerald-600 dark:text-emerald-400" />
-                    <h4 className="text-sm font-bold text-foreground">Ingresos</h4>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {movementsLoading ? (
+                  <div className="p-4">
+                    <CardSkeleton count={5} />
                   </div>
-                  <div className="overflow-x-auto rounded-xl border border-border">
-                    <ShTable>
-                      <ShTableHeader>
-                        <ShTableRow className="bg-muted/40 hover:bg-transparent">
-                          {[
-                            "Hora",
-                            "ID",
-                            "Método",
-                            "Monto",
-                            ...(isAdmin || detail.sales.some((s) => s.can_cancel)
-                              ? ["Acción"]
-                              : []),
-                          ].map((h) => (
-                            <ShTableHead
-                              key={h}
-                              className="whitespace-nowrap px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-foreground"
+                ) : movements.length === 0 ? (
+                  <EmptyState
+                    icon={<Receipt size={22} />}
+                    title="Sin movimientos"
+                    description="No se encontraron ingresos ni egresos con los filtros aplicados."
+                    action={
+                      hasMovFilters ? (
+                        <ShButton
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setMovSearch("");
+                            setMovKind("all");
+                            setMovMethod("all");
+                            setMovStatus("all");
+                            setMovSort("recent");
+                            setMovPage(0);
+                          }}
+                        >
+                          Limpiar filtros
+                        </ShButton>
+                      ) : null
+                    }
+                  />
+                ) : (
+                  <div className="divide-y divide-border">
+                    {movements.map((mov) => {
+                      const isIncome = mov.kind === "income";
+                      const cancelled = mov.state === "cancelled";
+                      const key = `${mov.kind}-${mov.ref_id}`;
+                      const expanded = expandedKey === key;
+                      const canExpand = isIncome;
+                      const items = saleItemsCache[mov.ref_id];
+                      return (
+                        <div key={key}>
+                          <div
+                            className={cn(
+                              "flex items-center gap-3 px-4 py-2.5 transition-colors",
+                              canExpand && "cursor-pointer hover:bg-accent/40",
+                            )}
+                            onClick={
+                              canExpand ? () => handleToggleExpand(mov) : undefined
+                            }
+                          >
+                            <span
+                              className={cn(
+                                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                                isIncome
+                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                  : "bg-red-500/10 text-red-600 dark:text-red-400",
+                              )}
                             >
-                              {h}
-                            </ShTableHead>
-                          ))}
-                        </ShTableRow>
-                      </ShTableHeader>
-                      <ShTableBody>
-                        {[...detail.sales]
-                          .slice()
-                          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                          .map((s, idx) => (
-                            <ShTableRow key={s.id} className={idx % 2 === 1 ? "bg-muted/40" : ""}>
-                              <ShTableCell className="whitespace-nowrap px-4 py-2.5 text-sm tabular-nums text-foreground">
-                                {formatMXTime(s.created_at)}
-                              </ShTableCell>
-                              <ShTableCell className="px-4 py-2.5 text-sm font-bold text-primary">
-                                #V-{s.id}
-                              </ShTableCell>
-                              <ShTableCell className="px-4 py-2.5 text-sm text-foreground">
-                                {s.status === "cancelado" ? (
+                              {isIncome ? (
+                                <TrendingUp size={15} />
+                              ) : (
+                                <TrendingDown size={15} />
+                              )}
+                            </span>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+                                  {isIncome
+                                    ? mov.products || "Venta"
+                                    : mov.reason || "Gasto"}
+                                </span>
+                                {cancelled && (
                                   <ShBadge
                                     variant="outline"
                                     className="whitespace-nowrap border-red-500/60 text-red-600 dark:border-red-400/50 dark:text-red-400"
                                   >
                                     Cancelado
                                   </ShBadge>
-                                ) : (
-                                  <span className="flex items-center gap-1.5 whitespace-nowrap">
-                                    {methodIcons[s.payment_method]}
-                                    {methodNames[s.payment_method] || s.payment_method}
+                                )}
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="tabular-nums">
+                                  {formatMXTime(mov.created_at)}
+                                </span>
+                                <span className="font-semibold text-primary">
+                                  {isIncome ? `#V-${mov.ref_id}` : `#G-${mov.ref_id}`}
+                                </span>
+                                {isIncome && (
+                                  <span className="flex items-center gap-1">
+                                    {methodIcons[mov.method]}
+                                    {methodNames[mov.method] || mov.method}
                                   </span>
                                 )}
-                              </ShTableCell>
-                              <ShTableCell className="whitespace-nowrap px-4 py-2.5 text-right">
-                                <span
-                                  className={`text-sm font-bold tabular-nums ${
-                                    s.status === "cancelado"
-                                      ? "text-muted-foreground line-through"
-                                      : "text-foreground"
-                                  }`}
-                                >
-                                  ${(s.status === "cancelado" ? 0 : s.total).toFixed(2)}
-                                </span>
-                              </ShTableCell>
-                              {(isAdmin || s.can_cancel) && (
-                                <ShTableCell className="px-4 py-2.5 text-center">
-                                  {s.status !== "cancelado" && (
-                                    <CancelButton
-                                      size="sm"
-                                      className="px-1.5 text-xs"
-                                      onClick={() =>
-                                        setCancelSaleData({
-                                          saleId: s.id,
-                                          registerId: detail.register.id,
-                                        })
-                                      }
-                                    >
-                                      Cancelar
-                                    </CancelButton>
-                                  )}
-                                </ShTableCell>
-                              )}
-                            </ShTableRow>
-                          ))}
-                        {detail.sales.length === 0 && (
-                          <ShTableRow>
-                            <ShTableCell
-                              colSpan={
-                                isAdmin ||
-                                detail.sales.some((s) => s.can_cancel)
-                                  ? 5
-                                  : 4
-                              }
-                              className="px-4 py-6 text-center text-sm text-muted-foreground"
-                            >
-                              Sin ingresos
-                            </ShTableCell>
-                          </ShTableRow>
-                        )}
-                      </ShTableBody>
-                    </ShTable>
-                  </div>
-                </div>
+                              </div>
+                            </div>
 
-                <div className="min-w-0">
-                  <div className="mb-2 flex items-center gap-1.5">
-                    <TrendingDown size={16} className="text-red-600 dark:text-red-400" />
-                    <h4 className="text-sm font-bold text-foreground">Egresos</h4>
-                  </div>
-                  <div className="overflow-x-auto rounded-xl border border-border">
-                    <ShTable>
-                      <ShTableHeader>
-                        <ShTableRow className="bg-muted/40 hover:bg-transparent">
-                          {[
-                            "Hora",
-                            "ID",
-                            "Motivo",
-                            "Monto",
-                            ...(isAdmin || detail.expenses.some((e) => e.can_cancel)
-                              ? ["Acción"]
-                              : []),
-                          ].map((h) => (
-                            <ShTableHead
-                              key={h}
-                              className="whitespace-nowrap px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-foreground"
+                            <span
+                              className={cn(
+                                "shrink-0 text-right text-sm font-bold tabular-nums",
+                                cancelled
+                                  ? "text-muted-foreground line-through"
+                                  : isIncome
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-red-600 dark:text-red-400",
+                              )}
                             >
-                              {h}
-                            </ShTableHead>
-                          ))}
+                              {isIncome ? "+" : "−"}${fmtMX(Math.abs(mov.amount))}
+                            </span>
+
+                            {(isAdmin || mov.can_cancel) && !cancelled && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <ShButton
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="shrink-0"
+                                    aria-label="Acciones"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreVertical size={15} />
+                                  </ShButton>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align="end"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <DropdownMenuLabel>Acciones</DropdownMenuLabel>
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      navigator.clipboard?.writeText(
+                                        `${isIncome ? "V" : "G"}-${mov.ref_id}`,
+                                      )
+                                    }
+                                  >
+                                    <Copy size={14} className="mr-2" /> Copiar folio
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onSelect={() => {
+                                      setCancelPin("");
+                                      setCancelPinError("");
+                                      if (isIncome) {
+                                        setCancelSaleData({
+                                          saleId: mov.ref_id,
+                                          registerId: detail.register.id,
+                                        });
+                                      } else {
+                                        setCancelExpenseData({
+                                          expenseId: mov.ref_id,
+                                          amount: Math.abs(mov.amount),
+                                          desc: mov.reason,
+                                          registerId: detail.register.id,
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    <X size={14} className="mr-2" /> Cancelar
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+
+                            {canExpand && (
+                              <ChevronDown
+                                size={15}
+                                className={cn(
+                                  "shrink-0 text-muted-foreground transition-transform",
+                                  expanded && "rotate-180",
+                                )}
+                              />
+                            )}
+                          </div>
+
+                          {expanded && canExpand && (
+                            <div className="border-t border-border/70 bg-muted/30 px-4 py-3">
+                              {!items ? (
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <Spinner size={14} /> Cargando productos...
+                                </div>
+                              ) : items.length === 0 ? (
+                                <p className="text-xs text-muted-foreground">
+                                  Sin productos registrados.
+                                </p>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  {items.map((it) => (
+                                    <div
+                                      key={it.id}
+                                      className="flex items-center justify-between gap-3 text-xs"
+                                    >
+                                      <span className="min-w-0 truncate text-foreground">
+                                        {it.name || it.product_name || "Producto"}
+                                        {Number(it.returned_qty || 0) > 0 && (
+                                          <span className="ml-1 text-muted-foreground">
+                                            (dev. {it.returned_qty})
+                                          </span>
+                                        )}
+                                      </span>
+                                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                                        {it.quantity} × ${fmtMX(it.price_at_sale)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {movementsTotal > MOV_PER_PAGE && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/20 px-4 py-2.5">
+                  <PaginationInfo>
+                    {`Mostrando ${
+                      movPage * MOV_PER_PAGE + 1
+                    }–${Math.min(
+                      (movPage + 1) * MOV_PER_PAGE,
+                      movementsTotal,
+                    )} de ${movementsTotal} movimientos`}
+                  </PaginationInfo>
+                  <PaginationControls>
+                    <PaginationButton
+                      icon="prev"
+                      label="Anterior"
+                      disabled={movPage === 0 || movementsLoading}
+                      onClick={() => setMovPage((p) => Math.max(0, p - 1))}
+                    />
+                    <PaginationButton
+                      icon="next"
+                      label="Siguiente"
+                      disabled={
+                        (movPage + 1) * MOV_PER_PAGE >= movementsTotal ||
+                        movementsLoading
+                      }
+                      onClick={() => setMovPage((p) => p + 1)}
+                    />
+                  </PaginationControls>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="productos" className="m-0 flex flex-col">
+              <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 px-4 py-2.5">
+                <div className="relative min-w-[180px] flex-1">
+                  <Search
+                    size={15}
+                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    value={prodSearch}
+                    onChange={(e) => {
+                      setProdSearch(e.target.value);
+                      setProdPage(0);
+                    }}
+                    placeholder="Buscar producto o código..."
+                    className="h-9 pl-8"
+                    aria-label="Buscar producto"
+                  />
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {productsLoading ? (
+                  <div className="p-4">
+                    <CardSkeleton count={5} />
+                  </div>
+                ) : products.length === 0 ? (
+                  <EmptyState
+                    icon={<ShoppingCart size={22} />}
+                    title="Sin productos"
+                    description="No hay productos vendidos que coincidan."
+                    action={
+                      prodSearch.trim() ? (
+                        <ShButton
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setProdSearch("");
+                            setProdPage(0);
+                          }}
+                        >
+                          Limpiar búsqueda
+                        </ShButton>
+                      ) : null
+                    }
+                  />
+                ) : (
+                  <div className="overflow-x-auto">
+                    <ShTable>
+                      <ShTableHeader className="sticky top-0 z-10">
+                        <ShTableRow className="bg-muted/40 hover:bg-transparent">
+                          {["Producto", "Cantidad", "Precio prom.", "Subtotal"].map(
+                            (h, i) => (
+                              <ShTableHead
+                                key={h}
+                                className={cn(
+                                  "whitespace-nowrap px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-foreground",
+                                  i > 0 && "text-right",
+                                )}
+                              >
+                                {h}
+                              </ShTableHead>
+                            ),
+                          )}
                         </ShTableRow>
                       </ShTableHeader>
                       <ShTableBody>
-                        {[...detail.expenses]
-                          .slice()
-                          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                          .map((e, idx) => (
-                            <ShTableRow key={e.id} className={idx % 2 === 1 ? "bg-muted/40" : ""}>
-                              <ShTableCell className="whitespace-nowrap px-4 py-2.5 text-sm tabular-nums text-foreground">
-                                {formatMXTime(e.created_at)}
-                              </ShTableCell>
-                              <ShTableCell className="px-4 py-2.5 text-sm font-bold text-primary">
-                                #G-{e.id}
-                              </ShTableCell>
-                              <ShTableCell className="max-w-[160px] px-4 py-2.5 text-sm text-foreground">
-                                {e.status === "cancelado" ? (
-                                  <ShBadge
-                                    variant="outline"
-                                    className="whitespace-nowrap border-red-500/60 text-red-600 dark:border-red-400/50 dark:text-red-400"
-                                  >
-                                    Cancelado
-                                  </ShBadge>
-                                ) : (
-                                  <span className="block truncate">{e.reason}</span>
-                                )}
-                              </ShTableCell>
-                              <ShTableCell className="whitespace-nowrap px-4 py-2.5 text-right">
-                                <span
-                                  className={`text-sm font-bold tabular-nums ${
-                                    e.status === "cancelado"
-                                      ? "text-muted-foreground line-through"
-                                      : "text-red-600 dark:text-red-400"
-                                  }`}
-                                >
-                                  -${(e.status === "cancelado" ? 0 : e.amount).toFixed(2)}
+                        {products.map((p) => (
+                          <ShTableRow key={p.product_id}>
+                            <ShTableCell className="px-4 py-2.5 text-sm text-foreground">
+                              <span className="block truncate">{p.product_name}</span>
+                              {p.barcode ? (
+                                <span className="text-[0.65rem] text-muted-foreground">
+                                  {p.barcode}
                                 </span>
-                              </ShTableCell>
-                              {(isAdmin || e.can_cancel) && (
-                                <ShTableCell className="px-4 py-2.5 text-center">
-                                  {e.status !== "cancelado" && (
-                                    <CancelButton
-                                      size="sm"
-                                      className="px-1.5 text-xs"
-                                      onClick={() =>
-                                        setCancelExpenseData({
-                                          expenseId: e.id,
-                                          amount: e.amount,
-                                          desc: e.reason,
-                                          registerId: detail.register.id,
-                                        })
-                                      }
-                                    >
-                                      Cancelar
-                                    </CancelButton>
-                                  )}
-                                </ShTableCell>
-                              )}
-                            </ShTableRow>
-                          ))}
-                        {detail.expenses.length === 0 && (
-                          <ShTableRow>
-                            <ShTableCell
-                              colSpan={
-                                isAdmin ||
-                                detail.expenses.some((e) => e.can_cancel)
-                                  ? 5
-                                  : 4
-                              }
-                              className="px-4 py-6 text-center text-sm text-muted-foreground"
-                            >
-                              Sin egresos
+                              ) : null}
+                            </ShTableCell>
+                            <ShTableCell className="px-4 py-2.5 text-right text-sm tabular-nums text-foreground">
+                              {p.quantity}
+                            </ShTableCell>
+                            <ShTableCell className="px-4 py-2.5 text-right text-sm tabular-nums text-muted-foreground">
+                              ${fmtMX(p.quantity ? p.gross / p.quantity : 0)}
+                            </ShTableCell>
+                            <ShTableCell className="px-4 py-2.5 text-right text-sm font-bold tabular-nums text-foreground">
+                              ${fmtMX(p.subtotal)}
                             </ShTableCell>
                           </ShTableRow>
-                        )}
+                        ))}
                       </ShTableBody>
                     </ShTable>
                   </div>
-                </div>
+                )}
               </div>
 
-
-              <div className="mt-5">
-                <div className="flex items-center gap-2 pb-3">
-                  <ShoppingCart size={16} className="text-muted-foreground" />
-                  <h3 className="text-sm font-extrabold text-foreground">
-                    Productos Vendidos
-                  </h3>
+              {productsTotal > PROD_PER_PAGE && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/20 px-4 py-2.5">
+                  <PaginationInfo>
+                    {`Mostrando ${
+                      prodPage * PROD_PER_PAGE + 1
+                    }–${Math.min(
+                      (prodPage + 1) * PROD_PER_PAGE,
+                      productsTotal,
+                    )} de ${productsTotal} productos`}
+                  </PaginationInfo>
+                  <PaginationControls>
+                    <PaginationButton
+                      icon="prev"
+                      label="Anterior"
+                      disabled={prodPage === 0 || productsLoading}
+                      onClick={() => setProdPage((p) => Math.max(0, p - 1))}
+                    />
+                    <PaginationButton
+                      icon="next"
+                      label="Siguiente"
+                      disabled={
+                        (prodPage + 1) * PROD_PER_PAGE >= productsTotal ||
+                        productsLoading
+                      }
+                      onClick={() => setProdPage((p) => p + 1)}
+                    />
+                  </PaginationControls>
                 </div>
-                <div className="overflow-x-auto rounded-xl border border-border">
-                  <ShTable>
-                    <ShTableHeader>
-                      <ShTableRow className="bg-muted/40 hover:bg-transparent">
-                        {["Producto", "Cantidad", "Precio", "Subtotal"].map((h) => (
-                          <ShTableHead
-                            key={h}
-                            className="whitespace-nowrap px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-foreground"
-                          >
-                            {h}
-                          </ShTableHead>
-                        ))}
-                      </ShTableRow>
-                    </ShTableHeader>
-                    <ShTableBody>
-                      {detail.items.map((item, i) => (
-                        <ShTableRow
-                          key={i}
-                          className={i % 2 === 1 ? "bg-muted/40" : ""}
-                        >
-                          <ShTableCell className="px-4 py-2.5 text-sm text-foreground">
-                            {item.product_name || "Producto"}
-                          </ShTableCell>
-                          <ShTableCell className="px-4 py-2.5 text-sm tabular-nums text-foreground">
-                            {item.quantity}
-                          </ShTableCell>
-                          <ShTableCell className="px-4 py-2.5 text-sm tabular-nums text-foreground">
-                            ${item.price_at_sale.toFixed(2)}
-                          </ShTableCell>
-                          <ShTableCell className="px-4 py-2.5 text-sm font-bold tabular-nums text-foreground">
-                            ${(item.quantity * item.price_at_sale).toFixed(2)}
-                          </ShTableCell>
-                        </ShTableRow>
-                      ))}
-                      {detail.items.length === 0 && (
-                        <ShTableRow>
-                          <ShTableCell
-                            colSpan={4}
-                            className="px-4 py-6 text-center text-sm text-muted-foreground"
-                          >
-                            No hay productos registrados
-                          </ShTableCell>
-                        </ShTableRow>
-                      )}
-                    </ShTableBody>
-                  </ShTable>
-                </div>
-              </div>
-            </div>
+              )}
+            </TabsContent>
           </div>
         ) : null}
-          </div>
+          </Tabs>
         )}
         </div>
       )}
@@ -1143,7 +1811,13 @@ const RegisterHistory = () => {
       {/* CANCEL SALE */}
       <ConfirmDialog
         open={!!cancelSaleData}
-        onOpenChange={(v) => !v && !cancelLoading && setCancelSaleData(null)}
+        onOpenChange={(v) => {
+          if (!v && !cancelLoading) {
+            setCancelSaleData(null);
+            setCancelPin("");
+            setCancelPinError("");
+          }
+        }}
         title={`Cancelar venta #${cancelSaleData?.saleId}`}
         description={
           <>Se revertirá el stock de los productos y esta venta dejará de contar en la caja. Esta acción no se puede deshacer.</>
@@ -1151,9 +1825,41 @@ const RegisterHistory = () => {
         cancelLabel="No"
         confirmLabel="Sí, cancelar"
         loading={cancelLoading}
-        onCancel={() => !cancelLoading && setCancelSaleData(null)}
+        onCancel={() => {
+          if (cancelLoading) return;
+          setCancelSaleData(null);
+          setCancelPin("");
+          setCancelPinError("");
+        }}
         onConfirm={handleCancelSale}
-      />
+      >
+        {requirePinForVoid && (
+          <>
+            <label className="text-sm font-medium text-foreground">
+              NIP de {cashier?.name || "usuario"}
+            </label>
+            <Input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              maxLength={12}
+              value={cancelPin}
+              placeholder="Ingresa tu NIP"
+              onChange={(e) => {
+                setCancelPin(e.target.value);
+                setCancelPinError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCancelSale();
+              }}
+              aria-invalid={!!cancelPinError}
+            />
+            {cancelPinError && (
+              <p className="text-xs text-destructive">{cancelPinError}</p>
+            )}
+          </>
+        )}
+      </ConfirmDialog>
 
       {/* CANCEL EXPENSE */}
       <ConfirmDialog
@@ -1182,3 +1888,7 @@ const RegisterHistory = () => {
 };
 
 export default RegisterHistory;
+
+
+
+

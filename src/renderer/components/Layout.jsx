@@ -4,29 +4,26 @@ import {
   ArrowRight,
   Banknote,
   BarChart3,
+  Bell,
   CalendarDays,
-  ChevronDown,
   ChevronRight,
   ClipboardCheck,
   DatabaseBackup,
-  Landmark,
   Loader2,
   LogOut,
   MonitorSmartphone,
-  Moon,
   Package,
   ReceiptText,
   RefreshCw,
   Scale,
   ScanLine,
   ScrollText,
-  Server,
   Settings,
-  Sun,
   Tags,
   TriangleAlert,
   Truck,
   Users,
+  Zap,
 } from "lucide-react";
 import React, {
   Suspense,
@@ -44,6 +41,7 @@ import {
 import { useCashier } from "../contexts/CashierContext";
 import { useThemeMode } from "../contexts/ThemeContext";
 import { formatMXTime } from "../utils/dateUtils";
+import { fmtMoney } from "../utils/format";
 import CancelButton from "./CancelButton";
 import UpdateButton from "./UpdateButton";
 import {
@@ -63,6 +61,7 @@ import {
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import RouteShellSkeleton from "./RouteShellSkeleton";
+import SystemStatus from "./SystemStatus";
 
 const TaskDialog = React.lazy(() => import("./TaskDialog"));
 
@@ -79,6 +78,7 @@ const ROUTE_PRELOADERS = {
   "/cashiers": () => import("./Cashiers"),
   "/backup": () => import("./BackupRestore"),
   "/catalog-reference": () => import("./Catalog"),
+  "/servicios": () => import("./servicios/ServicesScreen"),
 };
 
 const drawerWidth = 288;
@@ -89,6 +89,7 @@ const PAGE_META = {
   "/end-of-day": { title: "Corte de Caja", crumb: "Punto de venta" },
   "/register-history": { title: "Turnos y Cortes", crumb: "Punto de venta" },
   "/transacciones": { title: "Transacciones", crumb: "Punto de venta" },
+  "/servicios": { title: "Servicios", crumb: "Transacciones" },
   "/inventory": { title: "Productos", crumb: "Inventario" },
   "/stock-movements": { title: "Movimientos", crumb: "Inventario" },
   "/categories": { title: "Categorías", crumb: "Inventario" },
@@ -240,7 +241,7 @@ const Layout = () => {
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
   const { cashier, logout } = useCashier();
-  const [registerOpen, setRegisterOpen] = useState(false);
+  const [register, setRegister] = useState(null);
   const [handover, setHandover] = useState(null);
   const [handoverLoading, setHandoverLoading] = useState(false);
   const noticeShownRef = useRef(false);
@@ -259,14 +260,15 @@ const Layout = () => {
   const [scaleLastWeight, setScaleLastWeight] = useState(null);
   const [scaleNote, setScaleNote] = useState("");
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [insights, setInsights] = useState([]);
+  const [insightsUnread, setInsightsUnread] = useState(0);
+  const [insightsOpen, setInsightsOpen] = useState(false);
   const [todayTasksCount, setTodayTasksCount] = useState(0);
   const [lowStockCount, setLowStockCount] = useState(0);
   const [reminderDialog, setReminderDialog] = useState({
     open: false,
     task: null,
   });
-  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
-  const statusMenuRef = useRef(null);
 
   const isVisibleRef = useRef(true);
   useEffect(() => {
@@ -277,17 +279,6 @@ const Layout = () => {
     return () => document.removeEventListener("visibilitychange", handle);
   }, []);
 
-  // Cierra el popover de estado al hacer clic afuera
-  useEffect(() => {
-    const handleClick = (e) => {
-      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target)) {
-        setStatusMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
   const checkRegisterStatus = useCallback(async () => {
     try {
       const result = await window.api.invoke("get-cash-register-status", {
@@ -295,7 +286,7 @@ const Layout = () => {
         role: cashier?.role,
       });
       const reg = result.success ? result.register : null;
-      setRegisterOpen(!!reg && reg.status === "open");
+      setRegister(reg || null);
       if (
         reg &&
         reg.status === "open" &&
@@ -313,7 +304,7 @@ const Layout = () => {
         });
       }
     } catch (e) {
-      setRegisterOpen(false);
+      setRegister(null);
     }
   }, [cashier?.id, cashier?.role]);
 
@@ -484,6 +475,22 @@ const Layout = () => {
   }, []);
 
   useEffect(() => {
+    const loadInsights = async () => {
+      if (!isVisibleRef.current) return;
+      try {
+        const res = await window.api.invoke("get-insights");
+        if (res?.success) {
+          setInsights(res.rows || []);
+          setInsightsUnread(res.unread || 0);
+        }
+      } catch {}
+    };
+    loadInsights();
+    const interval = setInterval(loadInsights, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     const loadLowStock = async () => {
       if (!isVisibleRef.current) return;
       try {
@@ -567,6 +574,7 @@ const Layout = () => {
           icon: <ReceiptText />,
           path: "/transacciones",
         },
+        { text: "Servicios", icon: <Zap />, path: "/servicios" },
       ],
     },
     {
@@ -611,7 +619,6 @@ const Layout = () => {
   ];
 
   const handleOpenScaleDialog = async () => {
-    setStatusMenuOpen(false);
     setScaleDialogOpen(true);
     setScaleError("");
     setScaleLoading(true);
@@ -723,7 +730,7 @@ const Layout = () => {
   const renderSidebar = (expanded) => (
     <TooltipProvider>
       <div className="flex h-full flex-col overflow-hidden select-none">
-        <div className="flex-1 overflow-y-auto px-1.5 py-2">
+<div className="flex-1 overflow-y-auto px-1.5 py-2">
           {navSections.map((section) => (
             <div key={section.title} className="mb-1">
               {expanded && (
@@ -758,13 +765,16 @@ const Layout = () => {
                               isActive ? "bg-primary opacity-100" : "opacity-0",
                             )}
                           />
-                          <span
+<span
                             className={cn(
                               "inline-flex shrink-0 items-center justify-center [&>svg]:h-[22px] [&>svg]:w-[22px]",
                               isActive
                                 ? "text-primary"
                                 : "text-muted-foreground group-hover:text-foreground",
-                              item.path === "/inventory" && "relative",
+                              (item.path === "/inventory" ||
+                                (item.path === "/end-of-day" &&
+                                  register?.status === "open")) &&
+                                "relative",
                             )}
                           >
                             {item.icon}
@@ -773,10 +783,24 @@ const Layout = () => {
                                 {lowStockCount > 99 ? "99+" : lowStockCount}
                               </span>
                             )}
+                            {item.path === "/end-of-day" &&
+                              register?.status === "open" && (
+                                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-success ring-2 ring-secondary" />
+                              )}
                           </span>
                           {expanded && (
                             <span className="truncate">{item.text}</span>
                           )}
+                          {expanded &&
+                            item.path === "/end-of-day" &&
+                            register?.status === "open" && (
+                              <span
+                                className="ml-auto text-[11px] font-semibold whitespace-nowrap text-success tabular-nums"
+                                title="Efectivo en caja"
+                              >
+                                {fmtMoney(register.currentCash)}
+                              </span>
+                            )}
                         </RouterLink>
                       </TooltipTrigger>
                       {inventoryAlert ? (
@@ -792,7 +816,10 @@ const Layout = () => {
                       ) : (
                         !expanded && (
                           <TooltipContent side="right" sideOffset={8}>
-                            {item.text}
+                            {item.path === "/end-of-day" &&
+                            register?.status === "open"
+                              ? `${item.text} · ${fmtMoney(register.currentCash)}`
+                              : item.text}
                           </TooltipContent>
                         )
                       )}
@@ -814,11 +841,21 @@ const Layout = () => {
                 className={cn(
                   "group flex h-11 cursor-pointer items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200 outline-none hover:shadow-sm",
                   "hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
-                  "text-muted-foreground hover:text-foreground",
+                  "text-left",
+                  location.pathname === "/configuration"
+                    ? "bg-gradient-to-r from-primary/10 to-primary/5 font-semibold text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                   expanded ? "w-full px-3" : "w-full justify-center px-0",
                 )}
               >
-                <span className="inline-flex shrink-0 items-center justify-center text-muted-foreground group-hover:text-foreground [&>svg]:h-[22px] [&>svg]:w-[22px]">
+                <span
+                  className={cn(
+                    "inline-flex shrink-0 items-center justify-center [&>svg]:h-[22px] [&>svg]:w-[22px]",
+                    location.pathname === "/configuration"
+                      ? "text-primary"
+                      : "text-muted-foreground group-hover:text-foreground",
+                  )}
+                >
                   <Settings size={22} />
                 </span>
                 {expanded && <span>Configuración</span>}
@@ -900,11 +937,11 @@ const Layout = () => {
     </TooltipProvider>
   );
 
-  const statusTone = !serverRunning
-    ? "err"
-    : !scaleConnected
-      ? "neutral"
-      : "ok";
+  const clockLabel = clock.toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Mexico_City",
+  });
 
   return (
     <TooltipProvider>
@@ -918,7 +955,7 @@ const Layout = () => {
           <button
             onClick={() => setDrawerOpen(!drawerOpen)}
             title={storeName}
-            className="flex h-14 w-full shrink-0 cursor-pointer items-center justify-center outline-none transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+            className="flex h-12 w-full shrink-0 cursor-pointer items-center justify-center outline-none transition-colors hover:bg-black/5 dark:hover:bg-white/10"
           >
             {storeLogo ? (
               <img
@@ -935,180 +972,121 @@ const Layout = () => {
           {renderSidebar(drawerOpen)}
         </aside>
 
-        {/* ─── NAVBAR: full-width, el nombre se corre según el ancho del sidebar ─── */}
-<header
-          className="sticky top-0 z-30 grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b border-border bg-secondary shadow-sm"
+        <header
+          className="sticky top-0 z-30 relative flex h-12 shrink-0 items-center gap-3 bg-background"
           style={{
             WebkitAppRegion: "drag",
-            paddingLeft: (drawerOpen ? drawerWidth : miniDrawerWidth) + 12,
+            paddingLeft: (drawerOpen ? drawerWidth : miniDrawerWidth) + 16,
             paddingRight:
               "max(0.75rem, calc(100vw - env(titlebar-area-x) - env(titlebar-area-width)))",
           }}
         >
-          {/* Breadcrumb + título de sección */}
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="hidden shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground/80 sm:flex">
-              {PAGE_META[location.pathname]?.crumb || "Inicio"}
-              <ChevronRight
-                size={13}
-                className="text-muted-foreground/40"
-              />
-            </span>
-            <span className="min-w-0 truncate text-sm font-bold tracking-tight text-foreground">
-              {PAGE_META[location.pathname]?.title || "Vendia"}
-            </span>
-          </div>
-
-          {/* Centro: nombre de la tienda */}
-          <div className="mx-2 flex min-w-0 items-center justify-center">
-            <span className="truncate text-sm font-bold uppercase tracking-wide text-foreground">
+          <span
+            aria-hidden
+            className="absolute bottom-0 left-0 h-px bg-border"
+            style={{
+              right:
+                "max(0.75rem, calc(100vw - env(titlebar-area-x) - env(titlebar-area-width)))",
+            }}
+          />
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="hidden shrink-0 text-sm font-semibold tracking-[0.06em] text-foreground uppercase sm:inline">
               {storeName}
             </span>
+            <span className="hidden h-3 w-px shrink-0 bg-border sm:block" />
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="hidden shrink-0 text-[13px] font-medium text-muted-foreground sm:inline">
+                {PAGE_META[location.pathname]?.crumb || "Inicio"}
+              </span>
+              <ChevronRight
+                size={12}
+                className="hidden shrink-0 text-muted-foreground/40 sm:block"
+              />
+              <span className="min-w-0 truncate text-lg font-semibold tracking-tight text-foreground">
+                {PAGE_META[location.pathname]?.title || "Vendia"}
+              </span>
+            </div>
           </div>
 
-          {/* Derecha: estado del sistema + hora */}
           <div
-            className="flex items-center justify-end gap-1"
+            className="ml-auto flex items-center gap-1.5"
             style={{ WebkitAppRegion: "no-drag" }}
           >
-            <UpdateButton />
-            <ShadcnTooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={toggleMode}
-                  className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
-                >
-                  {isDark ? <Sun size={18} /> : <Moon size={18} />}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {isDark ? "Modo claro" : "Modo oscuro"}
-              </TooltipContent>
-            </ShadcnTooltip>
-
-            {/* Estado del sistema: servidor + báscula + caja, consolidado en un solo control */}
-            <div className="relative" ref={statusMenuRef}>
+            <div className="relative">
               <button
-                onClick={() => setStatusMenuOpen((v) => !v)}
-                className={cn(
-                  "flex h-9 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors",
-                  serverRunning
-                    ? "text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10"
-                    : "text-destructive hover:bg-destructive/10",
-                )}
+                onClick={() => setInsightsOpen((v) => !v)}
+                className="relative flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                title="Avisos del negocio"
               >
-                <span className="flex items-center gap-1">
-                  <StatusDot tone={statusTone} pulse={!serverRunning} />
-                  {registerOpen && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  )}
-                </span>
-                <span className="hidden sm:inline">Estado</span>
-                <ChevronDown
-                  size={14}
-                  className={cn(
-                    "transition-transform",
-                    statusMenuOpen && "rotate-180",
-                  )}
-                />
+                <Bell size={16} />
+                {insightsUnread > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                    {insightsUnread}
+                  </span>
+                )}
               </button>
-
-              {statusMenuOpen && (
-                <div className="absolute right-0 top-11 w-56 rounded-lg border border-border bg-background p-1.5 shadow-md">
-                  <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2">
-                    <Server size={15} className="text-muted-foreground" />
-                    <span className="flex-1 text-xs text-foreground">
-                      Servidor
-                    </span>
-                    <StatusDot ok={serverRunning} />
-                    <span
-                      className={cn(
-                        "text-[0.65rem] font-semibold",
-                        serverRunning ? "text-emerald-600" : "text-destructive",
-                      )}
-                    >
-                      {serverRunning ? "Activo" : "Caído"}
-                    </span>
+              {insightsOpen && (
+                <div className="absolute right-0 top-11 z-50 w-[340px] rounded-lg border border-border bg-background p-3 shadow-sm">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-foreground">Pulso del negocio</span>
                   </div>
+                  {insights.length === 0 ? (
+                    <p className="py-4 text-center text-xs text-muted-foreground">Sin avisos por ahora.</p>
+                  ) : (
+                    <ul className="flex max-h-[320px] flex-col gap-2 overflow-y-auto">
+                      {insights.map((ins) => (
+                        <li
+                          key={ins.id}
+                          className={cn(
+                            "rounded-md border border-border p-2.5 text-left transition-colors hover:bg-muted/50",
+                            ins.status === "unread" && "border-l-2 border-l-primary",
+                          )}
+                        >
+                          <button
+                            className="w-full text-left"
+                            onClick={async () => {
+                              await window.api.invoke("mark-insight", { id: ins.id, status: "actioned" });
+                              setInsights((prev) => prev.filter((x) => x.id !== ins.id));
+                              setInsightsUnread((n) => Math.max(0, n - 1));
+                              setInsightsOpen(false);
+                              navigate(ins.route || "/reports");
+                            }}
+                          >
+                            <p className="text-[13px] font-semibold text-foreground">{ins.title}</p>
+                            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{ins.body}</p>
+                            <p className="mt-1 text-[11px] font-medium text-primary">Ver detalle →</p>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <button
-                    onClick={handleOpenScaleDialog}
-                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted"
+                    className="mt-2 w-full border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={async () => {
+                      const r = await window.api.invoke("run-weekly-pulse");
+                      if (r?.success) {
+                        const res = await window.api.invoke("get-insights");
+                        if (res?.success) { setInsights(res.rows); setInsightsUnread(res.unread); }
+                      }
+                    }}
                   >
-                    <Scale size={15} className="text-muted-foreground" />
-                    <span className="flex-1 text-xs text-foreground">
-                      Báscula
-                    </span>
-                    <StatusDot tone={scaleConnected ? "ok" : "neutral"} />
-                    <span
-                      className={cn(
-                        "text-[0.65rem] font-semibold",
-                        scaleConnected
-                          ? "text-emerald-600"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      {scaleConnected ? "Conectada" : "Desconectada"}
-                    </span>
+                    Generar pulso semanal ahora
                   </button>
-                  <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2">
-                    <Landmark size={15} className="text-muted-foreground" />
-                    <span className="flex-1 text-xs text-foreground">
-                      Caja
-                    </span>
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        registerOpen ? "bg-amber-500" : "bg-muted-foreground/40",
-                      )}
-                    />
-                    <span
-                      className={cn(
-                        "text-[0.65rem] font-semibold",
-                        registerOpen
-                          ? "text-amber-700 dark:text-amber-400"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      {registerOpen ? "Abierta" : "Cerrada"}
-                    </span>
-                  </div>
                 </div>
               )}
             </div>
-
-            <ShadcnTooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setTaskDialogOpen(true)}
-                  className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
-                >
-                  <CalendarDays size={18} />
-                  {todayTasksCount > 0 && (
-                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.6rem] font-bold text-white">
-                      {todayTasksCount}
-                    </span>
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Tareas del día</TooltipContent>
-            </ShadcnTooltip>
-
-            <div className="hidden min-w-[70px] flex-col items-center text-center leading-tight sm:flex">
-              <span className="text-[0.7rem] font-medium text-muted-foreground">
-                {clock.toLocaleDateString("es-MX", {
-                  day: "numeric",
-                  month: "short",
-                  timeZone: "America/Mexico_City",
-                })}
-              </span>
-              <span className="text-[0.65rem] text-muted-foreground/70">
-                {clock.toLocaleTimeString("es-MX", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  timeZone: "America/Mexico_City",
-                })}
-              </span>
-            </div>
+            <SystemStatus
+              register={register}
+              clock={clockLabel}
+              serverRunning={serverRunning}
+              scaleConnected={scaleConnected}
+              tasksCount={todayTasksCount}
+              isDark={isDark}
+              onToggleTheme={toggleMode}
+              onOpenScale={handleOpenScaleDialog}
+              onOpenTasks={() => setTaskDialogOpen(true)}
+            />
+            <UpdateButton />
           </div>
         </header>
 

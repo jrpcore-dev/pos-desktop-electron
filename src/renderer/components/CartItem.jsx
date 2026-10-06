@@ -57,7 +57,9 @@ const CartItem = React.memo(
     onQuantityChange,
     onRemove,
     onDiscount,
+    round,
   }) => {
+    const roundValue = round || ((v) => v);
     const promo = promoInfo(item, item.quantity).applied;
     const fp = lineUnitPrice(item, item.quantity);
     const unitBadge = unitBadgeLabel(item);
@@ -76,7 +78,9 @@ const CartItem = React.memo(
       secondaryBadges.push(
         promo.type === "mayoreo"
           ? `Mayoreo ${promo.qty}+`
-          : `Oferta ${promo.qty}×$${promo.price.toFixed(2)}`,
+          : promo.type === "fijo"
+            ? `Fijo $${promo.price.toFixed(2)}`
+            : `Oferta ${promo.qty}×$${promo.price.toFixed(2)}`,
       );
 
     const unitSuffix = item.isWeightItem
@@ -214,7 +218,7 @@ const CartItem = React.memo(
           </div>
 
           <span className="text-lg font-extrabold tabular-nums text-success">
-            ${lineTotal(item, item.quantity).toFixed(2)}
+            ${roundValue(lineTotal(item, item.quantity)).toFixed(2)}
           </span>
         </div>
       </div>
