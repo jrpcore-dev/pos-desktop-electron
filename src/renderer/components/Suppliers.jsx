@@ -4,8 +4,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   PlusCircle, Search, Truck, Pencil, Trash2,
-  Phone, Mail, User, MapPin, Loader2,
+  Phone, Mail, User, MapPin, Loader2, Building2,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useToast } from "./ToastProvider";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
@@ -26,6 +27,17 @@ import { usePagination } from "../lib/usePagination";
 import PaginationBar from "./PaginationBar";
 
 const PAGE_SIZE = 10;
+
+const SectionTitle = ({ icon: Icon, title, className }) => (
+  <div className={cn("flex items-center gap-2", className)}>
+    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-primary">
+      <Icon className="h-4 w-4" />
+    </span>
+    <span className="text-sm font-semibold uppercase tracking-wide text-foreground">
+      {title}
+    </span>
+  </div>
+);
 
 const DELIVERY_DAYS = [
   ["lun", "Lun"],
@@ -252,73 +264,78 @@ const Suppliers = () => {
 
   const SupplierForm = memo(function SupplierForm({ control, errors }) {
   return (
-    <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor="supplier-name">Nombre del proveedor</Label>
-        <Controller
-          name="name"
-          control={control}
-          render={({ field }) => (
-            <div className="relative">
-              <Truck
-                size={16}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                id="supplier-name"
-                autoFocus
-                aria-invalid={!!errors.name}
-                placeholder="Ej: Distribuidora Central S.A."
-                className="pl-9"
-                {...field}
-              />
-            </div>
-          )}
-        />
-        {errors.name && (
-          <p className="text-xs text-destructive">{errors.name.message}</p>
-        )}
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="supplier-contact">Persona de contacto</Label>
-        <Controller
-          name="contact"
-          control={control}
-          render={({ field }) => (
-            <div className="relative">
-              <User
-                size={16}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                id="supplier-contact"
-                placeholder="Ej: Ricardo Gómez"
-                className="pl-9"
-                {...field}
-              />
-            </div>
-          )}
-        />
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="space-y-6">
+      <section className="space-y-4">
+        <SectionTitle icon={Building2} title="Empresa" />
         <div className="space-y-1.5">
-          <Label htmlFor="supplier-phone">Teléfono</Label>
+          <Label htmlFor="supplier-name">Nombre del proveedor</Label>
           <Controller
-            name="phone"
+            name="name"
             control={control}
             render={({ field }) => (
               <div className="relative">
-                <Phone
+                <Truck
                   size={16}
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
                   aria-hidden="true"
                 />
                 <Input
-                  id="supplier-phone"
-                  type="tel"
-                  placeholder="Ej: +52 312 456 7890"
+                  id="supplier-name"
+                  autoFocus
+                  aria-invalid={!!errors.name}
+                  placeholder="Ej: Distribuidora Central S.A."
+                  className="pl-9"
+                  {...field}
+                />
+              </div>
+            )}
+          />
+          {errors.name && (
+            <p className="text-xs text-destructive">{errors.name.message}</p>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="supplier-address">Dirección</Label>
+          <Controller
+            name="address"
+            control={control}
+            render={({ field }) => (
+              <div className="relative">
+                <MapPin
+                  size={16}
+                  className="pointer-events-none absolute left-3 top-3 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <textarea
+                  id="supplier-address"
+                  rows={2}
+                  placeholder="Dirección del proveedor"
+                  className="flex min-h-[70px] w-full rounded-lg border border-input bg-transparent py-2.5 pl-9 pr-3.5 text-sm shadow-sm transition-colors duration-150 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/50"
+                  {...field}
+                />
+              </div>
+            )}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <SectionTitle icon={User} title="Contacto" />
+        <div className="space-y-1.5">
+          <Label htmlFor="supplier-contact">Persona de contacto</Label>
+          <Controller
+            name="contact"
+            control={control}
+            render={({ field }) => (
+              <div className="relative">
+                <User
+                  size={16}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  id="supplier-contact"
+                  placeholder="Ej: Ricardo Gómez"
                   className="pl-9"
                   {...field}
                 />
@@ -326,61 +343,64 @@ const Suppliers = () => {
             )}
           />
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="supplier-email">Email</Label>
-          <Controller
-            name="email"
-            control={control}
-            render={({ field }) => (
-              <div className="relative">
-                <Mail
-                  size={16}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="supplier-email"
-                  type="email"
-                  aria-invalid={!!errors.email}
-                  placeholder="ventas@central.com"
-                  className="pl-9"
-                  {...field}
-                />
-              </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="supplier-phone">Teléfono</Label>
+            <Controller
+              name="phone"
+              control={control}
+              render={({ field }) => (
+                <div className="relative">
+                  <Phone
+                    size={16}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    id="supplier-phone"
+                    type="tel"
+                    placeholder="Ej: +52 312 456 7890"
+                    className="pl-9"
+                    {...field}
+                  />
+                </div>
+              )}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="supplier-email">Email</Label>
+            <Controller
+              name="email"
+              control={control}
+              render={({ field }) => (
+                <div className="relative">
+                  <Mail
+                    size={16}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    id="supplier-email"
+                    type="email"
+                    aria-invalid={!!errors.email}
+                    placeholder="ventas@central.com"
+                    className="pl-9"
+                    {...field}
+                  />
+                </div>
+              )}
+            />
+            {errors.email && (
+              <p className="text-xs text-destructive">
+                {errors.email.message}
+              </p>
             )}
-          />
-          {errors.email && (
-            <p className="text-xs text-destructive">
-              {errors.email.message}
-            </p>
-          )}
+          </div>
         </div>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="supplier-address">Dirección</Label>
-        <Controller
-          name="address"
-          control={control}
-          render={({ field }) => (
-            <div className="relative">
-              <MapPin
-                size={16}
-                className="pointer-events-none absolute left-3 top-3 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <textarea
-                id="supplier-address"
-                rows={2}
-                placeholder="Dirección del proveedor"
-                className="flex min-h-[70px] w-full rounded-lg border border-input bg-transparent py-2.5 pl-9 pr-3.5 text-sm shadow-sm transition-colors duration-150 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/50"
-                {...field}
-              />
-            </div>
-          )}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Días de llegada</Label>
+      </section>
+
+      <section className="space-y-4">
+        <SectionTitle icon={Truck} title="Días de llegada" />
         <Controller
           name="delivery_days"
           control={control}
@@ -420,7 +440,7 @@ const Suppliers = () => {
             );
           }}
         />
-      </div>
+      </section>
     </div>
   );
 });
