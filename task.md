@@ -44,9 +44,28 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 > `CLIENT_ROLE_ENABLED=false` lo impide hasta el Bloque 3 (proxy al Host).
 
 ### Entrega 2c — Endpoints de escritura (empieza `POST /api/sales`)
-- [ ] Tabla `idempotency_keys`
-- [ ] `POST /api/sales` con `Idempotency-Key` (reusa guarda de stock)
-- [ ] Prueba de paridad local vs HTTP + replay idempotente
+
+#### 2c-A — Núcleo compartido + regla de stock nueva  ✅ HECHO
+- [x] `src/main/sales-core.js`: `createSaleTx(db, payload)` compartido + `findOpenRegister` movido (wrapper en `main.js`).
+- [x] Regla nueva: la venta NUNCA se rechaza por stock. Descuento atómico e incondicional (`stock = stock - ?`), lectura del stock resultante en la misma transacción.
+- [x] Warning `STOCK_NEGATIVE { code, product_id, name, available_before, sold, stock_after }`, **consolidado por producto** (varias líneas del mismo producto → un warning).
+- [x] Rastro durable: columnas aditivas `sales.stock_conflict` (0/1) y `sales.conflict_detail` (JSON de warnings).
+- [x] Validación en el núcleo (ambos caminos): producto existente (`PRODUCT_NOT_FOUND`), cantidad finita > 0 entera salvo `sale_unit='weight'`, precio finito ≥ 0, unidad conocida, tope de líneas (500). Verificado en copia read-only de la BD real: 0 precedentes de qty ≤ 0 o decimal no-peso.
+- [x] UI: aviso no bloqueante en `SalesTerminal`; badge de stock bajo se refresca reutilizando el evento `sale-registered` (sin polling nuevo).
+- [x] Texto del setting `sale_without_stock` en Configuración (solo controla el carrito).
+- [x] Baseline + golden capturados con el código ACTUAL y diff consciente (ver abajo).
+
+#### 2c-B — `POST /api/sales` (pendiente)
+- [ ] Tabla `idempotency_keys` (createTables; PK `(device_id, endpoint, key)`)
+- [ ] `POST /api/sales` con `requireScope('sales:write')` + `Idempotency-Key` obligatoria + validación estricta + límite de body 256 kb solo en esa ruta
+- [ ] Paridad local vs HTTP + replay idempotente (misma clave/payload → respuesta guardada con warnings; payload distinto → 422)
+
+> **Nota (Bloque 3):** una venta entrante por HTTP **no** refresca por sí sola las
+> pantallas abiertas del Host (no hay bus de eventos todavía).
+>
+> **Pendiente revisión Bloques 4/5:** `record-sale`/`POST /api/sales` confían en
+> los precios enviados por el cliente (`item.finalPrice || item.price`), por
+> paridad; y en HTTP la identidad del cajero sale del token, no del payload.
 
 ### Entrega 2d — `customer_id` en `sales`
 - [ ] `ALTER sales ADD customer_id`

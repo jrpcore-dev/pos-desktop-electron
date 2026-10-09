@@ -974,8 +974,8 @@ function ConfigurationScreen() {
 
       <section className="divide-y divide-border/40">
         <ToggleBlock
-          title="Ventas sin stock"
-          description="Permitir vender aunque el producto no tenga existencias."
+          title="Agregar sin stock al carrito"
+          description="Solo controla si se pueden agregar productos al carrito sin existencias. Al cobrar, la venta nunca se rechaza por stock: si el inventario queda negativo, se avisa para ajustarlo."
           checked={saleWithoutStock}
           onCheckedChange={setSaleWithoutStock}
         />

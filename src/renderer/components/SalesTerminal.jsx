@@ -277,6 +277,13 @@ const processSaleRef = useRef(null);
       }
       window.dispatchEvent(new CustomEvent("sale-registered"));
       showNotification("Venta registrada exitosamente", "success");
+      const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+      if (warnings.length > 0) {
+        const detail = warnings
+          .map((w) => `«${w.name}» quedó con stock ${w.stock_after} en el sistema`)
+          .join(". ");
+        showNotification(`${detail}. Ajusta el inventario.`, "warning");
+      }
       try {
         const printEnabled = await window.api.invoke("get-setting", "print_enabled");
         if (printEnabled === "false") {

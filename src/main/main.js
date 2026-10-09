@@ -15,6 +15,7 @@ const Database = require("better-sqlite3");
 const { hashPin, verifyPin } = require("./pins");
 const activation = require("./activation");
 const ipcScopes = require("./ipc-scopes");
+const salesCore = require("./sales-core");
 
 // Entrega 2a: rol del dispositivo. Por defecto "host" (comportamiento intacto).
 // El guard solo rechaza handlers cuando el rol es "client" (fail-closed).
@@ -271,6 +272,10 @@ const createTables = () => {
   }
   ensureColumn("sales", "cancelled_at", "DATETIME");
   ensureColumn("sales", "cancelled_by", "TEXT");
+  // Entrega 2c: rastro durable de conflictos de stock (venta con stock
+  // resultante negativo). Aditivo, sin migración de datos.
+  ensureColumn("sales", "stock_conflict", "INTEGER DEFAULT 0");
+  ensureColumn("sales", "conflict_detail", "TEXT");
   // Make product_id nullable (recreate table) using a fresh PRAGMA check
   const siColsFresh = db.prepare("PRAGMA table_info(sale_items)").all();
   const pcol = siColsFresh.find((c) => c.name === "product_id");
@@ -2430,92 +2435,17 @@ ipcMain.handle(
     event,
     { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role },
   ) => {
-    const recordSale = db.transaction(() => {
-      const openReg = findOpenRegister(cashierId, role);
-      const registerId = openReg ? openReg.id : null;
-
-      const saleStmt = db.prepare(
-        "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name) VALUES (?, ?, ?, ?, ?)",
-      );
-      const saleInfo = saleStmt.run(
+    const recordSale = db.transaction(() =>
+      salesCore.createSaleTx(db, {
+        cart,
         total,
-        paymentMethod || "cash",
-        discountTotal || 0,
-        registerId,
-        cashierName || "Usuario Principal",
-      );
-      const saleId = saleInfo.lastInsertRowid;
-
-      const itemStmt = db.prepare(
-        "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      );
-      const stockStmt = db.prepare(
-        "UPDATE products SET stock = stock - ? WHERE id = ?",
-      );
-      const stockGuardStmt = db.prepare(
-        "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
-      );
-      const allowNoStock =
-        String(
-          db
-            .prepare("SELECT value FROM settings WHERE key = 'sale_without_stock'")
-            .get()?.value || "",
-        ) === "true";
-
-      for (const item of cart) {
-        // Manual items: null product_id, skip stock update
-        // Normal items: use numeric id, update stock
-        const isManual = item.isManual || typeof item.id !== "number";
-        const productId = isManual ? null : item.id;
-        const productName = item.name || (isManual ? "Producto manual" : null);
-        let stockDeducted = 0;
-        if (!isManual) {
-          stockDeducted = item.isBoxItem
-            ? item.quantity * (item.box_qty || 1)
-            : item.isPackItem
-              ? item.quantity * (item.pack_qty || 1)
-              : item.quantity;
-        }
-        itemStmt.run(
-          saleId,
-          productId,
-          productName,
-          item.quantity,
-          item.finalPrice || item.price,
-          item.discount_percent || 0,
-          stockDeducted,
-        );
-        if (!isManual) {
-          if (allowNoStock) {
-            stockStmt.run(stockDeducted, item.id);
-          } else {
-            const info = stockGuardStmt.run(
-              stockDeducted,
-              item.id,
-              stockDeducted,
-            );
-            if (info.changes === 0) {
-              const current = db
-                .prepare("SELECT stock FROM products WHERE id = ?")
-                .get(item.id);
-              const available = current ? current.stock : 0;
-              const err = new Error(
-                `Stock insuficiente para "${productName}". Quedan ${available}`,
-              );
-              err.code = "INSUFFICIENT_STOCK";
-              err.stock = {
-                product: productName,
-                productId: item.id,
-                available,
-                requested: stockDeducted,
-              };
-              throw err;
-            }
-          }
-        }
-      }
-      return { success: true, saleId };
-    });
+        paymentMethod,
+        discountTotal,
+        cashierName,
+        cashierId,
+        role,
+      }),
+    );
 
     try {
       return recordSale();
@@ -2740,28 +2670,7 @@ function toUTCDateRange(mxDateStr) {
 
 // ─── REGISTER HELPERS ──────────────────────────────────────
 function findOpenRegister(cashierId, role) {
-  if (role === "admin" || !cashierId) {
-    return (
-      db
-        .prepare(
-          "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1",
-        )
-        .get() || null
-    );
-  }
-  return (
-    db
-      .prepare(
-        "SELECT * FROM cash_register WHERE status = 'open' AND cashier_id = ? ORDER BY id DESC LIMIT 1",
-      )
-      .get(cashierId) ||
-    db
-      .prepare(
-        "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1",
-      )
-      .get() ||
-    null
-  );
+  return salesCore.findOpenRegister(db, cashierId, role);
 }
 
 function isWithinCancelWindow(closedAt) {

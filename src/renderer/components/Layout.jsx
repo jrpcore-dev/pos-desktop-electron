@@ -502,7 +502,11 @@ const Layout = () => {
     };
     loadLowStock();
     const interval = setInterval(loadLowStock, 60000);
-    return () => clearInterval(interval);
+    window.addEventListener("sale-registered", loadLowStock);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("sale-registered", loadLowStock);
+    };
   }, []);
 
   useEffect(() => {
