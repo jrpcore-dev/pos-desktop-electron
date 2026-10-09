@@ -118,4 +118,5 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 ## Transversal
 - [ ] Harness "baseline dorado" versionado
 - [ ] CI/manual: `gen-ipc-allowlist --check` + build EXIT=0
+- [x] Arranque real obligatorio en CADA entrega: `node scripts/check-build-requires.mjs` (requires relativos de `.vite/build` + asar completo con renderer) y lanzar `out/…/JRP POS.exe` confirmando ventana y log sin `Cannot find module` ni `ERR_FILE_NOT_FOUND` (EXIT=0 no los detecta).
 - [ ] `docs/plan-multicaja-v2.1.md` actualizado (hecho)
