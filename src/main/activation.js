@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const scopes = require("./scopes");
 
 // Código de activación por negocio: 16 caracteres sobre un alfabeto de 32
 // símbolos que excluye caracteres ambiguos (0/O, 1/I/L/U), agrupados en
@@ -56,6 +57,13 @@ const setSetting = (db, key, value) => {
 const parseSqliteDate = (s) =>
   s ? new Date(String(s).replace(" ", "T") + "Z").getTime() : 0;
 
+const ensureColumn = (db, table, column, definition) => {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.find((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+};
+
 const ensureSchema = (db) => {
   db.exec(`CREATE TABLE IF NOT EXISTS paired_devices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,8 +73,20 @@ const ensureSchema = (db) => {
     cashier_id INTEGER,
     activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_seen_at DATETIME,
-    revoked INTEGER DEFAULT 0
+    revoked INTEGER DEFAULT 0,
+    device_code TEXT,
+    device_type TEXT DEFAULT 'mobile',
+    scopes TEXT,
+    protocol_version TEXT,
+    approved INTEGER DEFAULT 1
   )`);
+  // Entrega 2b: migración aditiva para BD existentes. `approved` DEFAULT 1
+  // marca a los dispositivos ya emparejados como aprobados (sin pérdida).
+  ensureColumn(db, "paired_devices", "device_code", "TEXT");
+  ensureColumn(db, "paired_devices", "device_type", "TEXT DEFAULT 'mobile'");
+  ensureColumn(db, "paired_devices", "scopes", "TEXT");
+  ensureColumn(db, "paired_devices", "protocol_version", "TEXT");
+  ensureColumn(db, "paired_devices", "approved", "INTEGER DEFAULT 1");
   if (!getSetting(db, "activation_code")) {
     setSetting(db, "activation_code", generateCode());
   }
@@ -108,19 +128,55 @@ const isPaired = (db, deviceId, token) => {
   return true;
 };
 
-const registerPairing = (db, { deviceId, deviceName, token, cashierId }) => {
+const generateDeviceCode = () =>
+  `D-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+const registerPairing = (
+  db,
+  {
+    deviceId,
+    deviceName,
+    token,
+    cashierId,
+    deviceType,
+    protocolVersion,
+    approved,
+    scopes: scopeList,
+  },
+) => {
   const name = String(deviceName || "Dispositivo móvil").slice(0, 80);
+  const type = deviceType || scopes.DEVICE_TYPE.MOBILE;
+  const isApproved =
+    approved === undefined ? (type === scopes.DEVICE_TYPE.DESKTOP_BOX ? 0 : 1) : approved ? 1 : 0;
+  const list = Array.isArray(scopeList)
+    ? scopeList
+    : scopes.scopesForDeviceType(type);
   db.prepare(`
-    INSERT INTO paired_devices (device_id, device_name, paired_token_hash, cashier_id, activated_at, last_seen_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    INSERT INTO paired_devices (device_id, device_name, paired_token_hash, cashier_id, activated_at, last_seen_at, device_code, device_type, scopes, protocol_version, approved)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
     ON CONFLICT(device_id) DO UPDATE SET
       device_name = COALESCE(NULLIF(excluded.device_name, ''), paired_devices.device_name),
       paired_token_hash = excluded.paired_token_hash,
       cashier_id = COALESCE(excluded.cashier_id, paired_devices.cashier_id),
       revoked = 0,
       activated_at = CURRENT_TIMESTAMP,
-      last_seen_at = CURRENT_TIMESTAMP
-  `).run(deviceId, name, hashToken(token), cashierId || null);
+      last_seen_at = CURRENT_TIMESTAMP,
+      device_code = COALESCE(paired_devices.device_code, excluded.device_code),
+      device_type = excluded.device_type,
+      scopes = excluded.scopes,
+      protocol_version = COALESCE(excluded.protocol_version, paired_devices.protocol_version),
+      approved = excluded.approved
+  `).run(
+    deviceId,
+    name,
+    hashToken(token),
+    cashierId || null,
+    generateDeviceCode(),
+    type,
+    JSON.stringify(list),
+    protocolVersion || null,
+    isApproved,
+  );
 };
 
 // Auto-emparejamiento silencioso durante la ventana de gracia: se llama solo
@@ -144,12 +200,55 @@ const listDevices = (db) =>
   db
     .prepare(`
       SELECT d.device_id, d.device_name, d.cashier_id, d.activated_at, d.last_seen_at, d.revoked,
+             d.device_code, d.device_type, d.scopes, d.protocol_version, d.approved,
              c.name AS cashier_name
       FROM paired_devices d
       LEFT JOIN cashiers c ON c.id = d.cashier_id
       ORDER BY d.activated_at DESC
     `)
     .all();
+
+// Scopes efectivos del dispositivo: vacío si no existe, está revocado o
+// pendiente de aprobación; si no hay scopes guardados, usa el set por tipo.
+const deviceScopes = (db, deviceId) => {
+  if (!deviceId)
+    return { ok: false, approved: false, scopes: [], reason: "unknown_device" };
+  const row = db
+    .prepare("SELECT device_type, scopes, approved, revoked FROM paired_devices WHERE device_id = ?")
+    .get(deviceId);
+  if (!row || row.revoked)
+    return { ok: false, approved: false, scopes: [], reason: "not_paired" };
+  if (Number(row.approved) !== 1)
+    return { ok: true, approved: false, scopes: [], reason: "pending" };
+  const parsed = scopes.parseScopes(row.scopes);
+  const list =
+    parsed && parsed.length > 0 ? parsed : scopes.scopesForDeviceType(row.device_type);
+  return { ok: true, approved: true, scopes: list, reason: "ok" };
+};
+
+// Aprueba un dispositivo pendiente (p.ej. desktop_box auto-declarado) y le
+// asigna el set de scopes de su tipo.
+const approveDevice = (db, deviceId) => {
+  const row = db
+    .prepare("SELECT device_id, device_type FROM paired_devices WHERE device_id = ?")
+    .get(deviceId);
+  if (!row) return { success: false, error: "Dispositivo no encontrado" };
+  const list = scopes.scopesForDeviceType(row.device_type);
+  db.prepare(
+    "UPDATE paired_devices SET approved = 1, revoked = 0, scopes = ? WHERE device_id = ?",
+  ).run(JSON.stringify(list), deviceId);
+  return { success: true, scopes: list };
+};
+
+// Rechaza un dispositivo pendiente: queda revocado y sin scopes.
+const rejectDevice = (db, deviceId) => {
+  const info = db
+    .prepare(
+      "UPDATE paired_devices SET approved = 0, revoked = 1, scopes = '[]' WHERE device_id = ?",
+    )
+    .run(deviceId);
+  return { success: info.changes > 0 };
+};
 
 const revokeDevice = (db, deviceId) => {
   const info = db
@@ -186,6 +285,9 @@ module.exports = {
   registerPairing,
   autoPairIfGrace,
   listDevices,
+  deviceScopes,
+  approveDevice,
+  rejectDevice,
   revokeDevice,
   rotateCode,
 };

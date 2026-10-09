@@ -547,6 +547,32 @@ function ConfigurationScreen() {
     }
   };
 
+  const handleApproveDevice = async (deviceId) => {
+    const res = await window.api.invoke("approve-device", deviceId);
+    if (res.success) {
+      setActivation(res.status);
+      notify("Dispositivo aprobado.", "success");
+    } else {
+      notify(res.error || "No se pudo aprobar el dispositivo.", "error");
+    }
+  };
+
+  const handleRejectDevice = async (deviceId) => {
+    if (
+      !window.confirm(
+        "¿Rechazar este dispositivo? No podrá usar el sistema hasta volver a emparejarse."
+      )
+    )
+      return;
+    const res = await window.api.invoke("reject-device", deviceId);
+    if (res.success) {
+      setActivation(res.status);
+      notify("Dispositivo rechazado.", "success");
+    } else {
+      notify(res.error || "No se pudo rechazar el dispositivo.", "error");
+    }
+  };
+
   const handleSetActivationGrace = async (mode) => {
     const isExpire = mode === "expire";
     if (
@@ -582,6 +608,11 @@ function ConfigurationScreen() {
 
   const meta = TABS_META[activeTab];
   const MetaIcon = meta.icon;
+  // Entrega 2b: mostrar la lista de dispositivos si la seguridad está activa o
+  // si hay algún dispositivo pendiente de aprobación (p.ej. una caja).
+  const showDevices =
+    !!activation?.enabled ||
+    (activation?.devices || []).some((d) => d.approved === false);
 
   const previewSubtotal = PREVIEW_ITEMS.reduce(
     (sum, i) => sum + i.qty * i.price,
@@ -1026,7 +1057,7 @@ function ConfigurationScreen() {
         )}
       </section>
 
-      {activation?.enabled && (
+      {showDevices && (
         <>
           <Separator className="my-2" />
 
@@ -1037,7 +1068,7 @@ function ConfigurationScreen() {
                   Dispositivos emparejados ({activation?.devices?.length || 0})
                 </p>
                 <p className="mt-0.5 text-sm leading-snug text-muted-foreground">
-                  Teléfonos con acceso a este negocio vía la app móvil.
+                  Teléfonos y cajas con acceso a este negocio.
                 </p>
               </div>
             </div>
@@ -1053,12 +1084,16 @@ function ConfigurationScreen() {
             ) : (
               <ul className="mt-1 space-y-2">
                 {activation.devices.map((d) => {
+                  const isPending =
+                    d.approved === false && d.state !== "revoked";
                   const dotClass =
                     d.state === "revoked"
                       ? "bg-muted-foreground/40"
-                      : d.state === "online"
-                        ? "bg-emerald-500"
-                        : "bg-warning";
+                      : d.state === "pending"
+                        ? "bg-amber-500"
+                        : d.state === "online"
+                          ? "bg-emerald-500"
+                          : "bg-warning";
                   return (
                     <li
                       key={d.deviceId}
@@ -1072,33 +1107,64 @@ function ConfigurationScreen() {
                         title={
                           d.state === "revoked"
                             ? "Revocado"
-                            : d.state === "online"
-                              ? "Visto recientemente"
-                              : "Visto hace más de 24 h"
+                            : d.state === "pending"
+                              ? "Pendiente de aprobación"
+                              : d.state === "online"
+                                ? "Visto recientemente"
+                                : "Visto hace más de 24 h"
                         }
                       />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-foreground">
                           {d.deviceName}
+                          {d.deviceCode ? ` · ${d.deviceCode}` : ""}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {d.cashierName ? `Emparejado por ${d.cashierName} · ` : ""}
-                          Activado el {fmtDate(d.activatedAt)}
+                          {d.deviceType === "desktop_box"
+                            ? "Caja adicional"
+                            : "App móvil"}
+                          {d.cashierName
+                            ? ` · Emparejado por ${d.cashierName}`
+                            : ""}
+                          {` · Activado el ${fmtDate(d.activatedAt)}`}
                           {d.lastSeenAt && ` · Visto ${fmtDate(d.lastSeenAt)}`}
                           {d.state === "revoked" && " · Revocado"}
+                          {isPending && " · Pendiente de aprobación"}
                         </p>
                       </div>
-                      {d.state !== "revoked" && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 text-destructive hover:text-destructive"
-                          onClick={() => handleRevokeDevice(d.deviceId)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Revocar
-                        </Button>
+                      {isPending ? (
+                        <div className="flex shrink-0 gap-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleApproveDevice(d.deviceId)}
+                          >
+                            Aprobar
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => handleRejectDevice(d.deviceId)}
+                          >
+                            Rechazar
+                          </Button>
+                        </div>
+                      ) : (
+                        d.state !== "revoked" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 text-destructive hover:text-destructive"
+                            onClick={() => handleRevokeDevice(d.deviceId)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Revocar
+                          </Button>
+                        )
                       )}
                     </li>
                   );
@@ -1106,7 +1172,11 @@ function ConfigurationScreen() {
               </ul>
             )}
           </section>
+        </>
+      )}
 
+      {activation?.enabled && (
+        <>
           <Separator className="my-4" />
 
           <section className="rounded-xl border border-dashed border-amber-500/40 bg-warning/5 p-4">

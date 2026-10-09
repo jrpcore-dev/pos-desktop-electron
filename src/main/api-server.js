@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const { verifyPin } = require("./pins");
 const activation = require("./activation");
+const scopeDefs = require("./scopes");
 
 const TOKEN_TTL_MS = (() => {
   const v = Number(process.env.API_TOKEN_TTL_MS);
@@ -30,6 +31,51 @@ const pruneAttempts = (now) => {
   for (const [k, e] of pairAttempts) {
     if (now - e.windowStart >= activation.PAIR_RATE_WINDOW_MS) pairAttempts.delete(k);
   }
+};
+
+// Middleware de scope sobre el emparejamiento (Entrega 2b).
+//
+// - Scopes NUEVOS (sales/register/events/backup, Bloques 2c-3): el
+//   emparejamiento es obligatorio SIEMPRE, aunque el candado esté apagado.
+// - Scopes LEGADOS (catalog/stock, set móvil actual): con el candado apagado o
+//   en gracia se comportan EXACTAMENTE como hoy (sin exigir scopes).
+//   Con el candado encendido exigen estar emparejado y tener el scope.
+const makeRequireScope = (db) => (scope) => (req, res, next) => {
+  const deviceId = req.headers["x-device-id"];
+  const deviceToken = req.headers["x-device-token"];
+  const isNew = scopeDefs.isNewScope(scope);
+
+  if (isNew) {
+    if (!activation.isPaired(db, deviceId, deviceToken)) {
+      return res.status(403).json({
+        success: false,
+        needsActivation: true,
+        error: "Este dispositivo no está activado para este negocio",
+      });
+    }
+  } else if (activation.isEnabled(db) && !activation.graceActive(db)) {
+    if (!activation.isPaired(db, deviceId, deviceToken)) {
+      return res.status(403).json({
+        success: false,
+        needsActivation: true,
+        error: "Este dispositivo no está activado para este negocio",
+      });
+    }
+  } else {
+    // Candado apagado (o ventana de gracia): set legado idéntico a hoy.
+    return next();
+  }
+
+  const info = activation.deviceScopes(db, deviceId);
+  if (!info.ok || !scopeDefs.scopeAllowed(info.scopes, scope)) {
+    return res.status(403).json({
+      success: false,
+      error: `Permiso insuficiente para ${scope}`,
+      scopeRequired: scope,
+    });
+  }
+  req.deviceId = deviceId;
+  return next();
 };
 
 const startServer = async (db, port = 3456) => {
@@ -86,7 +132,8 @@ const startServer = async (db, port = 3456) => {
     return requirePaired(req, res, next);
   };
 
-  const protect = [requireAuth, requirePaired];
+  const requireScope = makeRequireScope(db);
+  const protect = (scope) => [requireAuth, requireScope(scope)];
 
   app.post("/api/auth", requirePairedExceptProbe, safe((req, res) => {
     const { id, pin } = req.body;
@@ -161,19 +208,19 @@ const startServer = async (db, port = 3456) => {
     });
   }));
 
-  app.get("/api/cashiers", requirePaired, safe((req, res) => {
+  app.get("/api/cashiers", requireScope(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
     const cashiers = db.prepare("SELECT id, name, is_active FROM cashiers ORDER BY name").all();
     res.json({ success: true, cashiers });
   }));
 
   // Detalle completo de cajeros: solo con token válido.
-  app.get("/api/cashiers/full", protect, safe((req, res) => {
+  app.get("/api/cashiers/full", protect(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
     const cashiers = db.prepare("SELECT id, name, role, is_active FROM cashiers ORDER BY name").all();
     res.json({ success: true, cashiers });
   }));
 
   // IMPORTANT: /search must come BEFORE :barcode or Express matches "search" as barcode
-  app.get("/api/products/search", protect, safe((req, res) => {
+  app.get("/api/products/search", protect(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
     const { q } = req.query;
     if (!q || q.trim().length < 1) return res.json({ success: true, products: [] });
 
@@ -189,7 +236,7 @@ const startServer = async (db, port = 3456) => {
     res.json({ success: true, products });
   }));
 
-  app.get("/api/products/:barcode", protect, safe((req, res) => {
+  app.get("/api/products/:barcode", protect(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
     const product = db.prepare(`
       SELECT p.*, c.name as category_name, s.name as supplier_name
       FROM products p
@@ -202,7 +249,7 @@ const startServer = async (db, port = 3456) => {
     res.json({ success: true, product });
   }));
 
-  app.post("/api/products", protect, safe((req, res) => {
+  app.post("/api/products", protect(scopeDefs.SCOPE.CATALOG_WRITE), safe((req, res) => {
     const { barcode, name, cost_price, price, sale_unit, category_id, min_stock, stock, box_qty, box_price } = req.body;
     if (!name) return res.status(400).json({ success: false, error: "Nombre requerido" });
 
@@ -235,7 +282,7 @@ const startServer = async (db, port = 3456) => {
     res.json({ success: true, product, message: "Producto registrado correctamente" });
   }));
 
-  app.patch("/api/products/:id/stock", protect, safe((req, res) => {
+  app.patch("/api/products/:id/stock", protect(scopeDefs.SCOPE.STOCK_WRITE), safe((req, res) => {
     const { quantity, notes, cost, supplierId, registerExpense, updateCostPrice } = req.body;
     const id = parseInt(req.params.id);
 
@@ -301,7 +348,7 @@ const startServer = async (db, port = 3456) => {
     res.json({ success: true, product: updated, message: "Stock actualizado correctamente" });
   }));
 
-  app.get("/api/categories", protect, safe((req, res) => {
+  app.get("/api/categories", protect(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
     const categories = db.prepare("SELECT id, name FROM categories ORDER BY name").all();
     res.json({ success: true, categories });
   }));
@@ -312,7 +359,7 @@ const startServer = async (db, port = 3456) => {
   }));
 
   // Escaneos/recepciones de hoy del cajero actual (origen App móvil).
-  app.get("/api/stock/history/today", protect, safe((req, res) => {
+  app.get("/api/stock/history/today", protect(scopeDefs.SCOPE.STOCK_READ), safe((req, res) => {
     const movements = db
       .prepare(`
         SELECT m.id, m.product_id, m.quantity, m.cost, m.created_at, m.notes,
@@ -330,7 +377,7 @@ const startServer = async (db, port = 3456) => {
   }));
 
   // Deshacer un movimiento de recepción hecho desde el móvil.
-  app.delete("/api/stock/movements/:movementId", protect, safe((req, res) => {
+  app.delete("/api/stock/movements/:movementId", protect(scopeDefs.SCOPE.STOCK_WRITE), safe((req, res) => {
     const id = parseInt(req.params.movementId);
     const movement = db
       .prepare("SELECT id, product_id, quantity, type, reference, cashier_id FROM stock_movements WHERE id = ?")
@@ -354,7 +401,7 @@ const startServer = async (db, port = 3456) => {
   }));
 
   // Recepción en lote desde la app móvil: aplica varios productos en una transacción.
-  app.post("/api/products/stock/batch", protect, safe((req, res) => {
+  app.post("/api/products/stock/batch", protect(scopeDefs.SCOPE.STOCK_WRITE), safe((req, res) => {
     const items = Array.isArray(req.body.items) ? req.body.items : null;
     if (!items || items.length === 0)
       return res.status(400).json({ success: false, error: "La lista de productos está vacía" });
@@ -417,7 +464,8 @@ const startServer = async (db, port = 3456) => {
   // no tiene cómo autenticarse aún. El código se valida en tiempo constante y
   // con su propio rate limit (evita fuerza bruta del código en la LAN).
   app.post("/api/activation/pair", safe((req, res) => {
-    const { deviceId, code, deviceName } = req.body || {};
+    const { deviceId, code, deviceName, deviceType, protocol_version, protocolVersion } =
+      req.body || {};
     if (!deviceId || !code)
       return res.status(400).json({ success: false, error: "Faltan datos de activación" });
 
@@ -458,8 +506,30 @@ const startServer = async (db, port = 3456) => {
 
     pairAttempts.delete(key);
     const token = crypto.randomBytes(32).toString("hex");
-    activation.registerPairing(db, { deviceId, deviceName, token });
-    res.json({ success: true, pairedToken: token });
+
+    // Auto-declaración de tipo: un desktop_box queda PENDIENTE (approved=0, sin
+    // scopes de escritura) hasta que el admin lo apruebe en Configuración. Un
+    // mobile se empareja como hoy (approved=1, set móvil).
+    const type = deviceType || scopeDefs.DEVICE_TYPE.MOBILE;
+    const isDesktop = type === scopeDefs.DEVICE_TYPE.DESKTOP_BOX;
+    const list = isDesktop ? [] : scopeDefs.scopesForDeviceType(type);
+    activation.registerPairing(db, {
+      deviceId,
+      deviceName,
+      token,
+      deviceType: type,
+      protocolVersion: protocolVersion || protocol_version || null,
+      approved: isDesktop ? 0 : 1,
+      scopes: list,
+    });
+    res.json({
+      success: true,
+      pairedToken: token,
+      approved: !isDesktop,
+      pending: isDesktop,
+      deviceType: type,
+      scopes: list,
+    });
   }));
 
   const MAX_ATTEMPTS = 3;
@@ -543,4 +613,4 @@ const getStatus = () => ({
   port: server ? server.address().port : null,
 });
 
-module.exports = { startServer, stopServer, getStatus };
+module.exports = { startServer, stopServer, getStatus, makeRequireScope };

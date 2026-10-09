@@ -14,6 +14,15 @@ const fs = require("fs");
 const Database = require("better-sqlite3");
 const { hashPin, verifyPin } = require("./pins");
 const activation = require("./activation");
+const ipcScopes = require("./ipc-scopes");
+
+// Entrega 2a: rol del dispositivo. Por defecto "host" (comportamiento intacto).
+// El guard solo rechaza handlers cuando el rol es "client" (fail-closed).
+let deviceRole = ipcScopes.ROLES.HOST;
+ipcScopes.installIpcScopeGuard({
+  ipcMain,
+  getRole: () => deviceRole,
+});
 
 const legacyUserData = path.join(app.getPath("appData"), "JRP POS");
 const overrideUserData = process.env.VENDIA_USERDATA;
@@ -66,6 +75,20 @@ ipcMain.handle("log-error", (e, payload) => {
     `[${new Date().toISOString()}] renderer\n${String(payload)}\n---\n`,
   );
 });
+
+const vendesaldo = require("./vendesaldo");
+
+ipcMain.handle("vendesaldo:status", async () => ({
+  configured: vendesaldo.credentialsReady(db),
+}));
+ipcMain.handle("vendesaldo:get-balance", async () => vendesaldo.saldo(db));
+ipcMain.handle("vendesaldo:get-catalog", async () => vendesaldo.catalog(db));
+ipcMain.handle("vendesaldo:set-credentials", async (e, creds) =>
+  vendesaldo.saveCredentials(db, creds && creds.user, creds && creds.pass),
+);
+ipcMain.handle("vendesaldo:recharge", async (e, payload) =>
+  vendesaldo.recharge(db, payload),
+);
 
 const dbPath = path.join(dbDir, "pos-system.db");
 let db = new Database(dbPath);
@@ -342,6 +365,20 @@ const createTables = () => {
 };
 
 createTables();
+
+// Candado de activación + dispositivos emparejados (Entrega 2b: añade de forma
+// aditiva device_type, scopes, device_code, protocol_version y approved).
+activation.ensureSchema(db);
+
+// Entrega 2a: el rol se lee una vez al arrancar. Ausente = "host".
+try {
+  const roleRow = db
+    .prepare("SELECT value FROM settings WHERE key = 'device_role'")
+    .get();
+  deviceRole = ipcScopes.normalizeRole(roleRow && roleRow.value);
+} catch {
+  deviceRole = ipcScopes.ROLES.HOST;
+}
 
 const runMigrations = () => {
   // ─── ÍNDICES ──────────────────────────────────────────────────
@@ -2148,11 +2185,25 @@ ipcMain.handle(
             ? "Cantidad inválida"
             : "Cantidad no válida. Solo números enteros.",
         );
-      if (product.stock < qty) throw new Error("Stock insuficiente");
-      db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(
-        qty,
-        productId,
-      );
+      const info = db
+        .prepare(
+          "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+        )
+        .run(qty, productId, qty);
+      if (info.changes === 0) {
+        const current = db
+          .prepare("SELECT stock FROM products WHERE id = ?")
+          .get(productId);
+        const err = new Error("Stock insuficiente");
+        err.code = "INSUFFICIENT_STOCK";
+        err.stock = {
+          product: product.name,
+          productId,
+          available: current ? current.stock : 0,
+          requested: qty,
+        };
+        throw err;
+      }
       db.prepare(
         "INSERT INTO stock_movements (product_id, type, quantity, notes, cashier_id) VALUES (?, 'out', ?, ?, ?)",
       ).run(productId, qty, notes || "Salida de stock", cashierId || null);
@@ -2161,7 +2212,12 @@ ipcMain.handle(
       txn();
       return { success: true };
     } catch (error) {
-      return { success: false, error: error.message };
+      const failure = { success: false, error: error.message };
+      if (error.code) {
+        failure.code = error.code;
+        if (error.stock) failure.stock = error.stock;
+      }
+      return failure;
     }
   },
 );
@@ -2396,6 +2452,9 @@ ipcMain.handle(
       const stockStmt = db.prepare(
         "UPDATE products SET stock = stock - ? WHERE id = ?",
       );
+      const stockGuardStmt = db.prepare(
+        "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+      );
       const allowNoStock =
         String(
           db
@@ -2427,15 +2486,32 @@ ipcMain.handle(
           stockDeducted,
         );
         if (!isManual) {
-          const prod = db
-            .prepare("SELECT stock FROM products WHERE id = ?")
-            .get(item.id);
-          if (!allowNoStock && (!prod || prod.stock < stockDeducted)) {
-            throw new Error(
-              `Stock insuficiente para "${productName}". Quedan ${prod ? prod.stock : 0}`,
+          if (allowNoStock) {
+            stockStmt.run(stockDeducted, item.id);
+          } else {
+            const info = stockGuardStmt.run(
+              stockDeducted,
+              item.id,
+              stockDeducted,
             );
+            if (info.changes === 0) {
+              const current = db
+                .prepare("SELECT stock FROM products WHERE id = ?")
+                .get(item.id);
+              const available = current ? current.stock : 0;
+              const err = new Error(
+                `Stock insuficiente para "${productName}". Quedan ${available}`,
+              );
+              err.code = "INSUFFICIENT_STOCK";
+              err.stock = {
+                product: productName,
+                productId: item.id,
+                available,
+                requested: stockDeducted,
+              };
+              throw err;
+            }
           }
-          stockStmt.run(stockDeducted, item.id);
         }
       }
       return { success: true, saleId };
@@ -2444,7 +2520,12 @@ ipcMain.handle(
     try {
       return recordSale();
     } catch (error) {
-      return { success: false, error: error.message };
+      const failure = { success: false, error: error.message };
+      if (error.code) {
+        failure.code = error.code;
+        if (error.stock) failure.stock = error.stock;
+      }
+      return failure;
     }
   },
 );
@@ -2991,6 +3072,20 @@ ipcMain.handle("get-setting", async (event, key) => {
 
 ipcMain.handle("save-setting", async (event, key, value) => {
   try {
+    // Kill-switch (Entrega 2b): rechaza activar el rol cliente mientras
+    // CLIENT_ROLE_ENABLED sea false. Un valor "client" ya guardado se trata
+    // como "host" al arrancar (ver normalizeRole).
+    if (
+      key === "device_role" &&
+      !ipcScopes.CLIENT_ROLE_ENABLED &&
+      String(value || "").toLowerCase() === ipcScopes.ROLES.CLIENT
+    ) {
+      return {
+        success: false,
+        error:
+          "El modo cliente está deshabilitado en esta versión (CLIENT_ROLE_ENABLED=false).",
+      };
+    }
     db.prepare(
       "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
     ).run(key, value);
@@ -3020,6 +3115,10 @@ const getActivationStatus = () => {
   const devices = activation.listDevices(db).map((d) => ({
     deviceId: d.device_id,
     deviceName: d.device_name || "Dispositivo móvil",
+    deviceType: d.device_type || "mobile",
+    deviceCode: d.device_code || null,
+    protocolVersion: d.protocol_version || null,
+    approved: d.approved === 1,
     cashierName: d.cashier_name || null,
     activatedAt: d.activated_at,
     lastSeenAt: d.last_seen_at,
@@ -3027,11 +3126,13 @@ const getActivationStatus = () => {
     state:
       d.revoked === 1
         ? "revoked"
-        : d.last_seen_at &&
-            Date.now() - new Date(String(d.last_seen_at).replace(" ", "T") + "Z").getTime() <
-              24 * 60 * 60 * 1000
-          ? "online"
-          : "offline",
+        : d.approved !== 1
+          ? "pending"
+          : d.last_seen_at &&
+              Date.now() - new Date(String(d.last_seen_at).replace(" ", "T") + "Z").getTime() <
+                24 * 60 * 60 * 1000
+            ? "online"
+            : "offline",
   }));
   return {
     enabled,
@@ -3071,6 +3172,28 @@ ipcMain.handle("set-activation-grace", async (event, mode) => {
 
 ipcMain.handle("revoke-device", async (event, deviceId) => {
   return activation.revokeDevice(db, deviceId);
+});
+
+// Entrega 2b: aprobar/rechazar un dispositivo pendiente (p.ej. una caja
+// desktop_box auto-declarada). Aprobar asigna el set de scopes de su tipo.
+ipcMain.handle("approve-device", async (event, deviceId) => {
+  try {
+    const res = activation.approveDevice(db, deviceId);
+    if (!res.success) return res;
+    return { success: true, scopes: res.scopes, status: getActivationStatus() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("reject-device", async (event, deviceId) => {
+  try {
+    const res = activation.rejectDevice(db, deviceId);
+    if (!res.success) return res;
+    return { success: true, status: getActivationStatus() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle("rotate-activation-code", async () => {
@@ -3982,6 +4105,32 @@ const getBackupDir = () => {
   return dir;
 };
 
+// Valida que una ruta recibida del renderer sea un .db dentro de la carpeta de
+// respaldos. Devuelve la ruta resuelta o null si no es válida.
+const resolveBackupPath = (backupPath) => {
+  if (typeof backupPath !== "string" || backupPath.trim() === "") return null;
+  const resolved = path.resolve(backupPath);
+  const backupDir = path.resolve(getBackupDir());
+  if (!resolved.startsWith(backupDir + path.sep) || !resolved.endsWith(".db"))
+    return null;
+  return resolved;
+};
+
+// Devuelve una ruta libre añadiendo sufijo numérico si ya existe.
+const uniqueFilePath = (candidate) => {
+  if (!fs.existsSync(candidate)) return candidate;
+  const dir = path.dirname(candidate);
+  const ext = path.extname(candidate);
+  const base = path.basename(candidate, ext);
+  let i = 1;
+  let next = path.join(dir, `${base}-${i}${ext}`);
+  while (fs.existsSync(next)) {
+    i++;
+    next = path.join(dir, `${base}-${i}${ext}`);
+  }
+  return next;
+};
+
 const migrateLegacyBackups = () => {
   try {
     const oldDir = path.join(dbDir, "backups");
@@ -4106,17 +4255,72 @@ ipcMain.handle("get-backups", async () => {
 
 ipcMain.handle("restore-backup", async (event, backupPath) => {
   try {
-    if (!fs.existsSync(backupPath))
+    const resolved = resolveBackupPath(backupPath);
+    if (!resolved)
+      return { success: false, error: "Ruta de respaldo no válida" };
+    if (!fs.existsSync(resolved))
       return { success: false, error: "Archivo de respaldo no encontrado" };
-    const src = new Database(backupPath, { readonly: true });
-    src.backup(db);
-    src.close();
-runMigrations();
 
-// Candado de activación por negocio: tabla de dispositivos emparejados +
-// settings mínimos (el código se genera una sola vez en el primer arranque).
-activation.ensureSchema(db);
-    return { success: true };
+    // 1) Validar integridad y tablas esperadas ANTES de tocar la base viva.
+    let check = null;
+    try {
+      check = new Database(resolved, { readonly: true, fileMustExist: true });
+      const integrity = check.pragma("integrity_check", { simple: true });
+      if (integrity !== "ok") {
+        return {
+          success: false,
+          error: `El respaldo está dañado (integrity_check: ${integrity}). No se modificó nada.`,
+        };
+      }
+      const tables = new Set(
+        check
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all()
+          .map((r) => r.name),
+      );
+      const required = ["products", "sales", "settings"];
+      const missing = required.filter((t) => !tables.has(t));
+      if (missing.length) {
+        return {
+          success: false,
+          error: `El respaldo no contiene las tablas esperadas (${missing.join(", ")}). No se modificó nada.`,
+        };
+      }
+    } catch (validationError) {
+      return {
+        success: false,
+        error: `No se pudo validar el respaldo: ${validationError.message}. No se modificó nada.`,
+      };
+    } finally {
+      if (check) check.close();
+    }
+
+    // 2) Copia de seguridad automática de la base actual antes de reemplazarla.
+    const backupDir = getBackupDir();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safetyPath = uniqueFilePath(
+      path.join(backupDir, `pos-pre-restore-${stamp}.db`),
+    );
+    await db.backup(safetyPath);
+
+    // 3) Reemplazar la base viva con el respaldo ya validado.
+    const source = new Database(resolved, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      source.backup(db);
+    } finally {
+      source.close();
+    }
+
+    runMigrations();
+
+    // Candado de activación por negocio: tabla de dispositivos emparejados +
+    // settings mínimos (el código se genera una sola vez en el primer arranque).
+    activation.ensureSchema(db);
+
+    return { success: true, safetyBackup: path.basename(safetyPath) };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -4124,16 +4328,19 @@ activation.ensureSchema(db);
 
 ipcMain.handle("download-backup", async (event, backupPath) => {
   try {
-    if (!fs.existsSync(backupPath))
+    const resolved = resolveBackupPath(backupPath);
+    if (!resolved)
+      return { success: false, error: "Ruta de respaldo no válida" };
+    if (!fs.existsSync(resolved))
       return { success: false, error: "Archivo de respaldo no encontrado" };
     const result = await dialog.showSaveDialog({
       title: "Guardar respaldo",
-      defaultPath: path.basename(backupPath),
+      defaultPath: path.basename(resolved),
       filters: [{ name: "Base de datos SQLite", extensions: ["db"] }],
     });
     if (result.canceled || !result.filePath)
       return { success: false, cancelled: true };
-    fs.copyFileSync(backupPath, result.filePath);
+    fs.copyFileSync(resolved, result.filePath);
     return { success: true, path: result.filePath };
   } catch (error) {
     return { success: false, error: error.message };
