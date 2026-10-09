@@ -55,10 +55,16 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 - [x] Texto del setting `sale_without_stock` en Configuración (solo controla el carrito).
 - [x] Baseline + golden capturados con el código ACTUAL y diff consciente (ver abajo).
 
-#### 2c-B — `POST /api/sales` (pendiente)
-- [ ] Tabla `idempotency_keys` (createTables; PK `(device_id, endpoint, key)`)
-- [ ] `POST /api/sales` con `requireScope('sales:write')` + `Idempotency-Key` obligatoria + validación estricta + límite de body 256 kb solo en esa ruta
-- [ ] Paridad local vs HTTP + replay idempotente (misma clave/payload → respuesta guardada con warnings; payload distinto → 422)
+#### 2c-B — `POST /api/sales`  ✅ HECHO
+- [x] Tabla `idempotency_keys` en `createTables`; PK `(device_id, endpoint, key)`
+- [x] `POST /api/sales` con `requireScope('sales:write')` + `Idempotency-Key` obligatoria + validación estricta (errores del núcleo mapeados a 4xx) + virtual 256 kb en esa ruta (sin tocar el parser global)
+- [x] Huella de idempotencia sobre serialización canónica (claves ordenadas en cada nivel): mismo payload con otro orden de campos → replay, no 422
+- [x] Inserción de la clave DENTRO de la misma transacción `BEGIN IMMEDIATE` que la venta
+- [x] Replay: misma clave + mismo payload → respuesta guardada tal cual (incluidos warnings); misma clave + payload distinto → 422
+- [x] Limpieza de claves > 7 días al arrancar
+- [x] Tope de líneas por venta vía `MAX_CART_LINES` (500) en el núcleo; confirmar que el parser global (`express.json()`) no cambia y se puede dejar con su límite por defecto
+- [x] Harness HTTP real (Electron + fetch contra Express): 31/31, con concurrencia REAL (dos fetch simultáneos misma clave → una sola venta y respuestas idénticas; dos procesos independientes vendiendo la última unidad → ambas ventas y stock exacto) y scopes (celular 403, desktop_box pendiente 403, aprobado 200)
+- [x] Empacado: `vite.main.config.mjs` debe copiar también `scopes.js`, `ipc-scopes.js` y `sales-core.js` junto a los módulos externalizados (`activation.js`, `api-server.js`) o la app revienta al arrancar (`Cannot find module './scopes'`). Verificado: asar contiene `.vite/renderer` + `.vite/build` completos y `activation.js`/`api-server.js` cargan OK.
 
 > **Nota (Bloque 3):** una venta entrante por HTTP **no** refresca por sí sola las
 > pantallas abiertas del Host (no hay bus de eventos todavía).

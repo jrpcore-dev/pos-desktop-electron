@@ -152,6 +152,20 @@ const createTables = () => {
     discount_percent REAL DEFAULT 0
   )`);
 
+  // Entrega 2c-B: idempotencia de escrituras por dispositivo (p. ej. ventas del
+  // desktop_box). La inserción se hace DENTRO de la misma transacción que la
+  // escritura; las claves viejas (> 7 días) se purgan al arrancar.
+  db.exec(`CREATE TABLE IF NOT EXISTS idempotency_keys (
+    device_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (device_id, endpoint, key)
+  )`);
+
   db.exec(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

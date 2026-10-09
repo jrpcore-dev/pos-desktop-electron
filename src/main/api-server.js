@@ -3,6 +3,25 @@ const crypto = require("crypto");
 const { verifyPin } = require("./pins");
 const activation = require("./activation");
 const scopeDefs = require("./scopes");
+const salesCore = require("./sales-core");
+
+// Serialización canónica para la huella de idempotencia (Entrega 2c-B):
+// claves ordenadas en cada nivel, arrays en orden y tipos JSON normales, para
+// que el mismo payload con el orden de campos cambiado produzca el mismo hash.
+const canonicalStringify = (value) => {
+  if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalStringify).join(",")}]`;
+  if (typeof value === "object") {
+    const keys = Object.keys(value)
+      .filter((k) => value[k] !== undefined)
+      .sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalStringify(value[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(String(value));
+};
+const sha256 = (s) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
 
 const TOKEN_TTL_MS = (() => {
   const v = Number(process.env.API_TOKEN_TTL_MS);
@@ -83,6 +102,13 @@ const startServer = async (db, port = 3456) => {
 
   const app = express();
   app.use(express.json());
+
+  // Purga de claves de idempotencia viejas (> 7 días) al arrancar.
+  try {
+    db.prepare("DELETE FROM idempotency_keys WHERE created_at < datetime('now', '-7 days')").run();
+  } catch (err) {
+    // Tabla ausente en BDs de entregas anteriores: se crea en la migración.
+  }
 
   const safe = (handler) => async (req, res) => {
     try {
@@ -458,6 +484,79 @@ const startServer = async (db, port = 3456) => {
       : [];
 
     res.json({ success: true, applied, issues, products });
+  }));
+
+  // Venta desde el desktop_box (Entrega 2c-B). El parser global de body no se
+  // toca: el límite virtual de 256KB se aplica aquí y el tope real de líneas
+  // vive en el núcleo (MAX_CART_LINES). La huella de idempotencia se calcula
+  // sobre una serialización canónica (claves ordenadas) de los campos del
+  // cliente; la identidad del cajero siempre viene del token, nunca del body.
+  app.post("/api/sales", protect(scopeDefs.SCOPE.SALES_WRITE), safe(async (req, res) => {
+    const key = String(req.headers["idempotency-key"] || "").trim();
+    if (!key)
+      return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", error: "Cabecera Idempotency-Key requerida" });
+    if (key.length > 200)
+      return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_INVALID", error: "Idempotency-Key inválida" });
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (Buffer.byteLength(JSON.stringify(body), "utf8") > 256 * 1024)
+      return res.status(413).json({ success: false, error: "Payload demasiado grande" });
+
+    const cashier = db.prepare("SELECT id, name, role FROM cashiers WHERE id = ?").get(req.cashierId);
+    const payload = {
+      cart: body.cart,
+      total: body.total,
+      paymentMethod: body.paymentMethod,
+      discountTotal: body.discountTotal,
+      cashierName: cashier ? cashier.name : "Usuario Principal",
+      cashierId: cashier ? cashier.id : null,
+      role: cashier ? cashier.role : null,
+    };
+
+    const clientFields = {
+      cart: body.cart,
+      total: body.total,
+      paymentMethod: body.paymentMethod,
+      discountTotal: body.discountTotal,
+    };
+    const requestHash = sha256(canonicalStringify(clientFields));
+
+    const getKey = db.prepare(
+      "SELECT request_hash, response_json, status_code FROM idempotency_keys WHERE device_id = ? AND endpoint = 'POST /api/sales' AND key = ?",
+    );
+    const setKey = db.prepare(
+      "INSERT INTO idempotency_keys (device_id, endpoint, key, request_hash, response_json, status_code) VALUES (?, 'POST /api/sales', ?, ?, ?, ?)",
+    );
+
+    const runTxn = db.transaction(() => {
+      const existing = getKey.get(req.deviceId, key);
+      if (existing) {
+        if (existing.request_hash === requestHash)
+          return { replay: true, statusCode: existing.status_code, body: JSON.parse(existing.response_json) };
+        return { conflict: true };
+      }
+      const result = salesCore.createSaleTx(db, payload);
+      const responseBody = { success: true, saleId: result.saleId, warnings: result.warnings || [] };
+      setKey.run(req.deviceId, key, requestHash, JSON.stringify(responseBody), 200);
+      return { created: true, body: responseBody };
+    });
+
+    let outcome;
+    try {
+      outcome = runTxn.immediate();
+    } catch (err) {
+      if (err && typeof err.code === "string") {
+        return res.status(400).json({ success: false, code: err.code, error: err.message });
+      }
+      throw err;
+    }
+    if (outcome.conflict)
+      return res.status(422).json({
+        success: false,
+        code: "IDEMPOTENCY_CONFLICT",
+        error: "Idempotency-Key ya usada con un payload diferente",
+      });
+    return res.status(outcome.replay ? outcome.statusCode : 200).json(outcome.body);
   }));
 
   // Emparejamiento por código de activación: público porque un teléfono nuevo
