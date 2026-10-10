@@ -262,6 +262,7 @@ const processSaleRef = useRef(null);
       paymentMethod: method,
       discountTotal: cartSummary.discountTotal,
       cashierName: cashier?.name || "Usuario Principal",
+      customerId: customer?.id ?? null,
     });
     if (result.success) {
       if (method === "cash") {

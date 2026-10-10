@@ -140,6 +140,7 @@ const createTables = () => {
     payment_method TEXT DEFAULT 'cash',
     discount_total REAL DEFAULT 0,
     cashier_name TEXT DEFAULT 'Usuario Principal',
+    customer_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -290,6 +291,7 @@ const createTables = () => {
   // resultante negativo). Aditivo, sin migración de datos.
   ensureColumn("sales", "stock_conflict", "INTEGER DEFAULT 0");
   ensureColumn("sales", "conflict_detail", "TEXT");
+  ensureColumn("sales", "customer_id", "INTEGER");
   // Make product_id nullable (recreate table) using a fresh PRAGMA check
   const siColsFresh = db.prepare("PRAGMA table_info(sale_items)").all();
   const pcol = siColsFresh.find((c) => c.name === "product_id");
@@ -409,6 +411,9 @@ const runMigrations = () => {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_sales_payment_method ON sales(payment_method)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)`,
@@ -2447,7 +2452,7 @@ ipcMain.handle(
   "record-sale",
   async (
     event,
-    { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role },
+    { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role, customerId },
   ) => {
     const recordSale = db.transaction(() =>
       salesCore.createSaleTx(db, {
@@ -2458,6 +2463,7 @@ ipcMain.handle(
         cashierName,
         cashierId,
         role,
+        customerId,
       }),
     );
 

@@ -53,7 +53,7 @@ const fail = (code, message, extra) => {
 
 const createSaleTx = (
   db,
-  { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role },
+  { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role, customerId },
 ) => {
   if (!Array.isArray(cart) || cart.length === 0) {
     throw fail("INVALID_PAYLOAD", "El carrito está vacío");
@@ -65,11 +65,27 @@ const createSaleTx = (
     throw fail("INVALID_PAYLOAD", "Total inválido");
   }
 
+  let resolvedCustomerId = null;
+  let customerWarning = null;
+  if (customerId !== undefined && customerId !== null) {
+    if (!Number.isInteger(customerId) || customerId <= 0) {
+      throw fail("INVALID_CUSTOMER", "Cliente inválido");
+    }
+    const exists = db
+      .prepare("SELECT id FROM customers WHERE id = ?")
+      .get(customerId);
+    if (exists) {
+      resolvedCustomerId = customerId;
+    } else {
+      customerWarning = { code: "CUSTOMER_NOT_FOUND", customer_id: customerId };
+    }
+  }
+
   const openReg = findOpenRegister(db, cashierId, role);
   const registerId = openReg ? openReg.id : null;
 
   const saleStmt = db.prepare(
-    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const saleInfo = saleStmt.run(
     total,
@@ -77,6 +93,7 @@ const createSaleTx = (
     discountTotal || 0,
     registerId,
     cashierName || "Usuario Principal",
+    resolvedCustomerId,
   );
   const saleId = saleInfo.lastInsertRowid;
 
@@ -198,6 +215,9 @@ const createSaleTx = (
     db.prepare(
       "UPDATE sales SET stock_conflict = 1, conflict_detail = ? WHERE id = ?",
     ).run(JSON.stringify(warnings), saleId);
+  }
+  if (customerWarning) {
+    warnings.push(customerWarning);
   }
 
   return { success: true, saleId, warnings };

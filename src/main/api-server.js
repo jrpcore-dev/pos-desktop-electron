@@ -511,6 +511,7 @@ const startServer = async (db, port = 3456) => {
       cashierName: cashier ? cashier.name : "Usuario Principal",
       cashierId: cashier ? cashier.id : null,
       role: cashier ? cashier.role : null,
+      customerId: body.customer_id,
     };
 
     const clientFields = {
@@ -518,6 +519,7 @@ const startServer = async (db, port = 3456) => {
       total: body.total,
       paymentMethod: body.paymentMethod,
       discountTotal: body.discountTotal,
+      customer_id: body.customer_id,
     };
     const requestHash = sha256(canonicalStringify(clientFields));
 
