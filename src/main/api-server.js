@@ -503,6 +503,19 @@ const startServer = async (db, port = 3456) => {
       return res.status(413).json({ success: false, error: "Payload demasiado grande" });
 
     const cashier = db.prepare("SELECT id, name, role FROM cashiers WHERE id = ?").get(req.cashierId);
+
+
+    const rawCid = body.customer_id;
+    let cidHash;
+    if (rawCid === null || rawCid === undefined) cidHash = undefined;
+    else cidHash = rawCid;
+    const clientFields = {
+      cart: body.cart,
+      total: body.total,
+      paymentMethod: body.paymentMethod,
+      discountTotal: body.discountTotal,
+      ...(cidHash !== undefined ? { customer_id: cidHash } : {}),
+    };
     const payload = {
       cart: body.cart,
       total: body.total,
@@ -511,15 +524,7 @@ const startServer = async (db, port = 3456) => {
       cashierName: cashier ? cashier.name : "Usuario Principal",
       cashierId: cashier ? cashier.id : null,
       role: cashier ? cashier.role : null,
-      customerId: body.customer_id,
-    };
-
-    const clientFields = {
-      cart: body.cart,
-      total: body.total,
-      paymentMethod: body.paymentMethod,
-      discountTotal: body.discountTotal,
-      customer_id: body.customer_id,
+      customerId: rawCid,
     };
     const requestHash = sha256(canonicalStringify(clientFields));
 

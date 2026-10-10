@@ -279,11 +279,16 @@ const processSaleRef = useRef(null);
       window.dispatchEvent(new CustomEvent("sale-registered"));
       showNotification("Venta registrada exitosamente", "success");
       const warnings = Array.isArray(result.warnings) ? result.warnings : [];
-      if (warnings.length > 0) {
-        const detail = warnings
+      const stockWarns = warnings.filter((w) => w && w.code === "STOCK_NEGATIVE");
+      const custWarns = warnings.filter((w) => w && w.code === "CUSTOMER_NOT_FOUND");
+      if (stockWarns.length > 0) {
+        const detail = stockWarns
           .map((w) => `«${w.name}» quedó con stock ${w.stock_after} en el sistema`)
           .join(". ");
         showNotification(`${detail}. Ajusta el inventario.`, "warning");
+      }
+      if (custWarns.length > 0) {
+        showNotification("Cliente no encontrado; la venta se guardó sin cliente.", "warning");
       }
       try {
         const printEnabled = await window.api.invoke("get-setting", "print_enabled");
