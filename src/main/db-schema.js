@@ -618,6 +618,20 @@ const runMigrations = (db) => {
   ensureColumn("cash_register_expenses", "product_id", "INTEGER");
   ensureColumn("cash_register_expenses", "quantity", "INTEGER DEFAULT 0");
 
+  // 3b · sesiones de caja persistidas: solo hashes, el token nunca en claro.
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS box_sessions (
+    token_hash TEXT PRIMARY KEY,
+    cashier_id INTEGER NOT NULL,
+    device_id TEXT,
+    device_type TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    revoked INTEGER NOT NULL DEFAULT 0
+  )
+`);
+
   // ─── CASHIERS TABLE ──────────────────────────────────────────
   db.exec(`CREATE TABLE IF NOT EXISTS cashiers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

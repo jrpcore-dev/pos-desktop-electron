@@ -147,19 +147,22 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
+  // DDL que esta línea de entregas agrega (3a.i + 3b). Cualquier otra salida
+  // es un cambio de esquema no declarado y hace fallar el chequeo.
+  const DDL_AGREGADO = [/^CREATE TABLE box_sessions \(/];
+  const DDL_BORRADO = [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
   for (const s of d.removed) console.log("    - " + s.replace(/\s+/g, " ").slice(0, 200));
   check(
-    d.removed.length === 1 && /^CREATE TABLE cash_register \(/.test(d.removed[0]),
-    "el único statement borrado es el CREATE TABLE cash_register viejo",
+    d.added.length === DDL_AGREGADO.length && d.removed.length === DDL_BORRADO.length,
+    "diff del DDL = el declarado (sin altas ni bajas extra)",
+    `agregados=${d.added.length} borrados=${d.removed.length}`,
   );
   check(
-    d.added.length === 2 &&
-      d.added.some((s) => /^CREATE TABLE cash_register \(/.test(s) && /device_id TEXT/.test(s)) &&
-      d.added.some((s) => /idx_cash_register_device/.test(s)),
-    "los 2 statements nuevos son cash_register (con device_id) + idx_cash_register_device",
+    DDL_AGREGADO.every((re) => d.added.some((s) => re.test(s))),
+    "los statements agregados son los declarados (box_sessions de 3b)",
   );
   check(
     ddlNew.filter((s) => !d.added.includes(s)).length === ddlOld.length - d.removed.length,
@@ -199,13 +202,28 @@ const cashRegisterRow = (db, id) =>
     }
     const idxDiff = diffSets(before.indexes, after.indexes);
 
+    // Cambios de esquema declarados por esta línea de entregas (3a.i + 3b).
+    const ESPERADO_B = [
+      "+ cash_register.device_id|TEXT|nn=0|dflt=null",
+      "+ tabla nueva box_sessions",
+      "+ box_sessions.token_hash|TEXT|nn=0|dflt=null",
+      "+ box_sessions.cashier_id|INTEGER|nn=1|dflt=null",
+      "+ box_sessions.device_id|TEXT|nn=0|dflt=null",
+      "+ box_sessions.device_type|TEXT|nn=0|dflt=null",
+      "+ box_sessions.created_at|INTEGER|nn=1|dflt=null",
+      "+ box_sessions.expires_at|INTEGER|nn=1|dflt=null",
+      "+ box_sessions.last_used_at|INTEGER|nn=0|dflt=null",
+      "+ box_sessions.revoked|INTEGER|nn=1|dflt=0",
+    ].sort();
+
     console.log("  diffs de esquema:");
     for (const c of colDiff) console.log("    " + c);
     for (const i of idxDiff.added) console.log("    + indice " + i);
     for (const i of idxDiff.removed) console.log("    - indice " + i);
+    const visto = [...colDiff].sort();
     check(
-      colDiff.length === 1 && colDiff[0] === "+ cash_register.device_id|TEXT|nn=0|dflt=null",
-      "el esquema SOLO gana cash_register.device_id",
+      visto.length === ESPERADO_B.length && visto.every((v, i) => v === ESPERADO_B[i]),
+      "el esquema SOLO gana device_id + tabla box_sessions",
       JSON.stringify(colDiff),
     );
     check(

@@ -40,9 +40,19 @@ const nomarize = (s) =>
     .toLowerCase();
 
 let server = null;
-let activeTokens = {};
+// 3b · throttle de last_used_at: se escribe como mucho una vez cada 5 minutos.
+const LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
 const authAttempts = new Map(); // { cashierId: { count, windowStart } }
 const pairAttempts = new Map(); // { deviceId: { count, windowStart } }
+
+// 3b · poda de sesiones vencidas al arrancar el servidor.
+const purgeExpiredSessions = (db) => {
+  try {
+    db.prepare("DELETE FROM box_sessions WHERE expires_at <= ?").run(Date.now());
+  } catch (err) {
+    // Tabla ausente en BDs de entregas anteriores: se crea en la migración.
+  }
+};
 
 const pruneAttempts = (now) => {
   for (const [k, e] of authAttempts) {
@@ -107,12 +117,13 @@ const startServer = async (db, port = 3456) => {
   // 3a.i · el gasto de recepción de inventario se pega a la caja del Host.
   const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 
-  // Purga de claves de idempotencia viejas (> 7 días) al arrancar.
+  // Purga de claves de idempotencia viejas (> 7 días) y sesiones vencidas.
   try {
     db.prepare("DELETE FROM idempotency_keys WHERE created_at < datetime('now', '-7 days')").run();
   } catch (err) {
     // Tabla ausente en BDs de entregas anteriores: se crea en la migración.
   }
+  purgeExpiredSessions(db);
 
   const safe = (handler) => async (req, res) => {
     try {
@@ -124,15 +135,31 @@ const startServer = async (db, port = 3456) => {
   };
 
   // ─── CANDADO DE ACTIVACIÓN POR NEGOCIO ─────────────────────────────
+  // 3b · la sesión vive en la BD: el token se hashea (sha256) y se busca por
+  // hash. Mismo contrato para todos los tipos de dispositivo: 401 si no existe,
+  // si está revocado o si venció; 403 es solo de scope/emparejamiento.
   const requireAuth = (req, res, next) => {
     const token = req.headers.authorization;
-    const sess = token && activeTokens[token];
-    if (!sess) return res.status(401).json({ success: false, error: "No autorizado" });
-    if (Date.now() - sess.createdAt > TOKEN_TTL_MS) {
-      delete activeTokens[token];
+    if (!token) return res.status(401).json({ success: false, error: "No autorizado" });
+    const row = db
+      .prepare("SELECT * FROM box_sessions WHERE token_hash = ?")
+      .get(activation.hashToken(token));
+    if (!row || row.revoked) {
+      return res.status(401).json({ success: false, error: "No autorizado" });
+    }
+    const now = Date.now();
+    if (row.expires_at <= now) {
+      db.prepare("DELETE FROM box_sessions WHERE token_hash = ?").run(row.token_hash);
       return res.status(401).json({ success: false, error: "Sesión expirada" });
     }
-    req.cashierId = sess.cashierId;
+    if (!row.last_used_at || now - row.last_used_at >= LAST_USED_THROTTLE_MS) {
+      db.prepare("UPDATE box_sessions SET last_used_at = ? WHERE token_hash = ?").run(
+        now,
+        row.token_hash,
+      );
+    }
+    req.cashierId = row.cashier_id;
+    req.sessionDeviceId = row.device_id;
     next();
   };
 
@@ -211,13 +238,31 @@ const startServer = async (db, port = 3456) => {
 
     authAttempts.delete(String(id));
 
-    // Poda de tokens vencidos para acotar la memoria.
-    for (const [k, t] of Object.entries(activeTokens)) {
-      if (now - t.createdAt > TOKEN_TTL_MS) delete activeTokens[k];
-    }
-
+    // 3b · el token (32 bytes) viaja en claro una sola vez; en la BD solo
+    // queda su SHA-256, nunca el valor crudo.
+    purgeExpiredSessions(db);
     const token = crypto.randomBytes(32).toString("hex");
-    activeTokens[token] = { cashierId: cashier.id, createdAt: now };
+    const tokenHash = activation.hashToken(token);
+    const devId = req.headers["x-device-id"];
+    if (devId) {
+      // Un login nuevo cierra la sesión anterior de esa misma (caja, dispositivo).
+      db.prepare(
+        "UPDATE box_sessions SET revoked = 1 WHERE cashier_id = ? AND device_id = ? AND revoked = 0",
+      ).run(cashier.id, devId);
+    }
+    let deviceType = (req.body && req.body.deviceType) || null;
+    try {
+      const paired = devId
+        ? db.prepare("SELECT device_type FROM paired_devices WHERE device_id = ?").get(devId)
+        : null;
+      if (paired && paired.device_type) deviceType = paired.device_type;
+    } catch (err) {
+      // paired_devices ausente: el tipo queda desconocido, no bloquea el login.
+    }
+    db.prepare(
+      `INSERT INTO box_sessions (token_hash, cashier_id, device_id, device_type, created_at, expires_at, last_used_at, revoked)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+    ).run(tokenHash, cashier.id, devId || null, deviceType, now, now + TOKEN_TTL_MS, now);
 
     // Auto-emparejamiento silencioso durante la ventana de gracia (única ruta
     // de migración): el PIN correcto ya era el acceso, así que no se pide el
@@ -716,7 +761,7 @@ const stopServer = () => {
   if (server) {
     server.close();
     server = null;
-    activeTokens = {};
+    // 3b · las sesiones NO se vacían: reiniciar el Host ya no desloguea.
     console.log("API Server stopped");
   }
 };
