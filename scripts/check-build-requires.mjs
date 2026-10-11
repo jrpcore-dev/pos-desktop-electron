@@ -14,7 +14,10 @@
 import { readdirSync, existsSync, statSync, readFileSync, rmSync, mkdtempSync } from "fs";
 import { join, dirname, resolve } from "path";
 import os from "os";
-import asarPkg from "@electron/asar";
+// @electron/asar v4 es ESM-only y NO tiene export por defecto: hay que
+// importarlo como namespace (con `import asarPkg from` rompía:
+// "does not provide an export named 'default'").
+import * as asarPkg from "@electron/asar";
 const { extractAll } = asarPkg;
 
 const root = process.cwd();
