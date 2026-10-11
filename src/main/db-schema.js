@@ -17,6 +17,7 @@
 // la conexión con db.function("nomar", nomarize) ANTES de llamarla. Cualquier
 // consumidor distinto de main.js debe registrarla igual (ver scripts/).
 
+const crypto = require("crypto");
 const { hashPin } = require("./pins");
 
 const ensureColumnOn = (db, table, column, definition) => {
@@ -24,6 +25,20 @@ const ensureColumnOn = (db, table, column, definition) => {
   if (!cols.find((c) => c.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+};
+
+// 3a.i · device_id estable del Host: se genera una sola vez y vive en settings.
+const HOST_DEVICE_ID_KEY = "host_device_id";
+const ensureHostDeviceId = (db) => {
+  const row = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(HOST_DEVICE_ID_KEY);
+  if (row && row.value) return row.value;
+  const value = `host-${crypto.randomBytes(12).toString("hex")}`;
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+  ).run(HOST_DEVICE_ID_KEY, value);
+  return value;
 };
 
 const createTables = (db) => {
@@ -559,6 +574,16 @@ const runMigrations = (db) => {
   ensureColumn("cash_register", "opened_by", "INTEGER");
   ensureColumn("cash_register", "closed_by", "INTEGER");
 
+  // 3a.i · device_id de caja: backfill con el id del Host (sin NULL) + índice.
+  const hostDeviceId = ensureHostDeviceId(db);
+  ensureColumn("cash_register", "device_id", "TEXT");
+  db.prepare(
+    "UPDATE cash_register SET device_id = ? WHERE device_id IS NULL",
+  ).run(hostDeviceId);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_cash_register_device ON cash_register(device_id)`,
+  );
+
   // Migration: recompute difference for already-closed registers whose
   // expected_close is negative (the declaration reduces the debt instead of
   // being added on top: expected + declared).
@@ -642,4 +667,10 @@ const runMigrations = (db) => {
   }
 };
 
-module.exports = { ensureColumn: ensureColumnOn, createTables, runMigrations };
+module.exports = {
+  ensureColumn: ensureColumnOn,
+  ensureHostDeviceId,
+  HOST_DEVICE_ID_KEY,
+  createTables,
+  runMigrations,
+};

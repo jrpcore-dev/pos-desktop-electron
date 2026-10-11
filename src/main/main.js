@@ -134,6 +134,9 @@ try {
 
 runMigrations(db);
 
+// 3a.i · device_id del Host, generado en el primer arranque (settings).
+const hostDeviceId = dbSchema.ensureHostDeviceId(db);
+
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -1879,6 +1882,7 @@ ipcMain.handle(
         cashierId,
         role,
         customerId,
+        deviceId: hostDeviceId,
       }),
     );
 
@@ -2105,7 +2109,7 @@ function toUTCDateRange(mxDateStr) {
 
 // ─── REGISTER HELPERS ──────────────────────────────────────
 function findOpenRegister(cashierId, role) {
-  return salesCore.findOpenRegister(db, cashierId, role);
+  return salesCore.findOpenRegister(db, cashierId, role, hostDeviceId);
 }
 
 function isWithinCancelWindow(closedAt) {
@@ -2687,9 +2691,9 @@ ipcMain.handle(
       if (!register) {
         register = db
           .prepare(
-            "SELECT * FROM cash_register WHERE date = ? ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM cash_register WHERE date = ? AND device_id = ? ORDER BY id DESC LIMIT 1",
           )
-          .get(mxToday());
+          .get(mxToday(), hostDeviceId);
       }
       if (register) {
         const opener = db
@@ -2723,9 +2727,9 @@ ipcMain.handle(
       const today = mxToday();
       const openRegisters = db
         .prepare(
-          "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id ASC",
+          "SELECT * FROM cash_register WHERE status = 'open' AND device_id = ? ORDER BY id ASC",
         )
-        .all();
+        .all(hostDeviceId);
       for (const existing of openRegisters) {
         // Auto-close the previous register before opening new one
         const sales = db
@@ -2762,8 +2766,8 @@ ipcMain.handle(
       }
 
       db.prepare(
-        "INSERT INTO cash_register (date, opening_balance, cashier_id, opened_by) VALUES (?, ?, ?, ?)",
-      ).run(today, openingBalance || 0, cashierId || null, cashierId || null);
+        "INSERT INTO cash_register (date, opening_balance, cashier_id, opened_by, device_id) VALUES (?, ?, ?, ?, ?)",
+      ).run(today, openingBalance || 0, cashierId || null, cashierId || null, hostDeviceId);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -2794,10 +2798,10 @@ ipcMain.handle(
             `SELECT cr.*, c.role AS opener_role
              FROM cash_register cr
              LEFT JOIN cashiers c ON cr.opened_by = c.id
-             WHERE cr.status = 'open'
+             WHERE cr.status = 'open' AND cr.device_id = ?
              ORDER BY cr.id DESC LIMIT 1`,
           )
-          .get();
+          .get(hostDeviceId);
       }
       if (!register) return { success: false, error: "No hay caja abierta" };
 
@@ -2912,9 +2916,9 @@ ipcMain.handle("get-previous-register-today", async () => {
   try {
     const register = db
       .prepare(
-        "SELECT * FROM cash_register WHERE status = 'closed' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1",
+        "SELECT * FROM cash_register WHERE status = 'closed' AND closed_at IS NOT NULL AND device_id = ? ORDER BY closed_at DESC LIMIT 1",
       )
-      .get();
+      .get(hostDeviceId);
     return { success: true, register: register || null };
   } catch (error) {
     return { success: false, error: error.message };
@@ -3501,8 +3505,10 @@ const migrateRegisterContinuity = () => {
         "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id ASC",
       )
       .all();
-    for (let i = 0; i < openRegs.length - 1; i++) {
-      const reg = openRegs[i];
+    const latestByDevice = new Map();
+    for (const r of openRegs) latestByDevice.set(String(r.device_id), r.id);
+    const toClose = openRegs.filter((r) => latestByDevice.get(String(r.device_id)) !== r.id);
+    for (const reg of toClose) {
       const sales = db
         .prepare(
           "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
@@ -3547,9 +3553,9 @@ const migrateRegisterContinuity = () => {
       });
       const target = db
         .prepare(
-          "SELECT id FROM cash_register WHERE date = ? ORDER BY id DESC LIMIT 1",
+          "SELECT id FROM cash_register WHERE date = ? AND device_id = ? ORDER BY id DESC LIMIT 1",
         )
-        .get(mxDate);
+        .get(mxDate, hostDeviceId);
       if (target) {
         db.prepare("UPDATE sales SET register_id = ? WHERE id = ?").run(
           target.id,

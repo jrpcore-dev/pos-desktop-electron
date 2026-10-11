@@ -19,27 +19,30 @@
 const MAX_CART_LINES = 500;
 const KNOWN_UNITS = ["piece", "weight", "box", "package", "boxpack"];
 
-const findOpenRegister = (db, cashierId, role) => {
+// 3a.i · deviceId filtra por dispositivo y quita el fallback a caja ajena.
+const findOpenRegister = (db, cashierId, role, deviceId) => {
+  const dev = deviceId ? " AND device_id = ?" : "";
+  const devArgs = deviceId ? [deviceId] : [];
   if (role === "admin" || !cashierId) {
     return (
       db
         .prepare(
-          "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+          `SELECT * FROM cash_register WHERE status = 'open'${dev} ORDER BY id DESC LIMIT 1`,
         )
-        .get() || null
+        .get(...devArgs) || null
     );
   }
   return (
     db
       .prepare(
-        "SELECT * FROM cash_register WHERE status = 'open' AND cashier_id = ? ORDER BY id DESC LIMIT 1",
+        `SELECT * FROM cash_register WHERE status = 'open' AND cashier_id = ?${dev} ORDER BY id DESC LIMIT 1`,
       )
-      .get(cashierId) ||
+      .get(cashierId, ...devArgs) ||
     db
       .prepare(
-        "SELECT * FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+        `SELECT * FROM cash_register WHERE status = 'open'${dev} ORDER BY id DESC LIMIT 1`,
       )
-      .get() ||
+      .get(...devArgs) ||
     null
   );
 };
@@ -53,7 +56,18 @@ const fail = (code, message, extra) => {
 
 const createSaleTx = (
   db,
-  { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role, customerId },
+  {
+    cart,
+    total,
+    paymentMethod,
+    discountTotal,
+    cashierName,
+    cashierId,
+    role,
+    customerId,
+    deviceId,
+    requireRegister,
+  },
 ) => {
   if (!Array.isArray(cart) || cart.length === 0) {
     throw fail("INVALID_PAYLOAD", "El carrito está vacío");
@@ -81,7 +95,11 @@ const createSaleTx = (
     }
   }
 
-  const openReg = findOpenRegister(db, cashierId, role);
+  const openReg = findOpenRegister(db, cashierId, role, deviceId);
+  // 3a.i · la caja exige caja propia; el Host local vende también fuera de caja.
+  if (requireRegister && !openReg) {
+    throw fail("NO_OPEN_REGISTER", "Abra caja para vender");
+  }
   const registerId = openReg ? openReg.id : null;
 
   const saleStmt = db.prepare(

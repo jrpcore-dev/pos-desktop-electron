@@ -61,7 +61,8 @@ const seed = (target) => {
   target.prepare("INSERT INTO cashiers (id, name, role, pin, is_active, pin_hash, pin_salt) VALUES (1, 'Ana', 'cashier', '', 1, ?, ?)").run(p.hash, p.salt);
   target.prepare("INSERT INTO products (id, barcode, name, price, stock, sale_unit, min_stock) VALUES (1, '001', 'Leche', 8, 1, 'piece', 2)").run();
   target.prepare("INSERT INTO products (id, barcode, name, price, stock, sale_unit, min_stock) VALUES (2, '002', 'Coco', 10, 5, 'piece', 2)").run();
-  target.prepare("INSERT INTO cash_register (id, date, status, cashier_id) VALUES (1, date('now'), 'open', 1)").run();
+  // 3a.i: la caja del fixture pertenece a la caja que vende (dev-desk-ok).
+  target.prepare("INSERT INTO cash_register (id, date, status, cashier_id, device_id) VALUES (1, date('now'), 'open', 1, 'dev-desk-ok')").run();
   activation.registerPairing(target, { deviceId: "dev-mobile", deviceName: "Celular", token: "tok-mobile", cashierId: 1, deviceType: "mobile", approved: 1 });
   activation.registerPairing(target, { deviceId: "dev-desk-pending", deviceName: "Caja pendiente", token: "tok-desk-pending", cashierId: 1, deviceType: "desktop_box", approved: 0 });
   activation.registerPairing(target, { deviceId: "dev-desk-ok", deviceName: "Caja aprobada", token: "tok-desk-ok", cashierId: 1, deviceType: "desktop_box", approved: 1 });

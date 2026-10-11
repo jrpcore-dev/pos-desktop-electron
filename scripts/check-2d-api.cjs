@@ -31,7 +31,8 @@ db.prepare("INSERT INTO cashiers (id, name, role, pin, is_active, pin_hash, pin_
 db.prepare("INSERT INTO products (id, barcode, name, price, stock) VALUES (1, '001', 'Leche', 8, 1)").run();
 db.prepare("INSERT INTO products (id, barcode, name, price, stock) VALUES (2, '002', 'Coco', 10, 5)").run();
 db.prepare("INSERT INTO customers (id, name) VALUES (7, 'Ana cliente')").run();
-db.prepare("INSERT INTO cash_register (id, date, status, cashier_id) VALUES (1, date('now'), 'open', 1)").run();
+// 3a.i: la caja del fixture pertenece a la caja que vende (dev-desk-ok).
+db.prepare("INSERT INTO cash_register (id, date, status, cashier_id, device_id) VALUES (1, date('now'), 'open', 1, 'dev-desk-ok')").run();
 activation.registerPairing(db, { deviceId: "dev-desk-ok", deviceName: "Caja", token: "tok-desk-ok", cashierId: 1, deviceType: "desktop_box", approved: 1 });
 activation.registerPairing(db, { deviceId: "dev-mobile", deviceName: "Celular", token: "tok-mobile", cashierId: 1, deviceType: "mobile", approved: 1 });
 

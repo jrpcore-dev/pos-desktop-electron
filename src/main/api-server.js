@@ -4,6 +4,7 @@ const { verifyPin } = require("./pins");
 const activation = require("./activation");
 const scopeDefs = require("./scopes");
 const salesCore = require("./sales-core");
+const dbSchema = require("./db-schema");
 
 // Serialización canónica para la huella de idempotencia (Entrega 2c-B):
 // claves ordenadas en cada nivel, arrays en orden y tipos JSON normales, para
@@ -102,6 +103,9 @@ const startServer = async (db, port = 3456) => {
 
   const app = express();
   app.use(express.json());
+
+  // 3a.i · el gasto de recepción de inventario se pega a la caja del Host.
+  const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 
   // Purga de claves de idempotencia viejas (> 7 días) al arrancar.
   try {
@@ -356,7 +360,7 @@ const startServer = async (db, port = 3456) => {
       // Register cost as expense (even if no cash register is open)
       // unless the user opted to not deduct from the register (registerExpense=false).
       if (registerExpense !== false && totalCost > 0) {
-        const openReg = db.prepare("SELECT id FROM cash_register WHERE status = 'open' ORDER BY id DESC LIMIT 1").get();
+        const openReg = db.prepare("SELECT id FROM cash_register WHERE status = 'open' AND device_id = ? ORDER BY id DESC LIMIT 1").get(hostDeviceId);
         if (openReg) {
           db.prepare("UPDATE cash_register SET expenses = COALESCE(expenses, 0) + ? WHERE id = ?").run(totalCost, openReg.id);
         }
@@ -525,6 +529,9 @@ const startServer = async (db, port = 3456) => {
       cashierId: cashier ? cashier.id : null,
       role: cashier ? cashier.role : null,
       customerId: rawCid,
+      // 3a.i · la caja es la del dispositivo verificado, nunca del body.
+      deviceId: req.deviceId,
+      requireRegister: true,
     };
     const requestHash = sha256(canonicalStringify(clientFields));
 
