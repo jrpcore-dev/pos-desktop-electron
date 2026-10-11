@@ -18,6 +18,11 @@ const ipcScopes = require("./ipc-scopes");
 const salesCore = require("./sales-core");
 const dbSchema = require("./db-schema");
 
+// El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
+// a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
+// sites de main.js (createTables(db) / runMigrations(db)) sigan intactos.
+const { createTables, runMigrations } = dbSchema;
+
 // Entrega 2a: rol del dispositivo. Por defecto "host" (comportamiento intacto).
 // El guard solo rechaza handlers cuando el rol es "client" (fail-closed).
 let deviceRole = ipcScopes.ROLES.HOST;
@@ -3653,7 +3658,7 @@ ipcMain.handle("restore-backup", async (event, backupPath) => {
       source.close();
     }
 
-    runMigrations();
+    runMigrations(db);
 
     // Candado de activación por negocio: tabla de dispositivos emparejados +
     // settings mínimos (el código se genera una sola vez en el primer arranque).
