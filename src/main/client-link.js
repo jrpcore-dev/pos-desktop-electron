@@ -30,6 +30,77 @@ const SETTINGS = Object.freeze({
 const fail = (code, error, extra = {}) => ({ success: false, code, error, ...extra });
 const trimUrl = (u) => String(u || "").replace(/\/+$/, "");
 
+// ── Token de emparejamiento: NUNCA en claro ─────────────────────────────────
+// Se cifra con safeStorage del proceso main. Si no hay safeStorage (fuera de
+// Electron, antes de `app.ready` o en un build sin él) NO se persiste nada y
+// el llamador lo sabe; nunca se escribe el token en claro. Un residuo en
+// claro de versiones anteriores se borra al primer uso.
+const TOKEN_ENC_PREFIX = "enc:v1:";
+let secretCipher = null;
+
+// Cifrador basado en safeStorage. Devuelve null si no está disponible.
+const safeStorageCipher = () => {
+  let ss = null;
+  try {
+    // En RUN_AS_NODE require("electron") devuelve la ruta al binario.
+    const electron = require("electron");
+    ss = electron && electron.safeStorage;
+  } catch (err) {
+    ss = null;
+  }
+  if (!ss || typeof ss.encryptString !== "function") return null;
+  return {
+    available: typeof ss.isEncryptionAvailable === "function" ? () => ss.isEncryptionAvailable() : () => true,
+    encrypt: (plain) => ss.encryptString(String(plain)).toString("base64"),
+    decrypt: (b64) => ss.decryptString(Buffer.from(String(b64), "base64")),
+  };
+};
+
+const setSecretCipher = (next) => {
+  secretCipher = next || null;
+  return secretCipher !== null;
+};
+
+const cipherReady = () => Boolean(secretCipher && (typeof secretCipher.available !== "function" || secretCipher.available()));
+
+const deleteSetting = (db, key) => {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+};
+
+// Devuelve true si quedó persistida (cifrada), false si no se guardó nada.
+const savePairedToken = (db, token) => {
+  if (!token) return { persisted: false, reason: "token vacío" };
+  if (!cipherReady()) {
+    deleteSetting(db, SETTINGS.BOX_PAIRED_TOKEN); // sin cifrar no se guarda
+    return { persisted: false, reason: "safeStorage no disponible" };
+  }
+  activation.setSetting(
+    db,
+    SETTINGS.BOX_PAIRED_TOKEN,
+    TOKEN_ENC_PREFIX + secretCipher.encrypt(String(token)),
+  );
+  return { persisted: true };
+};
+
+// El token solo se devuelve si está cifrado y hay cipher para abrirlo.
+const readPairedToken = (db) => {
+  const raw = activation.getSetting(db, SETTINGS.BOX_PAIRED_TOKEN);
+  if (!raw) return null;
+  if (!raw.startsWith(TOKEN_ENC_PREFIX)) {
+    deleteSetting(db, SETTINGS.BOX_PAIRED_TOKEN); // residuo en claro: se borra
+    return null;
+  }
+  if (!cipherReady()) return null;
+  try {
+    return secretCipher.decrypt(raw.slice(TOKEN_ENC_PREFIX.length));
+  } catch (err) {
+    return null;
+  }
+};
+
+const tokenPersisted = (db) =>
+  String(activation.getSetting(db, SETTINGS.BOX_PAIRED_TOKEN) || "").startsWith(TOKEN_ENC_PREFIX);
+
 const ensureBoxDeviceId = (db) => {
   let id = activation.getSetting(db, SETTINGS.BOX_DEVICE_ID);
   if (!id) {
@@ -42,14 +113,18 @@ const ensureBoxDeviceId = (db) => {
 const getSettings = (db) => {
   const out = { deviceId: ensureBoxDeviceId(db) };
   for (const key of Object.values(SETTINGS)) {
+    // El token cifrado NUNCA sale hacia el renderer: sólo se dice si existe.
+    if (key === SETTINGS.BOX_PAIRED_TOKEN) continue;
     out[key] = activation.getSetting(db, key);
   }
+  out.tokenPersisted = tokenPersisted(db);
   return out;
 };
 
 const saveSettings = (db, patch = {}) => {
   for (const [key, value] of Object.entries(patch)) {
     if (!Object.values(SETTINGS).includes(key)) continue; // solo claves conocidas
+    if (key === SETTINGS.BOX_PAIRED_TOKEN) continue; // sólo por savePairedToken
     if (value === undefined || value === null) continue;
     activation.setSetting(db, key, String(value));
   }
@@ -201,7 +276,7 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
   activation.setSetting(db, SETTINGS.DEVICE_ROLE, "client");
   activation.setSetting(db, SETTINGS.HOST_URL, url);
   activation.setSetting(db, SETTINGS.HOST_DEVICE_ID, hostDeviceId);
-  activation.setSetting(db, SETTINGS.BOX_PAIRED_TOKEN, data.pairedToken);
+  const persisted = savePairedToken(db, data.pairedToken); // cifrado, nunca en claro
   activation.setSetting(db, SETTINGS.SYNC_COMPLETED, "0");
 
   return {
@@ -214,6 +289,7 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
     host_device_id: hostDeviceId,
     protocol_version: data.protocol_version || protocol.PROTOCOL_VERSION,
     sync_completed: "0",
+    token_persisted: persisted.persisted,
     canSell: false,
   };
 };
@@ -224,8 +300,14 @@ const linkStatus = async (db, opts = {}) => {
   const url = trimUrl(opts.hostUrl || activation.getSetting(db, SETTINGS.HOST_URL));
   if (!url) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
   const deviceId = activation.getSetting(db, SETTINGS.BOX_DEVICE_ID);
-  const token = activation.getSetting(db, SETTINGS.BOX_PAIRED_TOKEN);
-  if (!deviceId || !token) return fail("NOT_PAIRED", "La caja no está emparejada");
+  const token = readPairedToken(db);
+  if (!deviceId) return fail("NOT_PAIRED", "La caja no está emparejada");
+  if (!token) {
+    return fail(
+      "TOKEN_UNAVAILABLE",
+      "No hay token de emparejamiento: se requiere cifrado con safeStorage",
+    );
+  }
 
   let res;
   try {
@@ -289,6 +371,12 @@ module.exports = {
   DEFAULT_API_PORT,
   DEVICE_TYPE,
   SETTINGS,
+  TOKEN_ENC_PREFIX,
+  setSecretCipher,
+  safeStorageCipher,
+  savePairedToken,
+  readPairedToken,
+  tokenPersisted,
   ensureBoxDeviceId,
   getSettings,
   saveSettings,

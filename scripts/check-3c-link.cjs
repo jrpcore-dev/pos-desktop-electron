@@ -84,6 +84,16 @@ const dbBox2 = fixture.createFileDb(path.join(TMP, "box2.db")); // empareja OK
 const dbBox3 = fixture.createFileDb(path.join(TMP, "box3.db")); // segunda caja
 const codeA = activation.getActivationCode(dbA);
 
+// Cifrador de prueba: fuera de Electron no hay safeStorage (main.js lo inyecta
+// en la app real). Marca los valores para probar que el token JAMÁS se guarda
+// en claro en settings.
+const testCipher = {
+  available: () => true,
+  encrypt: (plain) => Buffer.from("T:" + plain, "utf8").toString("base64"),
+  decrypt: (b64) => Buffer.from(String(b64), "base64").toString("utf8").slice(2),
+};
+clientLink.setSecretCipher(testCipher);
+
 (async () => {
   console.log("=== 3c · descubrimiento y emparejamiento ===");
   const started = await apiServer.startServer(dbA, PORT_A, { appVersion: "9.9.9-check" });
@@ -153,6 +163,18 @@ const codeA = activation.getActivationCode(dbA);
   check(dbA.prepare("SELECT COUNT(*) c FROM paired_devices WHERE device_id = 'box-vieja'").get().c === 0,
     "con protocolo incompatible NO se empareja");
 
+  // ─── B1 · un celular NO consume letra de caja ────────────────────────────
+  r = await post(`${URL_A}/api/activation/pair`, {
+    deviceId: "mobile-3c", deviceName: "Celular Ana", code: codeA,
+  });
+  check(r.status === 200 && r.data.approved === true && r.data.pending === false,
+    "móvil: se empareja aprobado (comportamiento actual)", JSON.stringify(r.data));
+  check(/^D-[0-9A-F]{6}$/.test(r.data.device_code), "móvil recibe código D-… (no letra)", String(r.data.device_code));
+  check(!activation.DEVICE_CODE_LETTERS.includes(r.data.device_code),
+    "el código del móvil no está en el alfabeto de letras de caja", String(r.data.device_code));
+  check(dbA.prepare("SELECT device_type FROM paired_devices WHERE device_id='mobile-3c'").get().device_type === "mobile",
+    "el móvil sigue siendo device_type mobile");
+
   // ─── B2 · emparejamiento correcto: cajas pendientes con código único ────
   const box2Id = clientLink.ensureBoxDeviceId(dbBox2);
   r = await post(`${URL_A}/api/activation/pair`, {
@@ -205,15 +227,22 @@ const codeA = activation.getActivationCode(dbA);
     host_url: URL_A,
     host_device_id: activation.getSetting(dbA, "host_device_id"),
     box_device_id: box2Id,
-    box_paired_token: tokenBox2,
+    box_paired_token: tokenBox2, // se ignora: sólo se guarda cifrado
     sync_completed: "0",
     evil: "x",
   });
   check(
-    saved.sync_completed === "0" && saved.evil === undefined,
-    "saveSettings solo acepta claves conocidas de settings",
+    saved.sync_completed === "0" && saved.evil === undefined && saved.box_paired_token === undefined,
+    "saveSettings solo acepta claves conocidas y NUNCA el token",
     JSON.stringify(saved),
   );
+  const tk = clientLink.savePairedToken(dbBox2, tokenBox2);
+  const rawToken = activation.getSetting(dbBox2, "box_paired_token");
+  check(tk.persisted === true && rawToken.startsWith(clientLink.TOKEN_ENC_PREFIX), "el token se guarda CIFRADO (enc v1)", String(rawToken).slice(0, 20));
+  check(!rawToken.includes(tokenBox2), "en la BD no aparece el token en claro", String(rawToken).slice(0, 20));
+  check(clientLink.readPairedToken(dbBox2) === tokenBox2, "readPairedToken devuelve el token original");
+  check(clientLink.getSettings(dbBox2).tokenPersisted === true && clientLink.getSettings(dbBox2).box_paired_token === undefined,
+    "box-get-settings no expone el token, sólo si existe", JSON.stringify(clientLink.getSettings(dbBox2)));
   let st = await clientLink.linkStatus(dbBox2, { hostUrl: URL_A });
   check(st.success && st.approved === false && st.canSell === false, "linkStatus de la caja: pendiente y sin vender", JSON.stringify(st));
   check(clientLink.canSell(dbBox2) === false, "sin sync_completed → la caja NO vende");
@@ -247,6 +276,32 @@ const codeA = activation.getActivationCode(dbA);
   check(wait3.success === true && wait3.approved === true, "la caja 3 ve su aprobación", JSON.stringify(wait3));
   clientLink.markSyncCompleted(dbBox3, true);
   check(clientLink.canSell(dbBox3) === true, "con sync_completed = 1 la caja ya puede vender");
+
+  // ─── C2b · el token de emparejamiento jamás en claro ────────────────────
+  check(paired.token_persisted === true, "pairAsBox informa que el token quedó persistido (cifrado)", JSON.stringify(paired));
+  const raw3 = activation.getSetting(dbBox3, "box_paired_token");
+  const tokenBox3 = clientLink.readPairedToken(dbBox3);
+  check(raw3.startsWith(clientLink.TOKEN_ENC_PREFIX), "settings guarda el token con prefijo enc:v1", String(raw3).slice(0, 20));
+  check(tokenBox3 && raw3.indexOf(tokenBox3) === -1, "el token en claro NO aparece en settings", String(raw3).slice(0, 20));
+  check(clientLink.getSettings(dbBox3).box_paired_token === undefined, "box-get-settings no devuelve el token", JSON.stringify(clientLink.getSettings(dbBox3)));
+
+  // Fallback sin safeStorage: no se persiste NADA (nunca en claro)
+  clientLink.setSecretCipher(null);
+  const noCipher = await clientLink.linkStatus(dbBox3, { hostUrl: URL_A });
+  check(noCipher.success === false && noCipher.code === "TOKEN_UNAVAILABLE",
+    "sin cipher → TOKEN_UNAVAILABLE (no se usa token en claro)", JSON.stringify(noCipher));
+  const notSaved = clientLink.savePairedToken(dbBox3, "token-nuevo");
+  check(notSaved.persisted === false && activation.getSetting(dbBox3, "box_paired_token") === null,
+    "sin cipher no se escribe ningún token en settings", JSON.stringify(notSaved));
+  clientLink.setSecretCipher(testCipher);
+  check(clientLink.savePairedToken(dbBox3, tokenBox3).persisted === true && clientLink.readPairedToken(dbBox3) === tokenBox3,
+    "restaurado el cipher, el token vuelve a guardarse cifrado");
+
+  // Un residuo en claro de una versión anterior se borra, no se usa
+  const dbOld = fixture.createFileDb(path.join(TMP, "box-old.db"));
+  activation.setSetting(dbOld, "box_paired_token", "secreto-en-claro");
+  check(clientLink.readPairedToken(dbOld) === null, "un token en claro NO se devuelve", null);
+  check(activation.getSetting(dbOld, "box_paired_token") === null, "y además se BORRA de settings", null);
 
   // emparejamiento con código incorrecto desde client-link
   const badPair = await clientLink.pairAsBox(dbBox1, { hostUrl: URL_A, code: "NO-ES-EL-CODIGO", deviceName: "Caja 1" });
@@ -293,7 +348,7 @@ const codeA = activation.getActivationCode(dbA);
   activation.registerPairing(dbB, {
     deviceId: box3Id,
     deviceName: "Caja 3",
-    token: activation.getSetting(dbBox3, "box_paired_token"),
+    token: clientLink.readPairedToken(dbBox3),
     deviceType: "desktop_box",
     protocolVersion: protocol.PROTOCOL_VERSION,
     approved: 1,

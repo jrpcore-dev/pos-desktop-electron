@@ -400,6 +400,9 @@ app.on("ready", () => {
   // apertura también sea rápida (no bloquea el arranque).
   ensureDrawerWorker().catch(() => {});
 
+  // 3c · el token de emparejamiento de la caja se cifra con safeStorage.
+  clientLink.setSecretCipher(clientLink.safeStorageCipher());
+
   // Start local API server for mobile app
   (async () => {
     const result = await apiServer.startServer(db, 3456, { appVersion: app.getVersion() });

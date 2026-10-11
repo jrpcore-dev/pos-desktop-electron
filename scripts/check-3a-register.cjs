@@ -205,6 +205,13 @@ const cashRegisterRow = (db, id) =>
     const idxDiff = diffSets(before.indexes, after.indexes);
 
     // Cambios de esquema declarados por esta línea de entregas (3a.i + 3b).
+    // La BD real puede venir YA migrada (si la app ya corrió en esta máquina):
+    // entonces la migración no cambia nada y el diff esperado es vacío, pero
+    // el esquema resultante tiene que tener exactamente lo declarado.
+    const colDe = (cols, name) => (cols || []).some((c) => c.split("|")[0] === name);
+    const yaMigrada =
+      colDe(before.cols.box_sessions, "token_hash") &&
+      colDe(before.cols.cash_register, "device_id");
     const ESPERADO_B = [
       "+ cash_register.device_id|TEXT|nn=0|dflt=null",
       "+ tabla nueva box_sessions",
@@ -217,21 +224,42 @@ const cashRegisterRow = (db, id) =>
       "+ box_sessions.last_used_at|INTEGER|nn=0|dflt=null",
       "+ box_sessions.revoked|INTEGER|nn=1|dflt=0",
     ].sort();
+    const BOX_SESSIONS_COLS = [
+      "token_hash", "cashier_id", "device_id", "device_type",
+      "created_at", "expires_at", "last_used_at", "revoked",
+    ];
 
+    console.log(`  la BD real ya estaba migrada: ${yaMigrada}`);
     console.log("  diffs de esquema:");
     for (const c of colDiff) console.log("    " + c);
     for (const i of idxDiff.added) console.log("    + indice " + i);
     for (const i of idxDiff.removed) console.log("    - indice " + i);
     const visto = [...colDiff].sort();
+    const esperadoCol = yaMigrada ? [] : ESPERADO_B;
     check(
-      visto.length === ESPERADO_B.length && visto.every((v, i) => v === ESPERADO_B[i]),
-      "el esquema SOLO gana device_id + tabla box_sessions",
+      visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
+      yaMigrada
+        ? "la BD real ya estaba migrada: la migración no cambia NADA"
+        : "el esquema SOLO gana device_id + tabla box_sessions",
       JSON.stringify(colDiff),
     );
     check(
-      idxDiff.added.length === 1 && idxDiff.added[0] === "cash_register.idx_cash_register_device" && idxDiff.removed.length === 0,
-      "el esquema SOLO gana idx_cash_register_device",
+      yaMigrada
+        ? idxDiff.added.length === 0 && idxDiff.removed.length === 0
+        : idxDiff.added.length === 1 &&
+            idxDiff.added[0] === "cash_register.idx_cash_register_device" &&
+            idxDiff.removed.length === 0,
+      yaMigrada
+        ? "con la BD ya migrada tampoco aparecen índices nuevos"
+        : "el esquema SOLO gana idx_cash_register_device",
       JSON.stringify(idxDiff),
+    );
+    check(
+      colDe(after.cols.cash_register, "device_id") &&
+        BOX_SESSIONS_COLS.every((c) => colDe(after.cols.box_sessions, c)) &&
+        after.indexes.includes("cash_register.idx_cash_register_device"),
+      "el esquema terminado tiene device_id + box_sessions + su índice",
+      JSON.stringify({ box_sessions: after.cols.box_sessions }),
     );
     check(integrity === "ok", "integrity_check = ok", String(integrity));
     const nulls = rdb

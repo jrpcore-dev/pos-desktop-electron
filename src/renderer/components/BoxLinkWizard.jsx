@@ -23,6 +23,7 @@ const ERRORS = {
   PAIR_REVOKED: "El Host revocó esta caja. Pide un nuevo emparejamiento.",
   HOST_MISMATCH: "Hay otro Host en la red: la caja se niega a vincularse con dos.",
   NOT_PAIRED: "Esta caja no está activada para este negocio.",
+  TOKEN_UNAVAILABLE: "No se pudo guardar la credencial de la caja (falta cifrado con safeStorage). Reintenta.",
   NO_HOST_LINKED: "La caja todavía no tiene Host configurado.",
   INVALID_PAIR_INPUT: "Falta el Host o el código de activación.",
   PAIR_REJECTED: "El Host rechazó el emparejamiento.",

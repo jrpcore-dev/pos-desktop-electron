@@ -179,13 +179,18 @@ const registerPairing = (
   const list = Array.isArray(scopeList)
     ? scopeList
     : scopes.scopesForDeviceType(type);
-  // 3c · código único A,B,C… (sin la H, reservada al Host). El de la fila se
-  // conserva si el dispositivo ya existía.
+  // 3c · código único A,B,C… solo para CAJAS (desktop_box): la H queda
+  // reservada al Host y un celular no consume letra (usa el formato D-…).
+  // El de la fila se conserva si el dispositivo ya existía.
   const existingCode = db
     .prepare("SELECT device_code FROM paired_devices WHERE device_id = ?")
     .get(deviceId);
   const deviceCode =
-    existingCode && existingCode.device_code ? existingCode.device_code : nextDeviceCode(db);
+    existingCode && existingCode.device_code
+      ? existingCode.device_code
+      : type === scopes.DEVICE_TYPE.DESKTOP_BOX
+        ? nextDeviceCode(db)
+        : generateDeviceCode();
   db.prepare(`
     INSERT INTO paired_devices (device_id, device_name, paired_token_hash, cashier_id, activated_at, last_seen_at, device_code, device_type, scopes, protocol_version, approved)
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
