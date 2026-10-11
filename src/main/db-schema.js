@@ -1,9 +1,17 @@
 "use strict";
 
-// EXTRAÍDO VERBATIM de src/main/main.js (PASO 2): ensureColumn, createTables y
-// runMigrations, con `db` como primer argumento. El orden y el texto de las
-// sentencias son idénticos a los originales; las llamadas internas a
+// EXTRAÍDO de src/main/main.js (PASO 2): ensureColumn, createTables y
+// runMigrations, con `db` como primer argumento. Las llamadas internas a
 // ensureColumn(...) no cambian (se enlazan con el db recibido).
+//
+// PASO A (arreglo del bug de instalación nueva): dos sitios dejan de ser
+// verbatim respecto de main.js —
+//   1) sale_items se crea ya en su forma final (product_id nullable +
+//      stock_deducted), y
+//   2) la reconstrucción copia solo las columnas que existan en la tabla vieja.
+// Ambos cambios son necesarios para que una BD vacía no muera con
+// `SQLITE_ERROR: no such column: stock_deducted`. El resultado en bases
+// existentes no cambia (ver scripts/check-empty-db.cjs y el reporte del PASO A).
 //
 // OJO: runMigrations usa la función SQL `nomar(...)`, que main.js registra sobre
 // la conexión con db.function("nomar", nomarize) ANTES de llamarla. Cualquier
@@ -50,13 +58,21 @@ const createTables = (db) => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // PASO A: sale_items nace YA en su forma final. Antes se creaba con
+  // product_id NOT NULL y SIN stock_deducted, lo que disparaba la
+  // reconstrucción de más abajo en cada BD nueva y el INSERT...SELECT
+  // referenciaba una columna inexistente →
+  // `SQLITE_ERROR: no such column: stock_deducted` (instalación nueva que no
+  // arranca). Con product_id nullable la reconstrucción no se dispara.
   db.exec(`CREATE TABLE IF NOT EXISTS sale_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sale_id INTEGER NOT NULL REFERENCES sales(id),
-    product_id INTEGER NOT NULL REFERENCES products(id),
+    product_id INTEGER REFERENCES products(id),
+    product_name TEXT,
     quantity INTEGER NOT NULL,
     price_at_sale REAL NOT NULL,
-    discount_percent REAL DEFAULT 0
+    discount_percent REAL DEFAULT 0,
+    stock_deducted REAL DEFAULT 0
   )`);
 
   // Entrega 2c-B: idempotencia de escrituras por dispositivo (p. ej. ventas del
@@ -202,6 +218,23 @@ const createTables = (db) => {
   const siColsFresh = db.prepare("PRAGMA table_info(sale_items)").all();
   const pcol = siColsFresh.find((c) => c.name === "product_id");
   if (pcol && pcol.notnull === 1) {
+    // PASO A: copiar SOLO las columnas que existan en la tabla vieja. Una BD
+    // anterior a stock_deducted no la tiene, y el SELECT completo reventaba
+    // con `no such column: stock_deducted`. Las columnas que falten quedan
+    // con su DEFAULT (stock_deducted = 0), el mismo valor que pondría
+    // ensureColumn más abajo en una tabla sin reconstruir.
+    const siHave = siColsFresh.map((c) => c.name);
+    const siCopy = [
+      "id",
+      "sale_id",
+      "product_id",
+      "product_name",
+      "quantity",
+      "price_at_sale",
+      "discount_percent",
+      "stock_deducted",
+    ].filter((c) => siHave.includes(c));
+    const siList = siCopy.join(", ");
     db.pragma("foreign_keys = OFF");
     db.exec(`
       CREATE TABLE sale_items_v2 (
@@ -216,7 +249,7 @@ const createTables = (db) => {
       )
     `);
     db.exec(
-      `INSERT INTO sale_items_v2 (id, sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted) SELECT id, sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted FROM sale_items`,
+      `INSERT INTO sale_items_v2 (${siList}) SELECT ${siList} FROM sale_items`,
     );
     db.exec(`DROP TABLE sale_items`);
     db.exec(`ALTER TABLE sale_items_v2 RENAME TO sale_items`);

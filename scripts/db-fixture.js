@@ -7,15 +7,15 @@
  * main.js en el paso 2), es decir, con el MISMO código que la app ejecuta al
  * arrancar.
  *
- * ADVERTENCIA (bug preexistente, no introducido por la extracción): sobre una
- * BD vacía createTables() lanza `SQLITE_ERROR: no such column: stock_deducted`
- * porque crea `sale_items` SIN esa columna y acto seguido corre la
- * reconstrucción que la copia desde sale_items. Se reproduce idénticamente con
- * el código original de HEAD (main.js:313), por lo que no es una regresión.
- * Para poder construir el esquema, este fixture crea `sale_items` con la forma
- * LEGADA (product_id NOT NULL + stock_deducted), que es el camino de migración
- * real: la reconstrucción la sustituye por la tabla canónica (product_id
- * nullable). Es el mismo estado en el que está cualquier BD vieja del cliente.
+ * ARREGLO (PASO A): el bug de instalación nueva (`SQLITE_ERROR: no such
+ * column: stock_deducted` al arrancar sobre una BD vacía) ya está corregido en
+ * src/main/db-schema.js — sale_items se crea ahora en su forma final y la
+ * reconstrucción copia solo las columnas existentes, así que una BD vacía
+ * arranca sin errores (prueba permanente: scripts/check-empty-db.cjs).
+ * Este fixture mantiene a propósito la forma LEGADA (product_id NOT NULL +
+ * stock_deducted) para seguir ejercitando el camino de migración real: la
+ * reconstrucción sustituye la tabla por la canónica (product_id nullable).
+ * Es el mismo estado en el que está cualquier BD vieja del cliente.
  */
 const path = require("path");
 const fs = require("fs");
@@ -46,7 +46,7 @@ CREATE TABLE sale_items (
   stock_deducted REAL DEFAULT 0
 )`;
 
-// Secuencia idéntica a la de arranque de main.js (líneas 96-98, 388, 392, 720).
+// Secuencia idéntica a la de arranque de main.js (líneas 96-98, 113, 117, 130).
 const startupSequence = (db) => {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
