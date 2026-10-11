@@ -64,13 +64,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@electron-forge/cli": "^7.8.1",
-    "@electron-forge/maker-deb": "^7.8.1",
-    "@electron-forge/maker-rpm": "^7.8.1",
-    "@electron-forge/maker-zip": "^7.8.1",
-    "@electron-forge/plugin-auto-unpack-natives": "^7.8.1",
-    "@electron-forge/plugin-fuses": "^7.8.1",
-    "@electron-forge/plugin-vite": "^7.8.3",
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-deb": "^7.11.2",
+    "@electron-forge/maker-rpm": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
     "@electron-forge/publisher-github": "^7.11.2",
     "@electron/fuses": "^1.8.0",
     "@vitejs/plugin-react": "^5.0.0",
@@ -80,5 +80,13 @@
   },
   "engines": {
     "npm": ">=10.0.0"
+  },
+  "allowScripts": {
+    "electron@37.2.0": true,
+    "better-sqlite3@12.11.1": true,
+    "usb@1.9.2": true,
+    "esbuild@0.28.1": true,
+    "electron-winstaller@5.4.0": true,
+    "core-js@3.49.0": true
   }
 }
