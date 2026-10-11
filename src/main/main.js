@@ -144,6 +144,7 @@ if (!gotTheLock) {
 }
 
 const apiServer = require("./api-server");
+const clientLink = require("./client-link");
 const discovery = require("./discovery");
 
 let mainWin = null;
@@ -401,7 +402,7 @@ app.on("ready", () => {
 
   // Start local API server for mobile app
   (async () => {
-    const result = await apiServer.startServer(db, 3456);
+    const result = await apiServer.startServer(db, 3456, { appVersion: app.getVersion() });
     if (result.success) {
       await discovery.startDiscovery(3456);
       console.log(`Mobile API ready on port ${3456}`);
@@ -2552,6 +2553,31 @@ ipcMain.handle("rotate-activation-code", async () => {
     return { success: false, error: error.message };
   }
 });
+
+// ─── VÍNCULO CAJA ↔ HOST (Entrega 3c) ─────────────────────────────
+// El asistente del renderer aún no está conectado: estos canales exponen
+// la lógica de client-link.js y están clasificados en ipc-scopes.js.
+ipcMain.handle("box-discover-hosts", async (event, opts) =>
+  clientLink.discoverHosts(opts || {}),
+);
+
+ipcMain.handle("box-pair", async (event, { hostUrl, code, deviceName } = {}) =>
+  clientLink.pairAsBox(db, { hostUrl, code, deviceName }),
+);
+
+ipcMain.handle("box-wait-approval", async (event, opts) =>
+  clientLink.waitForApproval(db, opts || {}),
+);
+
+ipcMain.handle("box-link-status", async (event, opts) =>
+  clientLink.linkStatus(db, opts || {}),
+);
+
+ipcMain.handle("box-get-settings", async () => clientLink.getSettings(db));
+
+ipcMain.handle("box-save-settings", async (event, patch) =>
+  clientLink.saveSettings(db, patch || {}),
+);
 
 ipcMain.handle("get-server-status", () => {
   const api = apiServer.getStatus();

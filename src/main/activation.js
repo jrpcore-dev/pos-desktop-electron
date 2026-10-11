@@ -131,6 +131,34 @@ const isPaired = (db, deviceId, token) => {
 const generateDeviceCode = () =>
   `D-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
 
+// 3c · código de caja único: letras A, B, C… La H queda reservada al Host,
+// así que nunca se asigna a un dispositivo emparejado. Se asigna una sola vez
+// y no cambia al re-emparejar.
+const HOST_DEVICE_CODE = "H";
+const DEVICE_CODE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  .split("")
+  .filter((l) => l !== HOST_DEVICE_CODE);
+
+const listDeviceCodes = (db) =>
+  db
+    .prepare("SELECT device_code FROM paired_devices WHERE device_code IS NOT NULL")
+    .all()
+    .map((r) => r.device_code);
+
+const nextDeviceCode = (db) => {
+  const used = new Set(listDeviceCodes(db));
+  for (const letter of DEVICE_CODE_LETTERS) {
+    if (!used.has(letter)) return letter;
+  }
+  for (const letter of DEVICE_CODE_LETTERS) {
+    for (let n = 2; n < 100; n++) {
+      const code = `${letter}${n}`;
+      if (!used.has(code)) return code;
+    }
+  }
+  return generateDeviceCode();
+};
+
 const registerPairing = (
   db,
   {
@@ -151,6 +179,13 @@ const registerPairing = (
   const list = Array.isArray(scopeList)
     ? scopeList
     : scopes.scopesForDeviceType(type);
+  // 3c · código único A,B,C… (sin la H, reservada al Host). El de la fila se
+  // conserva si el dispositivo ya existía.
+  const existingCode = db
+    .prepare("SELECT device_code FROM paired_devices WHERE device_id = ?")
+    .get(deviceId);
+  const deviceCode =
+    existingCode && existingCode.device_code ? existingCode.device_code : nextDeviceCode(db);
   db.prepare(`
     INSERT INTO paired_devices (device_id, device_name, paired_token_hash, cashier_id, activated_at, last_seen_at, device_code, device_type, scopes, protocol_version, approved)
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
@@ -171,12 +206,13 @@ const registerPairing = (
     name,
     hashToken(token),
     cashierId || null,
-    generateDeviceCode(),
+    deviceCode,
     type,
     JSON.stringify(list),
     protocolVersion || null,
     isApproved,
   );
+  return { deviceId, deviceCode, approved: isApproved };
 };
 
 // Auto-emparejamiento silencioso durante la ventana de gracia: se llama solo
@@ -268,6 +304,9 @@ module.exports = {
   GRACE_DAYS,
   PAIR_MAX_ATTEMPTS,
   PAIR_RATE_WINDOW_MS,
+  HOST_DEVICE_CODE,
+  DEVICE_CODE_LETTERS,
+  nextDeviceCode,
   ensureSchema,
   generateCode,
   normalizeCode,

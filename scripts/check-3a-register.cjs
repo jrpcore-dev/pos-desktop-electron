@@ -2,8 +2,8 @@
 /*
  * ENTREGA 3a.i · caja por dispositivo.
  *
- *   A) golden del DDL: db-schema actual vs db-schema de HEAD (diff esperado =
- *      la columna cash_register.device_id + idx_cash_register_device);
+ *   A) golden del DDL: db-schema actual vs db-schema de HEAD (sin diff: 3a.i
+ *      y 3b ya están en HEAD y la 3c no toca el esquema);
  *   B) migración sobre una COPIA de la BD real: solo gana esa columna y ese
  *      índice, integrity_check ok, sin NULL y idempotente (2 pasadas);
  *   C) núcleo: host único idéntico a hoy, dos dispositivos con caja abierta a
@@ -147,9 +147,11 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas agrega (3a.i + 3b). Cualquier otra salida
-  // es un cambio de esquema no declarado y hace fallar el chequeo.
-  const DDL_AGREGADO = [/^CREATE TABLE box_sessions \(/];
+  // DDL que esta línea de entregas agrega. Con 3a.i y 3b ya commiteados, la
+  // 3c NO toca el esquema: cualquier statement añadido o borrado es un cambio
+  // de esquema no declarado y hace fallar el chequeo. (ESPERADO_B de más
+  // abajo sigue fijando el contenido: device_id + box_sessions.)
+  const DDL_AGREGADO = [];
   const DDL_BORRADO = [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
@@ -162,7 +164,7 @@ const cashRegisterRow = (db, id) =>
   );
   check(
     DDL_AGREGADO.every((re) => d.added.some((s) => re.test(s))),
-    "los statements agregados son los declarados (box_sessions de 3b)",
+    "los statements agregados son los declarados (3c no toca el DDL)",
   );
   check(
     ddlNew.filter((s) => !d.added.includes(s)).length === ddlOld.length - d.removed.length,

@@ -5,6 +5,7 @@ const activation = require("./activation");
 const scopeDefs = require("./scopes");
 const salesCore = require("./sales-core");
 const dbSchema = require("./db-schema");
+const protocol = require("./protocol");
 
 // Serialización canónica para la huella de idempotencia (Entrega 2c-B):
 // claves ordenadas en cada nivel, arrays en orden y tipos JSON normales, para
@@ -108,11 +109,13 @@ const makeRequireScope = (db) => (scope) => (req, res, next) => {
   return next();
 };
 
-const startServer = async (db, port = 3456) => {
+const startServer = async (db, port = 3456, { appVersion } = {}) => {
   if (server) return { success: true, port };
 
   const app = express();
   app.use(express.json());
+  // 3c · versión del build, para /api/activation/info.
+  const APP_VERSION = appVersion || process.env.npm_package_version || "0.0.0";
 
   // 3a.i · el gasto de recepción de inventario se pega a la caja del Host.
   const hostDeviceId = dbSchema.ensureHostDeviceId(db);
@@ -429,8 +432,58 @@ const startServer = async (db, port = 3456) => {
   }));
 
   // Health-check sin autenticación para el indicador de conexión del móvil.
+  // 3c · además declara el protocolo, para que una caja sepa si es compatible.
   app.get("/api/health", safe((req, res) => {
-    res.json({ success: true, ok: true });
+    res.json({
+      success: true,
+      ok: true,
+      protocol_version: protocol.PROTOCOL_VERSION,
+      min_supported: protocol.MIN_SUPPORTED,
+    });
+  }));
+
+  // 3c · identidad pública mínima del Host (sin secretos): la caja la usa para
+  // comprobar a qué Host se conectó antes de emparejar.
+  app.get("/api/activation/info", safe((req, res) => {
+    res.json({
+      success: true,
+      protocol_version: protocol.PROTOCOL_VERSION,
+      min_supported: protocol.MIN_SUPPORTED,
+      app_version: APP_VERSION,
+      host_device_id: hostDeviceId,
+    });
+  }));
+
+  // 3c · estado del emparejamiento de UN dispositivo (la caja que sondea).
+  // Se autentica solo con los headers de emparejamiento: no exige scopes de
+  // ventas, así que sirve estando pendiente. Un dispositivo REVOCADO sí puede
+  // leer su estado (para saber que fue revocado), pero nada más.
+  app.get("/api/activation/status", safe((req, res) => {
+    const deviceId = req.headers["x-device-id"];
+    const deviceToken = req.headers["x-device-token"];
+    const row =
+      deviceId && deviceToken
+        ? db
+            .prepare("SELECT paired_token_hash, device_code, approved, revoked FROM paired_devices WHERE device_id = ?")
+            .get(deviceId)
+        : null;
+    const okToken =
+      row && activation.timingSafe(activation.hashToken(deviceToken), row.paired_token_hash);
+    if (!okToken) {
+      return res.status(403).json({
+        success: false,
+        needsActivation: true,
+        error: "Este dispositivo no está activado para este negocio",
+      });
+    }
+    res.json({
+      success: true,
+      approved: Number(row.approved) === 1,
+      revoked: Number(row.revoked) === 1,
+      device_code: row.device_code || null,
+      host_device_id: hostDeviceId,
+      protocol_version: protocol.PROTOCOL_VERSION,
+    });
   }));
 
   // Escaneos/recepciones de hoy del cajero actual (origen App móvil).
@@ -638,7 +691,22 @@ const startServer = async (db, port = 3456) => {
     ) {
       return res.status(429).json({
         success: false,
+        code: "PAIR_RATE_LIMITED",
+        retry_after_ms: activation.PAIR_RATE_WINDOW_MS,
         error: "Demasiados intentos. Espera 15 minutos.",
+      });
+    }
+
+    // 3c · versión del protocolo: sin compatibilidad no se empareja. Comprueba
+    // antes de contar intentos: no es un error de código.
+    const proto = protocol.checkProtocol(protocolVersion || protocol_version);
+    if (!proto.ok) {
+      return res.status(426).json({
+        success: false,
+        code: proto.code,
+        error: proto.error,
+        protocol_version: protocol.PROTOCOL_VERSION,
+        min_supported: protocol.MIN_SUPPORTED,
       });
     }
 
@@ -659,7 +727,13 @@ const startServer = async (db, port = 3456) => {
       }
       e.count += 1;
       pairAttempts.set(key, e);
-      return res.status(401).json({ success: false, error: "Código de activación incorrecto" });
+      return res.status(401).json({
+        success: false,
+        code: "PAIR_CODE_INVALID",
+        attempts_left: Math.max(0, activation.PAIR_MAX_ATTEMPTS - e.count),
+        retry_after_ms: activation.PAIR_RATE_WINDOW_MS,
+        error: "Código de activación incorrecto",
+      });
     }
 
     pairAttempts.delete(key);
@@ -671,7 +745,7 @@ const startServer = async (db, port = 3456) => {
     const type = deviceType || scopeDefs.DEVICE_TYPE.MOBILE;
     const isDesktop = type === scopeDefs.DEVICE_TYPE.DESKTOP_BOX;
     const list = isDesktop ? [] : scopeDefs.scopesForDeviceType(type);
-    activation.registerPairing(db, {
+    const registered = activation.registerPairing(db, {
       deviceId,
       deviceName,
       token,
@@ -687,6 +761,10 @@ const startServer = async (db, port = 3456) => {
       pending: isDesktop,
       deviceType: type,
       scopes: list,
+      // 3c · la caja necesita su código y con qué Host se quedó emparejada.
+      device_code: registered ? registered.deviceCode : null,
+      host_device_id: hostDeviceId,
+      protocol_version: protocol.PROTOCOL_VERSION,
     });
   }));
 

@@ -71,6 +71,11 @@ const CLASSIFICATION = Object.freeze({
   "verify-cashier-pin": SCOPES.SYSTEM,
   "vendesaldo:status": SCOPES.SYSTEM,
 
+  // ── SYSTEM: vínculo caja ↔ Host (Entrega 3c) ───────────────────────────
+  "box-discover-hosts": SCOPES.SYSTEM,
+  "box-pair": SCOPES.SYSTEM,
+  "box-wait-approval": SCOPES.SYSTEM,
+
   // ── LOCAL_READ: lectura local ───────────────────────────────────────────
   "get-next-barcode": SCOPES.LOCAL_READ,
 
@@ -124,6 +129,8 @@ const CLASSIFICATION = Object.freeze({
   "search-products": SCOPES.HOST_READ,
   "vendesaldo:get-balance": SCOPES.HOST_READ,
   "vendesaldo:get-catalog": SCOPES.HOST_READ,
+  "box-link-status": SCOPES.HOST_READ,
+  "box-get-settings": SCOPES.HOST_READ,
 
   // ── HOST_WRITE: escritura de datos de negocio (rechazada en cliente) ─────
   "activate-catalog-product": SCOPES.HOST_WRITE,
@@ -175,6 +182,7 @@ const CLASSIFICATION = Object.freeze({
   "update-task": SCOPES.HOST_WRITE,
   "vendesaldo:recharge": SCOPES.HOST_WRITE,
   "vendesaldo:set-credentials": SCOPES.HOST_WRITE,
+  "box-save-settings": SCOPES.HOST_WRITE,
   "approve-device": SCOPES.HOST_WRITE,
   "reject-device": SCOPES.HOST_WRITE,
 });
