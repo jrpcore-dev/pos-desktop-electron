@@ -1,0 +1,700 @@
+{
+  "normal_two": {
+    "result": {
+      "success": true,
+      "warnings": []
+    },
+    "sales": [
+      {
+        "total": 50,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 0,
+        "conflict_detail": null,
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": 1,
+        "product_name": "Leche",
+        "quantity": 1,
+        "price_at_sale": 20,
+        "discount_percent": 0,
+        "stock_deducted": 1
+      },
+      {
+        "product_id": 2,
+        "product_name": "Pan",
+        "quantity": 2,
+        "price_at_sale": 15,
+        "discount_percent": 0,
+        "stock_deducted": 2
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": 1
+      },
+      {
+        "id": 2,
+        "stock": 8
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "insufficient_false": {
+    "result": {
+      "success": true,
+      "warnings": [
+        {
+          "code": "STOCK_NEGATIVE",
+          "product_id": 1,
+          "name": "Leche",
+          "available_before": 2,
+          "sold": 3,
+          "stock_after": -1
+        }
+      ]
+    },
+    "sales": [
+      {
+        "total": 60,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 1,
+        "conflict_detail": "[{\"code\":\"STOCK_NEGATIVE\",\"product_id\":1,\"name\":\"Leche\",\"available_before\":2,\"sold\":3,\"stock_after\":-1}]",
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": 1,
+        "product_name": "Leche",
+        "quantity": 3,
+        "price_at_sale": 20,
+        "discount_percent": 0,
+        "stock_deducted": 3
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": -1
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "insufficient_true": {
+    "result": {
+      "success": true,
+      "warnings": [
+        {
+          "code": "STOCK_NEGATIVE",
+          "product_id": 1,
+          "name": "Leche",
+          "available_before": 2,
+          "sold": 3,
+          "stock_after": -1
+        }
+      ]
+    },
+    "sales": [
+      {
+        "total": 60,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 1,
+        "conflict_detail": "[{\"code\":\"STOCK_NEGATIVE\",\"product_id\":1,\"name\":\"Leche\",\"available_before\":2,\"sold\":3,\"stock_after\":-1}]",
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": 1,
+        "product_name": "Leche",
+        "quantity": 3,
+        "price_at_sale": 20,
+        "discount_percent": 0,
+        "stock_deducted": 3
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": -1
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "concurrent_sequential": {
+    "result": {
+      "first": {
+        "success": true,
+        "warnings": []
+      },
+      "second": {
+        "success": true,
+        "warnings": [
+          {
+            "code": "STOCK_NEGATIVE",
+            "product_id": 1,
+            "name": "Leche",
+            "available_before": 1,
+            "sold": 2,
+            "stock_after": -1
+          }
+        ]
+      }
+    },
+    "state": {
+      "sales": [
+        {
+          "total": 40,
+          "payment_method": "cash",
+          "discount_total": 0,
+          "cashier_name": "Ana",
+          "status": "completado",
+          "stock_conflict": 0,
+          "conflict_detail": null,
+          "customer_id": null
+        },
+        {
+          "total": 40,
+          "payment_method": "cash",
+          "discount_total": 0,
+          "cashier_name": "Beto",
+          "status": "completado",
+          "stock_conflict": 1,
+          "conflict_detail": "[{\"code\":\"STOCK_NEGATIVE\",\"product_id\":1,\"name\":\"Leche\",\"available_before\":1,\"sold\":2,\"stock_after\":-1}]",
+          "customer_id": null
+        }
+      ],
+      "items": [
+        {
+          "product_id": 1,
+          "product_name": "Leche",
+          "quantity": 2,
+          "price_at_sale": 20,
+          "discount_percent": 0,
+          "stock_deducted": 2
+        },
+        {
+          "product_id": 1,
+          "product_name": "Leche",
+          "quantity": 2,
+          "price_at_sale": 20,
+          "discount_percent": 0,
+          "stock_deducted": 2
+        }
+      ],
+      "products": [
+        {
+          "id": 1,
+          "stock": -1
+        },
+        {
+          "id": 2,
+          "stock": 10
+        },
+        {
+          "id": 3,
+          "stock": 5
+        },
+        {
+          "id": 4,
+          "stock": 100
+        },
+        {
+          "id": 5,
+          "stock": 40
+        }
+      ]
+    }
+  },
+  "nonexistent_false": {
+    "result": {
+      "success": false,
+      "code": "PRODUCT_NOT_FOUND",
+      "error": "Producto no encontrado (id 999)"
+    },
+    "sales": [],
+    "items": [],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "nonexistent_true": {
+    "result": {
+      "success": false,
+      "code": "PRODUCT_NOT_FOUND",
+      "error": "Producto no encontrado (id 999)"
+    },
+    "sales": [],
+    "items": [],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "qty_zero": {
+    "result": {
+      "success": false,
+      "code": "INVALID_QUANTITY",
+      "error": "Cantidad inválida"
+    },
+    "sales": [],
+    "items": [],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "qty_negative": {
+    "result": {
+      "success": false,
+      "code": "INVALID_PAYLOAD",
+      "error": "Total inválido"
+    },
+    "sales": [],
+    "items": [],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "qty_decimal_nonweight": {
+    "result": {
+      "success": false,
+      "code": "INVALID_QUANTITY",
+      "error": "Cantidad inválida para \"Leche\""
+    },
+    "sales": [],
+    "items": [],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "weight_decimal": {
+    "result": {
+      "success": true,
+      "warnings": []
+    },
+    "sales": [
+      {
+        "total": 135,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 0,
+        "conflict_detail": null,
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": 3,
+        "product_name": "Queso",
+        "quantity": 1.5,
+        "price_at_sale": 90,
+        "discount_percent": 0,
+        "stock_deducted": 1.5
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 3.5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "box_item": {
+    "result": {
+      "success": true,
+      "warnings": []
+    },
+    "sales": [
+      {
+        "total": 240,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 0,
+        "conflict_detail": null,
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": 4,
+        "product_name": "Caja Refresco",
+        "quantity": 1,
+        "price_at_sale": 240,
+        "discount_percent": 0,
+        "stock_deducted": 12
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 88
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "manual_item": {
+    "result": {
+      "success": true,
+      "warnings": []
+    },
+    "sales": [
+      {
+        "total": 33,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 0,
+        "conflict_detail": null,
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": null,
+        "product_name": "Producto manual",
+        "quantity": 1,
+        "price_at_sale": 33,
+        "discount_percent": 0,
+        "stock_deducted": 0
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": 2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "multiline_same_product": {
+    "result": {
+      "success": true,
+      "warnings": [
+        {
+          "code": "STOCK_NEGATIVE",
+          "product_id": 1,
+          "name": "Leche",
+          "available_before": 0,
+          "sold": 2,
+          "stock_after": -2
+        }
+      ]
+    },
+    "sales": [
+      {
+        "total": 40,
+        "payment_method": "cash",
+        "discount_total": 0,
+        "cashier_name": "Ana",
+        "status": "completado",
+        "stock_conflict": 1,
+        "conflict_detail": "[{\"code\":\"STOCK_NEGATIVE\",\"product_id\":1,\"name\":\"Leche\",\"available_before\":0,\"sold\":2,\"stock_after\":-2}]",
+        "customer_id": null
+      }
+    ],
+    "items": [
+      {
+        "product_id": 1,
+        "product_name": "Leche",
+        "quantity": 1,
+        "price_at_sale": 20,
+        "discount_percent": 0,
+        "stock_deducted": 1
+      },
+      {
+        "product_id": 1,
+        "product_name": "Leche",
+        "quantity": 1,
+        "price_at_sale": 20,
+        "discount_percent": 0,
+        "stock_deducted": 1
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "stock": -2
+      },
+      {
+        "id": 2,
+        "stock": 10
+      },
+      {
+        "id": 3,
+        "stock": 5
+      },
+      {
+        "id": 4,
+        "stock": 100
+      },
+      {
+        "id": 5,
+        "stock": 40
+      }
+    ]
+  },
+  "cancel_restore": {
+    "result": {
+      "afterSale": {
+        "success": true,
+        "warnings": [
+          {
+            "code": "STOCK_NEGATIVE",
+            "product_id": 1,
+            "name": "Leche",
+            "available_before": 2,
+            "sold": 3,
+            "stock_after": -1
+          }
+        ]
+      },
+      "stockAfterSale": -1,
+      "stockAfterCancel": 2
+    },
+    "state": {
+      "sales": [
+        {
+          "total": 60,
+          "payment_method": "cash",
+          "discount_total": 0,
+          "cashier_name": "Ana",
+          "status": "completado",
+          "stock_conflict": 1,
+          "conflict_detail": "[{\"code\":\"STOCK_NEGATIVE\",\"product_id\":1,\"name\":\"Leche\",\"available_before\":2,\"sold\":3,\"stock_after\":-1}]",
+          "customer_id": null
+        }
+      ],
+      "items": [
+        {
+          "product_id": 1,
+          "product_name": "Leche",
+          "quantity": 3,
+          "price_at_sale": 20,
+          "discount_percent": 0,
+          "stock_deducted": 3
+        }
+      ],
+      "products": [
+        {
+          "id": 1,
+          "stock": 2
+        },
+        {
+          "id": 2,
+          "stock": 10
+        },
+        {
+          "id": 3,
+          "stock": 5
+        },
+        {
+          "id": 4,
+          "stock": 100
+        },
+        {
+          "id": 5,
+          "stock": 40
+        }
+      ]
+    }
+  }
+}
