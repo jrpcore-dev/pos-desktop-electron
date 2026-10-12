@@ -150,6 +150,7 @@ const apiServer = require("./api-server");
 const clientLink = require("./client-link");
 const discovery = require("./discovery");
 const replicaEngine = require("./replica-engine");
+const replicaLive = require("./replica-live");
 
 let mainWin = null;
 let isQuitting = false;
@@ -409,6 +410,10 @@ app.on("ready", async () => {
 
   // 3c · el token de emparejamiento de la caja se cifra con safeStorage.
   clientLink.setSecretCipher(clientLink.safeStorageCipher());
+
+  // 3f · si esta caja ya tenía la réplica aplicada, retoma el delta desde donde
+  // se quedó. Va DESPUÉS del cipher porque necesita leer el token de emparejar.
+  startLiveReplica();
 
   // Start local API server for mobile app
   (async () => {
@@ -2620,6 +2625,21 @@ const emitDbChanged = (tables = [], ids = {}) => {
   }, 150);
 };
 
+// 3f · arranque del bucle de réplica en vivo. Idempotente: si ya corre para
+// esta BD no abre una segunda conexión compitiendo por el mismo cursor. Sólo
+// arranca con la réplica ya aplicada; antes no hay delta que aplicar y el
+// snapshot manda.
+const startLiveReplica = () => {
+  if (!replicaEngine.state(db).sync_completed) return false;
+  replicaLive.startLiveSync({
+    db,
+    onChanged: emitDbChanged,
+    // Tras un resync entero cambiaron TODAS las tablas: se avisa de todas.
+    onResync: () => emitDbChanged(replicaEngine.SWAP_ORDER, {}),
+  });
+  return true;
+};
+
 ipcMain.handle("replica-status", async () => replicaEngine.state(db));
 
 ipcMain.handle("replica-sync-now", async (event, opts) => {
@@ -2629,6 +2649,8 @@ ipcMain.handle("replica-sync-now", async (event, opts) => {
     const result = await replicaEngine.downloadSnapshot(db, opts || {});
     if (result && result.success) {
       emitDbChanged(result.tables || [], {});
+      // De aquí en adelante la caja sigue sola: los deltas ya no pide nada.
+      startLiveReplica();
     }
     return result;
   }

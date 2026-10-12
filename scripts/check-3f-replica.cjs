@@ -416,6 +416,136 @@ const tombstones = (db, tbl, rowId) =>
       "con limit alto se devuelven todas en una sola página",
       `${all.data.tombstones.length} vs ${totalT}`,
     );
+
+    // ─── E · bucle de réplica en vivo (SSE + delta + reconexión) ───────────
+    console.log("\n=== 3f E · el bucle en vivo de la caja ===");
+    const replicaEngine = require(path.join(REPO, "src/main/replica-engine.js"));
+    const replicaLive = require(path.join(REPO, "src/main/replica-live.js"));
+    const clientLink = require(path.join(REPO, "src/main/client-link.js"));
+
+    // El harness no tiene safeStorage, pero el token tiene que guardar y leer
+    // por la MISMA ruta que usa la app: `enc:v1:` + cipher.
+    clientLink.setSecretCipher({
+      encrypt: (s) => Buffer.from(String(s), "utf8").toString("base64"),
+      decrypt: (s) => Buffer.from(String(s), "base64").toString("utf8"),
+    });
+
+    const boxDb = fixture.createFileDb(path.join(TMP, "box-live.db"));
+    const boxId2 = "box-live-001";
+    const boxToken2 = "tok-live";
+    activation.setSetting(boxDb, clientLink.SETTINGS.HOST_URL, URL);
+    activation.setSetting(boxDb, clientLink.SETTINGS.BOX_DEVICE_ID, boxId2);
+    const saved = clientLink.savePairedToken(boxDb, boxToken2);
+    check(saved.persisted !== false, "la caja guarda su token cifrado", JSON.stringify(saved));
+    check(
+      clientLink.readPairedToken(boxDb) === boxToken2,
+      "…y lo vuelve a leer por la misma ruta",
+      String(clientLink.readPairedToken(boxDb)),
+    );
+    dbA
+      .prepare(
+        "INSERT OR REPLACE INTO paired_devices (device_id, device_name, paired_token_hash, cashier_id, activated_at, device_code, device_type, approved, revoked) VALUES (?,?,?,1,strftime('%s','now')*1000,'B','desktop_box',1,0)",
+      )
+      .run(boxId2, "Caja viva", activation.hashToken(boxToken2));
+
+    const waitFor = async (fn, ms = 8000) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        if (fn()) return true;
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      return fn();
+    };
+
+    const snap = await replicaEngine.downloadSnapshot(boxDb);
+    check(snap.success, "descarga inicial de la caja OK", JSON.stringify(snap).slice(0, 180));
+    check(replicaEngine.state(boxDb).sync_completed, "sync_completed = 1: ya puede vender");
+    check(
+      replicaLive.liveState(boxDb).running === false,
+      "el bucle NO corre hasta que hay réplica aplicada",
+      JSON.stringify(replicaLive.liveState(boxDb)),
+    );
+
+    // El aviso de `db-changed` es el mismo que emite main.js al renderer; aquí
+    // se captura directamente para comprobar que el bucle entrega tablas/ids.
+    const alerts = [];
+    const stopLive = replicaLive.startLiveSync({
+      db: boxDb,
+      onChanged: (tables, ids) => alerts.push({ tables, ids }),
+    });
+
+    check(
+      await waitFor(() => replicaLive.liveState(boxDb).state === "connected"),
+      "el bucle se conecta al SSE del Host",
+      JSON.stringify(replicaLive.liveState(boxDb)),
+    );
+
+    // Escritura en el Host: el producto tiene que aparecer en la caja sin que
+    // nadie la sondee ni se toque ninguna pantalla.
+    dbA
+      .prepare("INSERT INTO products (barcode, name, price, stock, is_active) VALUES ('LIVE-1','Producto vivo', 99, 3, 1)")
+      .run();
+    const liveId = dbA.prepare("SELECT id FROM products WHERE barcode='LIVE-1'").get().id;
+    check(
+      await waitFor(() => boxDb.prepare("SELECT 1 AS x FROM products WHERE barcode='LIVE-1'").get() !== undefined),
+      "el INSERT del Host aparece en la caja en < 8 s sin sondeo",
+      String(boxDb.prepare("SELECT COUNT(*) c FROM products WHERE barcode='LIVE-1'").get().c),
+    );
+    check(alerts.length > 0, "el bucle entregó el aviso de `db-changed`", JSON.stringify(alerts.slice(0, 2)));
+    check(
+      alerts.some((e) => e.tables.includes("products")),
+      "…y el aviso nombra la tabla products",
+      JSON.stringify(alerts.map((e) => e.tables)),
+    );
+    check(
+      alerts.some((e) => e.ids.products && e.ids.products.includes(String(liveId))),
+      "…con el id concreto de la fila",
+      JSON.stringify(alerts.map((e) => e.ids)),
+    );
+
+    // El borrado también viaja.
+    dbA.prepare("DELETE FROM products WHERE id = ?").run(liveId);
+    check(
+      await waitFor(() => boxDb.prepare("SELECT 1 AS x FROM products WHERE barcode='LIVE-1'").get() === undefined),
+      "el DELETE del Host también llega",
+      String(boxDb.prepare("SELECT COUNT(*) c FROM products WHERE barcode='LIVE-1'").get().c),
+    );
+
+    // Reconexión: se mata el servidor, se escribe A CIEGAS y se vuelve a
+    // arrancar. El cursor persiste, así que el hueco se recupera entero.
+    await apiServer.stopServer();
+    dbA
+      .prepare("INSERT INTO products (barcode, name, price, stock, is_active) VALUES ('LIVE-2','Tras la caida', 1, 1, 1)")
+      .run();
+    await new Promise((r) => setTimeout(r, 250));
+    const restarted = await apiServer.startServer(dbA, PORT, { appVersion: "9.9.9-check" });
+    check(restarted.success, "el Host vuelve a arrancar tras caer", JSON.stringify(restarted));
+    check(
+      await waitFor(() => boxDb.prepare("SELECT 1 AS x FROM products WHERE barcode='LIVE-2'").get() !== undefined, 20000),
+      "la caja se reconecta sola y recupera el cambio hecho sin Host",
+      JSON.stringify(replicaLive.liveState(boxDb)),
+    );
+    check(
+      Number(replicaLive.liveState(boxDb).reconnects) > 0,
+      "el contador de reconexiones quedó registrado",
+      JSON.stringify(replicaLive.liveState(boxDb)),
+    );
+
+    // Observación (sin aserción): la caja tiene los MISMOS triggers que el
+    // Host, así que cada fila aplicada también escribe en SU change_log. No lo
+    // lee nadie, pero conviene ver cuánto pesa.
+    const boxLog = boxDb.prepare("SELECT COUNT(*) c FROM change_log").get().c;
+    const boxTomb = boxDb.prepare(`SELECT COUNT(*) c FROM ${dbSchema.TOMBSTONE_TABLE}`).get().c;
+    console.log(`    · la caja acumula ${boxLog} eventos y ${boxTomb} tumba-sigilos propios`);
+
+    check(replicaLive.liveState(boxDb).running === true, "el bucle está vivo mientras corre");
+    stopLive();
+    check(
+      replicaLive.liveState(boxDb).state === "stopped" && replicaLive.liveState(boxDb).running === false,
+      "stop() lo apaga y lo retira de la lista de activos",
+      JSON.stringify(replicaLive.liveState(boxDb)),
+    );
+    boxDb.close();
   } catch (err) {
     fail++;
     console.log("  FAIL excepción no controlada :: " + (err && err.stack));

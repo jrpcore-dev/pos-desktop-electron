@@ -307,6 +307,7 @@ module.exports = {
   ensureStaging,
   clearStaging,
   swap,
+  getJson,
   downloadSnapshot,
   applyChanges,
   resetSync,

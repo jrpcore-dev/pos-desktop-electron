@@ -147,35 +147,23 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas cambia respecto a HEAD. La 3e ya está
-  // commiteada; éste es el delta SIN commitear de la 3f:
+  // DDL que esta línea de entregas cambia respecto a HEAD. La 3f.i ya está
+  // commiteada, así que hoy no hay NINGÚN cambio de esquema sin commitear:
+  // éste es el estado correcto, y si vuelve a salir un statement de aquí es
+  // que alguien tocó el esquema y no lo declaró.
+  //
+  // Lo que la 3f.i dejó (ya dentro de HEAD, sólo para que conste):
   //   · las 8 tablas de entidad ganan `updated_at` —al hacer ALTER, SQLite
-  //     reescribe su `CREATE TABLE`, así que cuentan como alta Y baja—,
+  //     reescribe su `CREATE TABLE`, así que contaron como alta Y baja—,
   //   · aparece la tumba-sigilo `replica_tombstones`,
-  //   · los 28 triggers que ya había reescriben su cuerpo (tumba-sigilo +
+  //   · los 28 triggers que ya había reescribieron su cuerpo (tumba-sigilo +
   //     cláusula `NEW.updated_at IS OLD.updated_at`),
   //   · y son NUEVOS los 8 `*_touch`, el trigger con guardia propio que
-  //     refresca `updated_at` sólo cuando de verdad cambia: sólo alta.
+  //     refresca `updated_at` sólo cuando de verdad cambia.
+  // Total: 45 altas / 36 bajas. La 3f.ii (bucle en vivo) no toca el esquema.
   // Cualquier statement no declarado (por arriba o por abajo) rompe la prueba.
-  const OLD_TRIGGER_NAMES = [
-    ...dbSchema.REPLICATED_TABLES.flatMap((t) =>
-      ["insert", "update", "delete"].map((op) => `trg_change_log_${t}_${op}`),
-    ),
-    "trg_change_log_products_leave",
-  ];
-  const TOUCH_TRIGGER_NAMES = dbSchema.UPDATED_AT_TABLES.map(
-    (t) => `trg_change_log_${t}_touch`,
-  );
-  const DDL_AGREGADO = [
-    ...dbSchema.UPDATED_AT_TABLES.map((t) => new RegExp(`^CREATE TABLE ${t} \\(`)),
-    /^CREATE TABLE replica_tombstones/,
-    ...OLD_TRIGGER_NAMES.map((n) => new RegExp(`CREATE TRIGGER ${n} `)),
-    ...TOUCH_TRIGGER_NAMES.map((n) => new RegExp(`CREATE TRIGGER ${n} `)),
-  ];
-  const DDL_BORRADO = [
-    ...dbSchema.UPDATED_AT_TABLES.map((t) => new RegExp(`^CREATE TABLE ${t} \\(`)),
-    ...OLD_TRIGGER_NAMES.map((n) => new RegExp(`CREATE TRIGGER ${n} `)),
-  ];
+  const DDL_AGREGADO = [];
+  const DDL_BORRADO = [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
