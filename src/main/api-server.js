@@ -6,6 +6,7 @@ const scopeDefs = require("./scopes");
 const salesCore = require("./sales-core");
 const dbSchema = require("./db-schema");
 const protocol = require("./protocol");
+const { createChangeStream } = require("./change-stream");
 
 // Serialización canónica para la huella de idempotencia (Entrega 2c-B):
 // claves ordenadas en cada nivel, arrays en orden y tipos JSON normales, para
@@ -41,6 +42,9 @@ const nomarize = (s) =>
     .toLowerCase();
 
 let server = null;
+// 3e · túnel SSE Host → caja. Vive con el servidor: startServer lo crea y
+// stopServer lo cierra, así que no puede quedar un sonda huérfano entre pruebas.
+let changeStream = null;
 // 3b · throttle de last_used_at: se escribe como mucho una vez cada 5 minutos.
 const LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
 const authAttempts = new Map(); // { cashierId: { count, windowStart } }
@@ -532,6 +536,13 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
   // Qué columnas salen lo decide un solo sitio: db-schema.replicaPlan. Los
   // costos NO se replican (quedan 0 en la caja) y los PINs tampoco.
   const replicaPlan = dbSchema.replicaPlan(db);
+  // 3e · «¿esta fila está en el conjunto replicable?». Se deriva del mismo
+  // descriptor que los triggers, así que el filtro del snapshot, el de
+  // /changes y el del log son siempre idénticos.
+  const replicaWhere = (tbl, ref) => {
+    const f = dbSchema.replicaFilterSql(tbl, ref);
+    return f ? ` AND ${f}` : "";
+  };
   const maxSeq = () =>
     db.prepare(`SELECT COALESCE(MAX(seq),0) s FROM ${dbSchema.CHANGE_LOG_TABLE}`).get().s;
   // Primer seq que aún existe en el log. Sólo la compactación crea un hueco:
@@ -545,7 +556,11 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
       if (!dbSchema.REPLICATED_SETTINGS_KEYS.includes(rowId)) return null;
       return db.prepare(`SELECT key, value FROM settings WHERE key = ?`).get(rowId) || null;
     }
-    return db.prepare(`SELECT ${cols.join(", ")} FROM ${tbl} WHERE id = ?`).get(rowId) || null;
+    return (
+      db
+        .prepare(`SELECT ${cols.join(", ")} FROM ${tbl} WHERE id = ?${replicaWhere(tbl, tbl)}`)
+        .get(rowId) || null
+    );
   };
   // Cursor de snapshot: `settings` pagina por su `key` (texto) y sólo entrega
   // las claves replicadas (el resto —tokens, códigos— nunca sale del Host).
@@ -562,10 +577,20 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
       return { rows, next: rows.length ? rows[rows.length - 1].key : String(cursor || "") };
     }
     const rows = db
-      .prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`)
+      .prepare(
+        `SELECT ${cols.join(", ")} FROM ${table} WHERE id > ?${replicaWhere(table, table)} ORDER BY id LIMIT ?`,
+      )
       .all(Number(cursor) || 0, limit);
     return { rows, next: rows.length ? rows[rows.length - 1].id : Number(cursor) || 0 };
   };
+
+  // 3e · túnel SSE. Arranca con el servidor y se cierra con él.
+  changeStream = createChangeStream({
+    db,
+    changeLogTable: dbSchema.CHANGE_LOG_TABLE,
+    getSetting: (key) => activation.getSetting(db, key),
+  });
+  changeStream.start();
 
   // Descarga inicial por tabla: cursor + snapshot_seq estable (la caja reenvía
   // el seq de la primera página para que el corte no se desplace al paginar).
@@ -583,6 +608,8 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     const cursor = req.query.cursor === undefined ? 0 : req.query.cursor;
     const snapshotSeq = Number(req.query.snapshot_seq) || maxSeq();
     const { rows, next } = pageOf(table, cursor, limit);
+    // El total tiene que contar lo que realmente se entrega: con 3e, los
+    // productos de catálogo no viajan, así que no cuentan.
     const total =
       table === "settings"
         ? db
@@ -592,7 +619,7 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
                 .join(",")})`,
             )
             .get(...dbSchema.REPLICATED_SETTINGS_KEYS).c
-        : db.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c;
+        : db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE 1=1${replicaWhere(table, table)}`).get().c;
     res.json({
       success: true,
       table,
@@ -648,6 +675,36 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
       snapshot_seq: maxSeq(),
     });
   }));
+
+  // 3e · Túnel de eventos. La caja se conecta una vez y recibe el pulso del
+  // Host sin sondear; si se cae, `EventSource` reconecta solo y reenvía
+  // `Last-Event-ID`, que es todo el estado que hace falta para reanudar.
+  app.get("/api/events", protectBox(scopeDefs.SCOPE.EVENTS_SUBSCRIBE), (req, res) => {
+    // Si el dispositivo no tiene el scope, protectBox ya respondió 403. Llegar
+    // aquí significa caja emparejada y aprobada.
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      // `no-transform` evita que algún proxy comprima o retenga el flujo.
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      // nginx y compañía bufferizan por defecto: esto les dice que pasen el
+      // flujo tal cual.
+      "X-Accel-Buffering": "no",
+    });
+    // Sin Nagle: los frames son pequeños y el retardo de 40 ms se nota en
+    // tiempo real.
+    res.socket?.setNoDelay?.(true);
+    res.socket?.setKeepAlive?.(true);
+    res.flushHeaders?.();
+
+    // `Last-Event-ID` es la forma estándar; `?since=` cubre a los clientes que
+    // no sean EventSource (una caja que quiera apuntarlo a mano).
+    const lastEventId = req.headers["last-event-id"];
+    changeStream.subscribe({ res, lastEventId, since: req.query.since });
+    // Importante: Express no debe cerrar la petición al terminar el handler.
+    // No llamamos a res.json ni a next(): el flujo vive hasta que la caja se
+    // desconecta (dispara `close` y el cliente sale del conjunto).
+  });
 
   // Escaneos/recepciones de hoy del cajero actual (origen App móvil).
   app.get("/api/stock/history/today", protect(scopeDefs.SCOPE.STOCK_READ), safe((req, res) => {
@@ -999,6 +1056,12 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
 };
 
 const stopServer = () => {
+  // 3e · el túnel va primero: cerrar el socket sin avisar dejaría a las cajas
+  // colgadas esperando frames.
+  if (changeStream) {
+    changeStream.stop();
+    changeStream = null;
+  }
   if (server) {
     server.close();
     server = null;
@@ -1010,6 +1073,23 @@ const stopServer = () => {
 const getStatus = () => ({
   running: server !== null,
   port: server ? server.address().port : null,
+  // 3e · cuántas cajas están escuchando y si hay un import a medias.
+  events: replicaStreamStats(),
 });
 
-module.exports = { startServer, stopServer, getStatus, makeRequireScope };
+// 3e · ganchos que usa el proceso de Host (main.js) sobre el túnel SSE.
+// `hostBusy` / `hostReady` marcan un import masivo. Son no-op si el servidor
+// no corre, para que el resto del código no tenga que comprobarlo.
+const hostBusy = (reason) => changeStream?.hostBusy(reason);
+const hostReady = (reason) => changeStream?.hostReady(reason);
+const replicaStreamStats = () => (changeStream ? changeStream.stats() : null);
+
+module.exports = {
+  startServer,
+  stopServer,
+  getStatus,
+  makeRequireScope,
+  hostBusy,
+  hostReady,
+  replicaStreamStats,
+};

@@ -731,30 +731,171 @@ const REPLICATED_SETTINGS_KEYS = [
   "sale_without_stock",
   "pin_for_void",
 ];
+// 3e · Fila replicable por tabla (fuente única de verdad). Las tablas no
+// listadas replican TODAS sus filas. Lo consumen por igual los triggers, el
+// snapshot y /api/replica/changes, así que esos tres caminos no pueden desviarse.
+//
+// `products` se decide por `is_active`: es EXACTAMENTE el criterio con el que
+// la propia app pregunta «¿se vende esto?» (búsqueda, escaneo y listados usan
+// `is_active = 1`). El catálogo `bd sku.xlsx` queda fuera solo porque nadie lo
+// puede vender, no porque sea «catálogo»: excluir por `is_catalog` se lleva
+// por delante 4 productos que están activos Y también constan en el XLSX.
+const REPLICATED_FILTERS = Object.freeze({
+  // `nullValue` separa «nulo» de «valor buscado»: un `is_active` NULL no lo
+  // devuelve ninguna consulta de venta, así que tampoco viaja.
+  products: Object.freeze({ column: "is_active", value: 1, nullValue: 0 }),
+});
+
+// Condición SQL sobre la fila referenciada (`NEW`, `OLD` o el nombre de la
+// tabla). Cadena vacía si esa tabla no tiene filtro.
+const replicaFilterSql = (tbl, ref) => {
+  const f = REPLICATED_FILTERS[tbl];
+  if (!f) return "";
+  return `COALESCE(${ref}.${f.column}, ${f.nullValue}) = ${f.value}`;
+};
 
 const changeLogNow = "CAST(strftime('%s','now') AS INTEGER) * 1000";
 const sqlList = (items) => items.map((k) => `'${String(k).replace(/'/g, "''")}'`).join(",");
 
-// Trigger de una tabla/operación. `WHEN` filtra el ruido: los PINs de cajero
-// y las claves de settings que la caja no usa no generan eventos.
+// Clave de fila en el log: `key` para settings, `id` para el resto.
+const changeLogRowId = (tbl, ref) => `CAST(${ref}.${tbl === "settings" ? "key" : "id"} AS TEXT)`;
+
+// Trigger de una tabla/operación. `WHEN` filtra el ruido: los PINs de cajero,
+// las claves de settings que la caja no usa y las filas que no están en el
+// conjunto replicable no generan eventos.
 const changeLogTrigger = (tbl, op) => {
-  const isSettings = tbl === "settings";
-  const rowId = (ref) => `CAST(${ref}.${isSettings ? "key" : "id"} AS TEXT)`;
-  let when = "";
+  const whens = [];
   if (tbl === "cashiers" && op === "UPDATE") {
     const cols = REPLICATED_CASHIER_COLUMNS.filter((c) => c !== "id");
-    when = `WHEN ${cols.map((c) => `NEW.${c} IS NOT OLD.${c}`).join(" OR ")}`;
-  } else if (isSettings) {
-    when = `WHEN ${op === "DELETE" ? "OLD" : "NEW"}.key IN (${sqlList(REPLICATED_SETTINGS_KEYS)})`;
+    whens.push(cols.map((c) => `NEW.${c} IS NOT OLD.${c}`).join(" OR "));
+  } else if (tbl === "settings") {
+    whens.push(`${op === "DELETE" ? "OLD" : "NEW"}.key IN (${sqlList(REPLICATED_SETTINGS_KEYS)})`);
   }
+  const filter = replicaFilterSql(tbl, op === "DELETE" ? "OLD" : "NEW");
+  if (filter) whens.push(filter);
+  const when = whens.length ? `WHEN ${whens.join(" AND ")}` : "";
   const source = op === "DELETE" ? "OLD" : "NEW";
   return (
     `CREATE TRIGGER IF NOT EXISTS trg_change_log_${tbl}_${op.toLowerCase()} ` +
     `AFTER ${op} ON ${tbl}\n${when}\nBEGIN\n` +
     `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
-    `VALUES ('${tbl}', ${rowId(source)}, '${op === "DELETE" ? "delete" : "upsert"}', ${changeLogNow});\n` +
+    `VALUES ('${tbl}', ${changeLogRowId(tbl, source)}, '${op === "DELETE" ? "delete" : "upsert"}', ${changeLogNow});\n` +
     `END`
   );
+};
+
+// 3e · Trigger de «salida del conjunto replicable». Un `WHEN` simple no basta
+// para el UPDATE: la misma fila puede entrar (0 → 1, producto activado) o
+// salir (1 → 0, desactivado). El trigger normal cubre la entrada; éste cubre la
+// salida y la entrega como `delete` para que la caja la quite. Reutiliza
+// `replicaFilterSql` en vez de recalcular la condición: si no, este trigger y
+// los otros tres podrían discrepar sobre qué filas viajan.
+const changeLogLeaveTrigger = (tbl) => {
+  const inside = (ref) => replicaFilterSql(tbl, ref);
+  return (
+    `CREATE TRIGGER IF NOT EXISTS trg_change_log_${tbl}_leave ` +
+    `AFTER UPDATE ON ${tbl}\n` +
+    `WHEN ${inside("OLD")} AND NOT ${inside("NEW")}\nBEGIN\n` +
+    `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
+    `VALUES ('${tbl}', ${changeLogRowId(tbl, "OLD")}, 'delete', ${changeLogNow});\n` +
+    `END`
+  );
+};
+
+// 3e · Crea/elimina el conjunto completo de triggers. Centralizado porque los
+// usa el arranque Y el modo lote: si estuvieran escritos en dos sitios,
+// podrían desviarse y dejar una tabla sin registrar cambios.
+const changeLogCreateTriggers = (db) => {
+  for (const tbl of REPLICATED_TABLES) {
+    for (const op of ["INSERT", "UPDATE", "DELETE"]) {
+      db.exec(changeLogTrigger(tbl, op));
+    }
+  }
+  // Tablas con fila filtrada: además hacen falta los triggers de salida.
+  for (const tbl of Object.keys(REPLICATED_FILTERS)) {
+    db.exec(changeLogLeaveTrigger(tbl));
+  }
+};
+
+const changeLogDropTriggers = (db) => {
+  for (const tbl of REPLICATED_TABLES) {
+    for (const op of ["INSERT", "UPDATE", "DELETE"]) {
+      db.exec(`DROP TRIGGER IF EXISTS trg_change_log_${tbl}_${op.toLowerCase()}`);
+    }
+  }
+  for (const tbl of Object.keys(REPLICATED_FILTERS)) {
+    db.exec(`DROP TRIGGER IF EXISTS trg_change_log_${tbl}_leave`);
+  }
+};
+
+// ─── Modo lote (Entrega 3e) ──────────────────────────────────────────────────
+// Una importación grande genera una fila de `change_log` por INSERT. Con los
+// triggers apagados durante el lote no se escribe ni una, y al cerrar se deja
+// UNA sola marca (`op='bulk'`) que además adelanta `change_log_first_seq`
+// hasta su propio `seq`. Cualquier caja que estuviera antes de la marca cae en
+// el mecanismo de hueco ya existente (`LOG_COMPACTED`) y se baja todo otra vez:
+// nunca puede quedar un delta mudo con la caja creyendo que va al día.
+//
+// La bandera `replica_bulk_active` se escribe ANTES de apagar los triggers y
+// se borra DESPUÉS de recrearlos, así que un corte de energía en cualquier
+// punto se detecta en el arranque y se cierra el lote de forma conservadora.
+const BULK_FLAG_KEY = "replica_bulk_active";
+const BULK_TABLE = "__bulk__";
+const BULK_ROW_ID = "*";
+// Por debajo de este tamaño no compensa: el delta fino llega a las cajas en un
+// par de frames de SSE y evita obligarlas a rehacer la descarga completa.
+const BULK_MIN_ROWS = 1000;
+
+// Lee la bandera tolerando una BD sin `settings` (sólo `change_log`, típico de
+// un arranquísimo a medias): leer no puede tumbar el arranque. ESCRIBIR la
+// bandera sí falla a lo grande, porque sin `settings` no hay dónde guardarla.
+// La bandera es `"1"` o INEXISTENTE, nunca `"0"`: en JS `"0"` es truthy y el
+// segundo lote creería que el primero sigue abierto.
+const bulkFlagOn = (db) => {
+  const table = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'")
+    .get();
+  if (!table) return false;
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(BULK_FLAG_KEY);
+  return row?.value === "1";
+};
+
+const bulkFlagSet = (db) =>
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, '1')").run(BULK_FLAG_KEY);
+
+const bulkFlagClear = (db) =>
+  db.prepare("DELETE FROM settings WHERE key = ?").run(BULK_FLAG_KEY);
+
+// Devuelve `true` si el lote empezó realmente (idempotente: dos begin seguidos
+// no apagan dos veces ni dejan la bandera a medias).
+const beginBulk = (db) => {
+  if (bulkFlagOn(db)) return false;
+  bulkFlagSet(db);
+  changeLogDropTriggers(db);
+  return true;
+};
+
+// Devuelve el `seq` de la marca, o `null` si no había lote abierto.
+const endBulk = (db) => {
+  if (!bulkFlagOn(db)) return null;
+  const info = db
+    .prepare(
+      `INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) VALUES (?, ?, 'bulk', ${changeLogNow})`,
+    )
+    .run(BULK_TABLE, BULK_ROW_ID);
+  const seq = Number(info.lastInsertRowid);
+  // El hueco empieza en la propia marca: todo lo anterior deja de ser servible.
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+    "change_log_first_seq",
+    String(seq),
+  );
+  // Los triggers vuelven ANTES de soltar la bandera. Si caemos justo aquí, al
+  // arrancar `ensureChangeLog` verá la bandera y repetirá este cierre; si
+  // soltáramos la bandera primero, los triggers podrían quedar ausentes para
+  // siempre y la caja dejaría de recibir cambios sin enterarse.
+  changeLogCreateTriggers(db);
+  bulkFlagClear(db);
+  return { seq };
 };
 
 const ensureChangeLog = (db) => {
@@ -770,11 +911,11 @@ const ensureChangeLog = (db) => {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_change_log_tbl_row ON ${CHANGE_LOG_TABLE}(tbl, row_id)`,
   );
-  for (const tbl of REPLICATED_TABLES) {
-    for (const op of ["INSERT", "UPDATE", "DELETE"]) {
-      db.exec(changeLogTrigger(tbl, op));
-    }
-  }
+  changeLogCreateTriggers(db);
+  // Recuperación: si el Host murió con un lote abierto, aquí se cierra. Es
+  // conservador (adelanta el hueco aunque no se haya apagado nada) y siempre
+  // mejor que dejar los triggers ausentes.
+  if (bulkFlagOn(db)) endBulk(db);
 };
 
 // Columnas que se replican de cada tabla (fuente única de verdad).
@@ -801,9 +942,15 @@ module.exports = {
   runMigrations,
   ensureChangeLog,
   replicaPlan,
+  replicaFilterSql,
+  beginBulk,
+  endBulk,
   CHANGE_LOG_TABLE,
   REPLICATED_TABLES,
+  REPLICATED_FILTERS,
   REPLICATED_DENY_COLUMNS,
   REPLICATED_CASHIER_COLUMNS,
   REPLICATED_SETTINGS_KEYS,
+  BULK_FLAG_KEY,
+  BULK_MIN_ROWS,
 };

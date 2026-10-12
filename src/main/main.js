@@ -17,6 +17,9 @@ const activation = require("./activation");
 const ipcScopes = require("./ipc-scopes");
 const salesCore = require("./sales-core");
 const dbSchema = require("./db-schema");
+// 3e · troceado de imports: el proceso principal es uno solo y un lote de
+// 27 000 filas no tiene por qué ocupárselo entero.
+const { runBatched } = require("./batch-runner");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -383,7 +386,7 @@ const createMainWindow = () => {
   return mainWin;
 };
 
-app.on("ready", () => {
+app.on("ready", async () => {
   // Sin menú de aplicación: evita recargas accidentales (Ctrl+R) y devtools
   Menu.setApplicationMenu(null);
   migrateLegacyBackups();
@@ -391,7 +394,10 @@ app.on("ready", () => {
   maybeRunAutoBackup();
   setInterval(maybeRunAutoBackup, 6 * 60 * 60 * 1000);
 
-  seedCatalogIfEmpty(process.env.JRP_FORCE_CATALOG_IMPORT === "1");
+  // 3e · se espera dentro de `ready` a propósito: el orden de arranque es el
+  // de siempre (catálogo cargado ANTES de crear la ventana), solo que ahora
+  // la carga troceada devuelve el hilo y no congela el arranque.
+  await seedCatalogIfEmpty(process.env.JRP_FORCE_CATALOG_IMPORT === "1");
 
   createMainWindow();
   createTray();
@@ -4140,19 +4146,22 @@ ipcMain.handle("import-products-data", async (event, filePath) => {
     const seenBarcodes = new Set();
     const categoryCache = new Map();
 
-    const txn = db.transaction(() => {
-      const existingBarcodes = new Set(
-        db
-          .prepare("SELECT barcode FROM products WHERE barcode IS NOT NULL")
-          .all()
-          .map((r) => r.barcode),
-      );
-      const insert = db.prepare(
-        `INSERT INTO products (barcode, name, search_name, brand, price, stock, cost_price, min_stock, sale_unit, box_qty, box_price, pack_qty, pack_price, category_id, is_active, allow_manual_discount, promo_fixed_price, promo_start_date, promo_end_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, '', '')`,
-      );
+    // 3e · preparados y existentes se resuelven UNA vez y fuera del troceado:
+    // recompilarlos en cada lote sería trabajo repetido sobre 27 000 filas.
+    const existingBarcodes = new Set(
+      db
+        .prepare("SELECT barcode FROM products WHERE barcode IS NOT NULL")
+        .all()
+        .map((r) => r.barcode),
+    );
+    const insert = db.prepare(
+      `INSERT INTO products (barcode, name, search_name, brand, price, stock, cost_price, min_stock, sale_unit, box_qty, box_price, pack_qty, pack_price, category_id, is_active, allow_manual_discount, promo_fixed_price, promo_start_date, promo_end_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, '', '')`,
+    );
 
-      for (const row of dataRows) {
+    // 3e · recibe UN lote por llamada y lo persiste en una sola transacción.
+    const txn = db.transaction((rows) => {
+      for (const row of rows) {
         try {
           const name = String(getVal(row, "name") || "").trim();
           if (!name) {
@@ -4225,7 +4234,20 @@ ipcMain.handle("import-products-data", async (event, filePath) => {
         }
       }
     });
-    txn();
+
+    // 3e · mientras dura el lote el Host está ocupado: se avisa a las cajas y,
+    // si hay filas de sobra, se entra en modo lote. Con un solo frame `ready`
+    // la caja se reengancha entera en vez de perseguir decenas de miles de
+    // deltas; el orden importa: el hueco se fija ANTES de dar la señal.
+    const bulk = dataRows.length >= dbSchema.BULK_MIN_ROWS;
+    apiServer.hostBusy("import-products-data");
+    if (bulk) dbSchema.beginBulk(db);
+    try {
+      await runBatched(dataRows, (rows) => txn(rows));
+    } finally {
+      if (bulk) dbSchema.endBulk(db);
+      apiServer.hostReady("import-products-data");
+    }
 
     return { success: true, imported, skipped, errors };
   } catch (error) {
@@ -4464,7 +4486,7 @@ ipcMain.handle("select-catalog-file", async () => {
   }
 });
 
-const runCatalogImport = (filePath) => {
+const runCatalogImport = async (filePath) => {
   try {
     if (!filePath || !fs.existsSync(filePath))
       return { success: false, error: "Archivo no encontrado" };
@@ -4546,8 +4568,8 @@ const runCatalogImport = (filePath) => {
     let errors = 0;
     const seen = new Map();
 
-    const txn = db.transaction(() => {
-      for (const row of dataRows) {
+    const txn = db.transaction((rows) => {
+      for (const row of rows) {
         try {
           const rawName = getVal(row, "name");
           if (!rawName) {
@@ -4619,7 +4641,20 @@ const runCatalogImport = (filePath) => {
         }
       }
     });
-    txn();
+
+    // 3e · mismo trato que en la importación de productos activos: el Host
+    // avisa de que está ocupado y, con filas de sobra, cierra el lote con una
+    // sola marca en el log. Aquí además el filtro de fila hace que el XLSX
+    // completo no genere ni un evento replicable.
+    const bulk = dataRows.length >= dbSchema.BULK_MIN_ROWS;
+    apiServer.hostBusy("import-catalog-data");
+    if (bulk) dbSchema.beginBulk(db);
+    try {
+      await runBatched(dataRows, (rows) => txn(rows));
+    } finally {
+      if (bulk) dbSchema.endBulk(db);
+      apiServer.hostReady("import-catalog-data");
+    }
 
     return {
       success: true,
@@ -4643,7 +4678,7 @@ const catalogSeedFile = () =>
     ? path.join(process.resourcesPath, "bd sku.xlsx")
     : path.join(app.getAppPath(), "bd sku.xlsx");
 
-const seedCatalogIfEmpty = (force = false) => {
+const seedCatalogIfEmpty = async (force = false) => {
   try {
     const count = db
       .prepare("SELECT COUNT(*) c FROM products WHERE is_catalog = 1")
@@ -4654,7 +4689,7 @@ const seedCatalogIfEmpty = (force = false) => {
       console.error("[catálogo] Archivo semilla no encontrado:", file);
       return;
     }
-    const result = runCatalogImport(file);
+    const result = await runCatalogImport(file);
     if (result.success) {
       console.log(
         force

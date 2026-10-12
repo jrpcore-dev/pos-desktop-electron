@@ -40,6 +40,8 @@ export default defineConfig({
         try { copyFileSync("src/main/protocol.js", ".vite/build/protocol.js"); } catch(e) {}
         try { copyFileSync("src/main/client-link.js", ".vite/build/client-link.js"); } catch(e) {}
         try { copyFileSync("src/main/replica-engine.js", ".vite/build/replica-engine.js"); } catch(e) {}
+        try { copyFileSync("src/main/change-stream.js", ".vite/build/change-stream.js"); } catch(e) {}
+        try { copyFileSync("src/main/batch-runner.js", ".vite/build/batch-runner.js"); } catch(e) {}
         copyRuntimeDeps(join(buildDir, "node_modules"));
         console.log("Archivos copiados al build exitosamente");
       },

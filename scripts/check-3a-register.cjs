@@ -147,21 +147,13 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas agrega. Con 3a.i, 3b y 3c commiteados, la 3d
-  // SÍ toca el esquema, pero sólo de forma aditiva y declarada: la tabla
-  // change_log, su índice y los 27 triggers de réplica (9 tablas × 3 ops).
-  // Cualquier otro statement añadido o borrado es un cambio no declarado.
-  const DDL_AGREGADO = [
-    /CREATE TABLE change_log \(/,
-    /CREATE INDEX idx_change_log_tbl_row/,
-    ...dbSchema.REPLICATED_TABLES.flatMap((t) =>
-      ["insert", "update", "delete"].map(
-        // El DDL se cachea desde sqlite_master, que normaliza: los triggers
-        // quedan sin «IF NOT EXISTS».
-        (op) => new RegExp(`CREATE TRIGGER trg_change_log_${t}_${op} `),
-      ),
-    ),
-  ];
+  // DDL que esta línea de entregas cambia respecto a HEAD. Hoy: ninguno, la 3e
+  // ya está commiteada. En concreto dejó 28 triggers: los tres de `products`
+  // con `WHEN COALESCE(NEW.is_active, 0) = 1` (sólo lo vendible viaja) y el
+  // cuarto `trg_change_log_products_leave`, que entrega la baja (1 → 0) como
+  // `delete`. La próxima entrega que toque el esquema declara aquí SU delta:
+  // cualquier statement no declarado (por arriba o por abajo) rompe la prueba.
+  const DDL_AGREGADO = [];
   const DDL_BORRADO = [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
@@ -174,7 +166,7 @@ const cashRegisterRow = (db, id) =>
   );
   check(
     DDL_AGREGADO.every((re) => d.added.some((s) => re.test(s))),
-    "los statements agregados son los declarados (3c no toca el DDL)",
+    "los statements agregados son exactamente los declarados (delta sin commitear)",
   );
   check(
     ddlNew.filter((s) => !d.added.includes(s)).length === ddlOld.length - d.removed.length,
