@@ -195,6 +195,48 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
   const requireScope = makeRequireScope(db);
   const protect = (scope) => [requireAuth, requireScope(scope)];
 
+  // 3d · autenticación de la CAJA por su token de emparejamiento. Una caja no
+  // inicia sesión de cajero (no tiene PIN en ese rol): su identidad es el
+  // emparejamiento con el Host. Se exige SIEMPRE, aunque el candado de
+  // activación esté apagado, y además el dispositivo debe estar aprobado.
+  const requirePairedApproved = (req, res, next) => {
+    const deviceId = req.headers["x-device-id"];
+    const deviceToken = req.headers["x-device-token"];
+    if (!activation.isPaired(db, deviceId, deviceToken)) {
+      return res.status(403).json({
+        success: false,
+        needsActivation: true,
+        error: "Este dispositivo no está activado para este negocio",
+      });
+    }
+    const info = activation.deviceScopes(db, deviceId);
+    if (!info.ok || info.approved !== true) {
+      return res.status(403).json({
+        success: false,
+        code: "NOT_APPROVED",
+        error: "El dispositivo está pendiente de aprobación en el Host",
+      });
+    }
+    req.deviceId = deviceId;
+    req.deviceScopes = info.scopes;
+    next();
+  };
+
+  // Misma comprobación de scope, pero resolviendo contra los scopes del
+  // dispositivo emparejado (no contra la sesión de cajero).
+  const requireDeviceScope = (scope) => (req, res, next) => {
+    if (!scopeDefs.scopeAllowed(req.deviceScopes || [], scope)) {
+      return res.status(403).json({
+        success: false,
+        scopeRequired: scope,
+        error: "El dispositivo no tiene el scope necesario",
+      });
+    }
+    next();
+  };
+
+  const protectBox = (scope) => [requirePairedApproved, requireDeviceScope(scope)];
+
   app.post("/api/auth", requirePairedExceptProbe, safe((req, res) => {
     const { id, pin } = req.body;
 
@@ -483,6 +525,127 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
       device_code: row.device_code || null,
       host_device_id: hostDeviceId,
       protocol_version: protocol.PROTOCOL_VERSION,
+    });
+  }));
+
+  // ─── Réplica Host → caja (Entrega 3d) ────────────────────────────────────
+  // Qué columnas salen lo decide un solo sitio: db-schema.replicaPlan. Los
+  // costos NO se replican (quedan 0 en la caja) y los PINs tampoco.
+  const replicaPlan = dbSchema.replicaPlan(db);
+  const maxSeq = () =>
+    db.prepare(`SELECT COALESCE(MAX(seq),0) s FROM ${dbSchema.CHANGE_LOG_TABLE}`).get().s;
+  // Primer seq que aún existe en el log. Sólo la compactación crea un hueco:
+  // el marker `change_log_first_seq` es lo único que puede hacer que un `since`
+  // legítimo (p. ej. 0 en una BD recién instalada) ya no sea servible.
+  const firstSeq = () => Number(activation.getSetting(db, "change_log_first_seq") || 0);
+  const readRow = (tbl, rowId) => {
+    const cols = replicaPlan[tbl];
+    if (!cols) return null;
+    if (tbl === "settings") {
+      if (!dbSchema.REPLICATED_SETTINGS_KEYS.includes(rowId)) return null;
+      return db.prepare(`SELECT key, value FROM settings WHERE key = ?`).get(rowId) || null;
+    }
+    return db.prepare(`SELECT ${cols.join(", ")} FROM ${tbl} WHERE id = ?`).get(rowId) || null;
+  };
+  // Cursor de snapshot: `settings` pagina por su `key` (texto) y sólo entrega
+  // las claves replicadas (el resto —tokens, códigos— nunca sale del Host).
+  const pageOf = (table, cursor, limit) => {
+    const cols = replicaPlan[table];
+    if (table === "settings") {
+      const rows = db
+        .prepare(
+          `SELECT key, value FROM settings WHERE key > ? AND key IN (${dbSchema
+            .REPLICATED_SETTINGS_KEYS.map(() => "?")
+            .join(",")}) ORDER BY key LIMIT ?`,
+        )
+        .all(String(cursor || ""), ...dbSchema.REPLICATED_SETTINGS_KEYS, limit);
+      return { rows, next: rows.length ? rows[rows.length - 1].key : String(cursor || "") };
+    }
+    const rows = db
+      .prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`)
+      .all(Number(cursor) || 0, limit);
+    return { rows, next: rows.length ? rows[rows.length - 1].id : Number(cursor) || 0 };
+  };
+
+  // Descarga inicial por tabla: cursor + snapshot_seq estable (la caja reenvía
+  // el seq de la primera página para que el corte no se desplace al paginar).
+  app.get("/api/replica/snapshot", protectBox(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
+    const table = String(req.query.table || "");
+    const cols = replicaPlan[table];
+    if (!cols) {
+      return res.status(400).json({
+        success: false,
+        code: "REPLICA_TABLE_UNKNOWN",
+        error: `Tabla no replicable: ${table}`,
+      });
+    }
+    const limit = Math.min(Math.max(Number(req.query.limit) || 2000, 1), 5000);
+    const cursor = req.query.cursor === undefined ? 0 : req.query.cursor;
+    const snapshotSeq = Number(req.query.snapshot_seq) || maxSeq();
+    const { rows, next } = pageOf(table, cursor, limit);
+    const total =
+      table === "settings"
+        ? db
+            .prepare(
+              `SELECT COUNT(*) c FROM settings WHERE key IN (${dbSchema
+                .REPLICATED_SETTINGS_KEYS.map(() => "?")
+                .join(",")})`,
+            )
+            .get(...dbSchema.REPLICATED_SETTINGS_KEYS).c
+        : db.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c;
+    res.json({
+      success: true,
+      table,
+      columns: cols,
+      snapshot_seq: snapshotSeq,
+      total,
+      rows,
+      next_cursor: next,
+      has_more: rows.length === limit,
+    });
+  }));
+
+  // Delta paginado con filas completas. Si el hueco pedido ya no existe en el
+  // log (compactado), se pide resync completo.
+  app.get("/api/replica/changes", protectBox(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
+    const since = Number(req.query.since) || 0;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
+    const boundary = firstSeq();
+    if (since < boundary) {
+      return res.json({
+        success: false,
+        code: "LOG_COMPACTED",
+        resync: true,
+        first_seq: boundary,
+        error: "El tramo pedido ya no está en el log: hay que volver a descargar el snapshot",
+      });
+    }
+    const raw = db
+      .prepare(
+        `SELECT seq, tbl, row_id, op, ts FROM ${dbSchema.CHANGE_LOG_TABLE} WHERE seq > ? ORDER BY seq LIMIT ?`,
+      )
+      .all(since, limit);
+    const changes = raw
+      .map((c) => {
+        // Claves de settings que la caja no necesita: ni se envían ni generan
+        // un borrado (los triggers ya las filtran, esto es defensa en profundidad).
+        if (c.tbl === "settings" && !dbSchema.REPLICATED_SETTINGS_KEYS.includes(c.row_id)) {
+          return null;
+        }
+        if (c.op !== "upsert") return { ...c, row: null };
+        // La fila se borró después de loguearse: mejor entregarla como borrado.
+        const row = readRow(c.tbl, c.row_id);
+        return row ? { ...c, row } : { ...c, op: "delete", row: null };
+      })
+      .filter(Boolean);
+    const lastSeq = raw.length ? raw[raw.length - 1].seq : since;
+    res.json({
+      success: true,
+      changes,
+      next_seq: lastSeq,
+      has_more: raw.length === limit,
+      first_seq: boundary,
+      snapshot_seq: maxSeq(),
     });
   }));
 

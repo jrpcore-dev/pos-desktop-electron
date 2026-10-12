@@ -147,11 +147,21 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas agrega. Con 3a.i y 3b ya commiteados, la
-  // 3c NO toca el esquema: cualquier statement añadido o borrado es un cambio
-  // de esquema no declarado y hace fallar el chequeo. (ESPERADO_B de más
-  // abajo sigue fijando el contenido: device_id + box_sessions.)
-  const DDL_AGREGADO = [];
+  // DDL que esta línea de entregas agrega. Con 3a.i, 3b y 3c commiteados, la 3d
+  // SÍ toca el esquema, pero sólo de forma aditiva y declarada: la tabla
+  // change_log, su índice y los 27 triggers de réplica (9 tablas × 3 ops).
+  // Cualquier otro statement añadido o borrado es un cambio no declarado.
+  const DDL_AGREGADO = [
+    /CREATE TABLE change_log \(/,
+    /CREATE INDEX idx_change_log_tbl_row/,
+    ...dbSchema.REPLICATED_TABLES.flatMap((t) =>
+      ["insert", "update", "delete"].map(
+        // El DDL se cachea desde sqlite_master, que normaliza: los triggers
+        // quedan sin «IF NOT EXISTS».
+        (op) => new RegExp(`CREATE TRIGGER trg_change_log_${t}_${op} `),
+      ),
+    ),
+  ];
   const DDL_BORRADO = [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
@@ -212,6 +222,18 @@ const cashRegisterRow = (db, id) =>
     const yaMigrada =
       colDe(before.cols.box_sessions, "token_hash") &&
       colDe(before.cols.cash_register, "device_id");
+    // 3d · la tabla change_log puede no existir aún en la copia de la BD real.
+    const yaTieneLog = Array.isArray(before.cols.change_log);
+    const ESPERADO_3D = yaTieneLog
+      ? []
+      : [
+          "+ tabla nueva change_log",
+          "+ change_log.seq|INTEGER|nn=0|dflt=null",
+          "+ change_log.tbl|TEXT|nn=1|dflt=null",
+          "+ change_log.row_id|TEXT|nn=0|dflt=null",
+          "+ change_log.op|TEXT|nn=1|dflt=null",
+          "+ change_log.ts|INTEGER|nn=1|dflt=null",
+        ].sort();
     const ESPERADO_B = [
       "+ cash_register.device_id|TEXT|nn=0|dflt=null",
       "+ tabla nueva box_sessions",
@@ -223,6 +245,7 @@ const cashRegisterRow = (db, id) =>
       "+ box_sessions.expires_at|INTEGER|nn=1|dflt=null",
       "+ box_sessions.last_used_at|INTEGER|nn=0|dflt=null",
       "+ box_sessions.revoked|INTEGER|nn=1|dflt=0",
+      ...ESPERADO_3D,
     ].sort();
     const BOX_SESSIONS_COLS = [
       "token_hash", "cashier_id", "device_id", "device_type",
@@ -235,23 +258,30 @@ const cashRegisterRow = (db, id) =>
     for (const i of idxDiff.added) console.log("    + indice " + i);
     for (const i of idxDiff.removed) console.log("    - indice " + i);
     const visto = [...colDiff].sort();
-    const esperadoCol = yaMigrada ? [] : ESPERADO_B;
+    // La BD real puede venir ya migrada de 3a.i+3b, pero change_log es nuevo
+    // en 3d: el diff esperado es el de 3b (si falta migrar) más el de 3d.
+    const esperadoCol = yaMigrada ? ESPERADO_3D : ESPERADO_B;
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
       yaMigrada
-        ? "la BD real ya estaba migrada: la migración no cambia NADA"
-        : "el esquema SOLO gana device_id + tabla box_sessions",
+        ? "la BD real ganó SOLO change_log (3d): nada más cambió"
+        : "el esquema SOLO gana device_id + box_sessions + change_log",
       JSON.stringify(colDiff),
     );
     check(
       yaMigrada
-        ? idxDiff.added.length === 0 && idxDiff.removed.length === 0
-        : idxDiff.added.length === 1 &&
-            idxDiff.added[0] === "cash_register.idx_cash_register_device" &&
+        ? idxDiff.added.length === (yaTieneLog ? 0 : 1) &&
+            (yaTieneLog || idxDiff.added[0] === "change_log.idx_change_log_tbl_row") &&
+            idxDiff.removed.length === 0
+        : idxDiff.added.length === 2 &&
+            idxDiff.added.includes("cash_register.idx_cash_register_device") &&
+            idxDiff.added.includes("change_log.idx_change_log_tbl_row") &&
             idxDiff.removed.length === 0,
       yaMigrada
-        ? "con la BD ya migrada tampoco aparecen índices nuevos"
-        : "el esquema SOLO gana idx_cash_register_device",
+        ? yaTieneLog
+          ? "con la BD ya migrada tampoco aparecen índices nuevos"
+          : "la BD ganó sólo el índice del change_log (3d)"
+        : "el esquema SOLO gana idx_cash_register_device + idx_change_log_tbl_row",
       JSON.stringify(idxDiff),
     );
     check(

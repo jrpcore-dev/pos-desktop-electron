@@ -101,6 +101,9 @@ export const invoke = [
   "register-cash-expense",
   "reject-device",
   "remove-stock",
+  "replica-reset",
+  "replica-status",
+  "replica-sync-now",
   "restore-backup",
   "revoke-device",
   "rotate-activation-code",
@@ -136,6 +139,7 @@ export const invoke = [
 ];
 
 export const events = [
+  "db-changed",
   "scale-error",
   "task-reminder",
   "update:status",

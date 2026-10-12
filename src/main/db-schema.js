@@ -679,6 +679,118 @@ const runMigrations = (db) => {
       "UPDATE cashiers SET pin = '', pin_hash = ?, pin_salt = ? WHERE id = ?",
     ).run(hash, salt, c.id);
   }
+
+  // 3d · change_log + triggers de réplica (aditivo e idempotente).
+  ensureChangeLog(db);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entrega 3d — change_log para la réplica Host → caja.
+//
+// Tabla aditiva + triggers AFTER INSERT/UPDATE/DELETE en las tablas
+// replicables. Cada fila del log guarda el id de la fila afectada como TEXT
+// (en `settings` ese id es la propia `key`). Las operaciones masivas dejan un
+// único marcador 'bulk' (ver `bulkMarker`) en lugar de inundar el log.
+//
+// DECISIÓN: los costos NO se replican a las cajas. `products.cost_price` y
+// las columnas de PIN de `cashiers` viajan como 0/vacío; el plan de réplica
+// (`replicaPlan`) es la única fuente de verdad de qué columnas salen.
+// ─────────────────────────────────────────────────────────────────────────────
+const CHANGE_LOG_TABLE = "change_log";
+const REPLICATED_TABLES = [
+  "categories",
+  "customer_tiers",
+  "products",
+  "product_prices",
+  "customers",
+  "tier_prices",
+  "customer_prices",
+  "cashiers",
+  "settings",
+];
+const REPLICATED_DENY_COLUMNS = ["cost_price"]; // costos: no viajan a la caja
+const REPLICATED_CASHIER_COLUMNS = ["id", "name", "role", "is_active"]; // sin PINs
+// Subconjunto de `settings` que la caja necesita para vender/mostrar tickets.
+const REPLICATED_SETTINGS_KEYS = [
+  "store_name",
+  "store_address",
+  "store_rfc",
+  "store_phone",
+  "store_email",
+  "store_logo",
+  "store_website",
+  "owner_name",
+  "currency",
+  "print_enabled",
+  "print_two_tickets",
+  "print_tax_breakdown",
+  "print_header_note",
+  "print_footer_note",
+  "rounding_enabled",
+  "rounding_mode",
+  "sale_without_stock",
+  "pin_for_void",
+];
+
+const changeLogNow = "CAST(strftime('%s','now') AS INTEGER) * 1000";
+const sqlList = (items) => items.map((k) => `'${String(k).replace(/'/g, "''")}'`).join(",");
+
+// Trigger de una tabla/operación. `WHEN` filtra el ruido: los PINs de cajero
+// y las claves de settings que la caja no usa no generan eventos.
+const changeLogTrigger = (tbl, op) => {
+  const isSettings = tbl === "settings";
+  const rowId = (ref) => `CAST(${ref}.${isSettings ? "key" : "id"} AS TEXT)`;
+  let when = "";
+  if (tbl === "cashiers" && op === "UPDATE") {
+    const cols = REPLICATED_CASHIER_COLUMNS.filter((c) => c !== "id");
+    when = `WHEN ${cols.map((c) => `NEW.${c} IS NOT OLD.${c}`).join(" OR ")}`;
+  } else if (isSettings) {
+    when = `WHEN ${op === "DELETE" ? "OLD" : "NEW"}.key IN (${sqlList(REPLICATED_SETTINGS_KEYS)})`;
+  }
+  const source = op === "DELETE" ? "OLD" : "NEW";
+  return (
+    `CREATE TRIGGER IF NOT EXISTS trg_change_log_${tbl}_${op.toLowerCase()} ` +
+    `AFTER ${op} ON ${tbl}\n${when}\nBEGIN\n` +
+    `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
+    `VALUES ('${tbl}', ${rowId(source)}, '${op === "DELETE" ? "delete" : "upsert"}', ${changeLogNow});\n` +
+    `END`
+  );
+};
+
+const ensureChangeLog = (db) => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ${CHANGE_LOG_TABLE} (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      tbl TEXT NOT NULL,
+      row_id TEXT,
+      op TEXT NOT NULL,
+      ts INTEGER NOT NULL
+    );
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_change_log_tbl_row ON ${CHANGE_LOG_TABLE}(tbl, row_id)`,
+  );
+  for (const tbl of REPLICATED_TABLES) {
+    for (const op of ["INSERT", "UPDATE", "DELETE"]) {
+      db.exec(changeLogTrigger(tbl, op));
+    }
+  }
+};
+
+// Columnas que se replican de cada tabla (fuente única de verdad).
+const replicaPlan = (db) => {
+  const plan = {};
+  for (const tbl of REPLICATED_TABLES) {
+    const cols = db
+      .prepare(`PRAGMA table_info(${tbl})`)
+      .all()
+      .map((c) => c.name);
+    plan[tbl] =
+      tbl === "cashiers"
+        ? cols.filter((c) => REPLICATED_CASHIER_COLUMNS.includes(c))
+        : cols.filter((c) => !REPLICATED_DENY_COLUMNS.includes(c));
+  }
+  return plan;
 };
 
 module.exports = {
@@ -687,4 +799,11 @@ module.exports = {
   HOST_DEVICE_ID_KEY,
   createTables,
   runMigrations,
+  ensureChangeLog,
+  replicaPlan,
+  CHANGE_LOG_TABLE,
+  REPLICATED_TABLES,
+  REPLICATED_DENY_COLUMNS,
+  REPLICATED_CASHIER_COLUMNS,
+  REPLICATED_SETTINGS_KEYS,
 };

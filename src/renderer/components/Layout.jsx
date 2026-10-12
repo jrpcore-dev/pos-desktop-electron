@@ -18,6 +18,7 @@ import {
   Scale,
   ScanLine,
   ScrollText,
+  Search,
   Settings,
   Tags,
   TriangleAlert,
@@ -39,11 +40,19 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { useCashier } from "../contexts/CashierContext";
+import { useDbChanges } from "../lib/useDbChanges";
 import { useThemeMode } from "../contexts/ThemeContext";
 import { formatMXTime } from "../utils/dateUtils";
 import { fmtMoney } from "../utils/format";
+import { isSaleInProgress } from "../utils/posState";
 import CancelButton from "./CancelButton";
+import CommandPalette from "./CommandPalette";
 import UpdateButton from "./UpdateButton";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./ui/popover";
 import {
   Tooltip as ShadcnTooltip,
   TooltipContent,
@@ -59,6 +68,7 @@ import {
   DialogFooter,
 } from "./ui/dialog";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import RouteShellSkeleton from "./RouteShellSkeleton";
 import SystemStatus from "./SystemStatus";
@@ -84,6 +94,12 @@ const ROUTE_PRELOADERS = {
 
 const drawerWidth = 288;
 const miniDrawerWidth = 72;
+
+/* Ancho que ocupa el bloque nativo de minimizar/maximizar/cerrar en Windows
+   (reportado por Chromium vía env(titlebar-area-*)). Se le suman 14px para
+   dejar aire entre el clúster del navbar y esos botones. */
+const RIGHT_TITLEBAR_PAD =
+  "max(0.75rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 0px)))";
 
 const PAGE_META = {
   "/": { title: "Terminal de Venta", crumb: "Punto de venta" },
@@ -241,6 +257,8 @@ const Layout = () => {
   const navigate = useNavigate();
   const { isDark, toggleMode } = useThemeMode();
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
   const { cashier, logout } = useCashier();
   const [register, setRegister] = useState(null);
@@ -492,14 +510,19 @@ const Layout = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // 3d · única fuente de verdad del badge de stock bajo. Se refresca por
+  // temporizador (respaldo), por venta local y —nuevo— por `db-changed`, así
+  // que el contador llega en el momento sin esperar al minuto.
+  const loadLowStock = useCallback(async () => {
+    if (!isVisibleRef.current) return;
+    try {
+      const res = await window.api.invoke("get-low-stock-count");
+      setLowStockCount(res.count || 0);
+    } catch {}
+  }, []);
+  useDbChanges(loadLowStock, ["products"]);
+
   useEffect(() => {
-    const loadLowStock = async () => {
-      if (!isVisibleRef.current) return;
-      try {
-        const res = await window.api.invoke("get-low-stock-count");
-        setLowStockCount(res.count || 0);
-      } catch {}
-    };
     loadLowStock();
     const interval = setInterval(loadLowStock, 60000);
     window.addEventListener("sale-registered", loadLowStock);
@@ -536,6 +559,10 @@ const Layout = () => {
         e.preventDefault();
         setDrawerOpen((prev) => !prev);
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
       if (e.key === "F1") {
         e.preventDefault();
         setShortcutsDialogOpen(true);
@@ -546,12 +573,30 @@ const Layout = () => {
       }
       if (e.key === "F12") {
         e.preventDefault();
+        // Nunca cerrar sesión con un diálogo abierto, una hoja lateral o el
+        // cursor dentro de un campo de texto: es contexto incompatible.
+        const el = e.target;
+        const typing =
+          el?.tagName === "INPUT" ||
+          el?.tagName === "TEXTAREA" ||
+          el?.tagName === "SELECT" ||
+          el?.isContentEditable;
+        const dialogOpen = !!document.querySelector(
+          '[data-state="open"].dialog-content, [data-state="open"].sheet-content-right',
+        );
+        if (typing || dialogOpen || logoutConfirmOpen) return;
+        // Si hay una venta en curso, pedimos confirmación por si fue un error
+        // de dedo. Si no, el atajo sigue siendo directo.
+        if (isSaleInProgress()) {
+          setLogoutConfirmOpen(true);
+          return;
+        }
         logout();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [location.pathname, navigate, logout]);
+  }, [location.pathname, navigate, logout, logoutConfirmOpen]);
 
   const isAdmin = cashier?.role === "admin";
 
@@ -725,6 +770,21 @@ const Layout = () => {
     if (today.success) setTodayTasksCount(today.tasks.length);
   };
 
+  const handleRefreshPulse = useCallback(async () => {
+    try {
+      const r = await window.api.invoke("run-weekly-pulse");
+      if (r?.success) {
+        const res = await window.api.invoke("get-insights");
+        if (res?.success) {
+          setInsights(res.rows);
+          setInsightsUnread(res.unread);
+        }
+      }
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   const sidebarUserColors = [
     "hsl(var(--category-1))",
     "hsl(var(--category-2))",
@@ -736,17 +796,24 @@ const Layout = () => {
 
   const renderSidebar = (expanded) => (
     <TooltipProvider>
-      <div className="flex h-full flex-col overflow-hidden select-none">
+      <div
+        key={expanded ? "sidebar-expanded" : "sidebar-mini"}
+        className="flex h-full flex-col overflow-hidden select-none"
+      >
 <div className="flex-1 overflow-y-auto px-1.5 py-2">
-          {navSections.map((section) => (
+          {navSections.map((section, sectionIdx) => (
             <div key={section.title} className="mb-1">
               {expanded && (
-                <span className="block px-3 pt-3 pb-1 text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground/60">
+                <span className="flex items-center gap-2 px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
                   {section.title}
+                  <span
+                    aria-hidden
+                    className="h-px min-w-3 flex-1 bg-border"
+                  />
                 </span>
               )}
               <div className="flex flex-col gap-0.5">
-                {section.items.map((item) => {
+                {section.items.map((item, itemIdx) => {
                   const isActive = location.pathname === item.path;
                   const inventoryAlert = item.path === "/inventory" && lowStockCount > 0;
                   return (
@@ -756,25 +823,30 @@ const Layout = () => {
                           to={item.path}
                           onMouseEnter={() => ROUTE_PRELOADERS[item.path]?.()}
                           onFocus={() => ROUTE_PRELOADERS[item.path]?.()}
+                          aria-current={isActive ? "page" : undefined}
+                          style={{
+                            animationDelay: `${
+                              Math.min(sectionIdx * 4 + itemIdx, 14) * 16
+                            }ms`,
+                          }}
                           className={cn(
-                            "group relative flex h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm font-medium transition-all duration-200 outline-none hover:shadow-sm",
-                            "active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                            "nav-item-in group relative flex h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm font-medium transition-all duration-150 outline-none",
+                            "active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                             isActive
-                              ? "bg-gradient-to-r from-primary/10 to-primary/5 font-semibold text-foreground"
-                              : "text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10",
-                            !isActive && item.path === "/" && "bg-primary/[0.08] font-semibold",
+                              ? "bg-gradient-to-r from-primary/18 via-primary/[0.07] to-transparent font-semibold text-foreground"
+                              : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
                             !expanded && "w-full justify-center px-0",
                           )}
                         >
                           <span
                             className={cn(
-                              "absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-full transition-all duration-200",
+                              "absolute left-0 top-1/2 h-7 w-[2px] -translate-y-1/2 rounded-r-full transition-all duration-200",
                               isActive ? "bg-primary opacity-100" : "opacity-0",
                             )}
                           />
 <span
                             className={cn(
-                              "inline-flex shrink-0 items-center justify-center [&>svg]:h-[22px] [&>svg]:w-[22px]",
+                              "inline-flex shrink-0 items-center justify-center transition-transform duration-150 group-hover:translate-x-0.5 [&>svg]:h-[22px] [&>svg]:w-[22px]",
                               isActive
                                 ? "text-primary"
                                 : "text-muted-foreground group-hover:text-foreground",
@@ -786,7 +858,7 @@ const Layout = () => {
                           >
                             {item.icon}
                             {inventoryAlert && (
-                              <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.6rem] font-bold text-white">
+                              <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.6rem] font-bold text-white tabular-nums">
                                 {lowStockCount > 99 ? "99+" : lowStockCount}
                               </span>
                             )}
@@ -845,19 +917,23 @@ const Layout = () => {
             <TooltipTrigger asChild>
               <button
                 onClick={() => navigate("/configuration")}
+                aria-current={
+                  location.pathname === "/configuration" ? "page" : undefined
+                }
+                style={{ animationDelay: "110ms" }}
                 className={cn(
-                  "group flex h-11 cursor-pointer items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200 outline-none hover:shadow-sm",
-                  "hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                  "nav-item-in group flex h-11 cursor-pointer items-center gap-3 rounded-lg text-sm font-medium transition-all duration-150 outline-none",
+                  "hover:bg-foreground/[0.06] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                   "text-left",
                   location.pathname === "/configuration"
-                    ? "bg-gradient-to-r from-primary/10 to-primary/5 font-semibold text-foreground"
+                    ? "bg-gradient-to-r from-primary/18 via-primary/[0.07] to-transparent font-semibold text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                   expanded ? "w-full px-3" : "w-full justify-center px-0",
                 )}
               >
                 <span
                   className={cn(
-                    "inline-flex shrink-0 items-center justify-center [&>svg]:h-[22px] [&>svg]:w-[22px]",
+                    "inline-flex shrink-0 items-center justify-center transition-transform duration-150 group-hover:translate-x-0.5 [&>svg]:h-[22px] [&>svg]:w-[22px]",
                     location.pathname === "/configuration"
                       ? "text-primary"
                       : "text-muted-foreground group-hover:text-foreground",
@@ -956,13 +1032,13 @@ const Layout = () => {
         {/* ─── SIDEBAR (fijo, altura completa, se encima al navbar) ─── */}
         <aside
           style={{ width: drawerOpen ? drawerWidth : miniDrawerWidth }}
-          className="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-secondary shadow-sm shadow-slate-900/5 transition-[width] duration-300 ease-in-out"
+          className="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-secondary transition-[width] duration-300 ease-in-out"
         >
           {/* Logo / encabezado del sidebar: al pulsarlo colapsa/expande */}
           <button
             onClick={() => setDrawerOpen(!drawerOpen)}
             title={storeName}
-            className="flex h-12 w-full shrink-0 cursor-pointer items-center justify-center outline-none transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+            className="flex h-14 w-full shrink-0 cursor-pointer items-center justify-center border-b border-border/60 outline-none transition-colors hover:bg-foreground/[0.06]"
           >
             {storeLogo ? (
               <img
@@ -980,120 +1056,164 @@ const Layout = () => {
         </aside>
 
         <header
-          className="sticky top-0 z-30 relative flex h-12 shrink-0 items-center gap-3 bg-background"
+          className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 bg-background"
           style={{
             WebkitAppRegion: "drag",
             paddingLeft: (drawerOpen ? drawerWidth : miniDrawerWidth) + 16,
-            paddingRight:
-              "max(0.75rem, calc(100vw - env(titlebar-area-x) - env(titlebar-area-width)))",
+            paddingRight: `calc(${RIGHT_TITLEBAR_PAD} + 14px)`,
           }}
         >
           <span
             aria-hidden
             className="absolute bottom-0 left-0 h-px bg-border"
             style={{
-              right:
-                "max(0.75rem, calc(100vw - env(titlebar-area-x) - env(titlebar-area-width)))",
+              right: `calc(${RIGHT_TITLEBAR_PAD} + 14px)`,
             }}
           />
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="hidden shrink-0 text-sm font-semibold tracking-[0.06em] text-foreground uppercase sm:inline">
-              {storeName}
+          <div className="flex min-w-0 items-baseline gap-2.5">
+            <span className="hidden shrink-0 text-[14px] font-medium text-muted-foreground sm:inline">
+              {PAGE_META[location.pathname]?.crumb || "Inicio"}
             </span>
-            <span className="hidden h-3 w-px shrink-0 bg-border sm:block" />
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="hidden shrink-0 text-[13px] font-medium text-muted-foreground sm:inline">
-                {PAGE_META[location.pathname]?.crumb || "Inicio"}
-              </span>
-              <ChevronRight
-                size={12}
-                className="hidden shrink-0 text-muted-foreground/40 sm:block"
-              />
-              <span className="min-w-0 truncate text-lg font-semibold tracking-tight text-foreground">
-                {PAGE_META[location.pathname]?.title || "Vendia"}
-              </span>
-            </div>
+            <ChevronRight
+              size={13}
+              className="hidden shrink-0 text-muted-foreground/50 sm:block"
+            />
+            <h1 className="min-w-0 truncate text-[17px] font-semibold tracking-tight text-foreground">
+              {PAGE_META[location.pathname]?.title || "Vendia"}
+            </h1>
           </div>
 
           <div
-            className="ml-auto flex items-center gap-1.5"
+            className="ml-auto flex items-center gap-2"
             style={{ WebkitAppRegion: "no-drag" }}
           >
-            <div className="relative">
-              <button
-                onClick={() => setInsightsOpen((v) => !v)}
-                className="relative flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
-                title="Avisos del negocio"
-              >
-                <Bell size={16} />
-                {insightsUnread > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                    {insightsUnread}
-                  </span>
-                )}
-              </button>
-              {insightsOpen && (
-                <div className="absolute right-0 top-11 z-50 w-[340px] rounded-lg border border-border bg-background p-3 shadow-sm">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-foreground">Pulso del negocio</span>
-                  </div>
-                  {insights.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-muted-foreground">Sin avisos por ahora.</p>
-                  ) : (
-                    <ul className="flex max-h-[320px] flex-col gap-2 overflow-y-auto">
-                      {insights.map((ins) => (
-                        <li
-                          key={ins.id}
-                          className={cn(
-                            "rounded-md border border-border p-2.5 text-left transition-colors hover:bg-muted/50",
-                            ins.status === "unread" && "border-l-2 border-l-primary",
-                          )}
-                        >
-                          <button
-                            className="w-full text-left"
-                            onClick={async () => {
-                              await window.api.invoke("mark-insight", { id: ins.id, status: "actioned" });
-                              setInsights((prev) => prev.filter((x) => x.id !== ins.id));
-                              setInsightsUnread((n) => Math.max(0, n - 1));
-                              setInsightsOpen(false);
-                              navigate(ins.route || "/reports");
-                            }}
-                          >
-                            <p className="text-[13px] font-semibold text-foreground">{ins.title}</p>
-                            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{ins.body}</p>
-                            <p className="mt-1 text-[11px] font-medium text-primary">Ver detalle →</p>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+            {/* ─── Lanzador de la paleta de comandos (Ctrl + K) ─── */}
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              title="Buscar o ejecutar (Ctrl + K)"
+              className="hidden h-10 cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-2.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 md:flex"
+            >
+              <Search size={15} className="shrink-0" />
+              <span className="text-[14px]">Buscar…</span>
+              <span className="ml-1 flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
+                Ctrl K
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              aria-label="Buscar o ejecutar una acción (Ctrl + K)"
+              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+            >
+              <Search size={16} />
+            </button>
+
+            {/* ─── CLÚSTER DE ESTADO: un solo borde, divisores internos ─── */}
+            <div className="flex h-10 items-stretch divide-x divide-border rounded-lg border border-border bg-card">
+              <Popover open={insightsOpen} onOpenChange={setInsightsOpen}>
+                <PopoverTrigger asChild>
                   <button
-                    className="mt-2 w-full border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    onClick={async () => {
-                      const r = await window.api.invoke("run-weekly-pulse");
-                      if (r?.success) {
-                        const res = await window.api.invoke("get-insights");
-                        if (res?.success) { setInsights(res.rows); setInsightsUnread(res.unread); }
-                      }
-                    }}
+                    type="button"
+                    aria-label={
+                      insightsUnread > 0
+                        ? `Avisos del negocio, ${insightsUnread} sin leer`
+                        : "Avisos del negocio"
+                    }
+                    title="Avisos del negocio"
+                    className="relative flex w-10 shrink-0 cursor-pointer items-center justify-center rounded-l-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   >
-                    Generar pulso semanal ahora
+                    <Bell size={16} />
+                    {insightsUnread > 0 && (
+                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground tabular-nums">
+                        {insightsUnread > 9 ? "9+" : insightsUnread}
+                      </span>
+                    )}
                   </button>
-                </div>
-              )}
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  sideOffset={8}
+                  className="w-[340px] p-0"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
+                    <span className="text-sm font-semibold text-foreground">
+                      Pulso del negocio
+                    </span>
+                    {insightsUnread > 0 && (
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary tabular-nums">
+                        {insightsUnread} sin leer
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-3">
+                    {insights.length === 0 ? (
+                      <p className="py-4 text-center text-xs text-muted-foreground">
+                        Sin avisos por ahora.
+                      </p>
+                    ) : (
+                      <ul className="flex max-h-[320px] flex-col gap-2 overflow-y-auto">
+                        {insights.map((ins) => (
+                          <li
+                            key={ins.id}
+                            className={cn(
+                              "rounded-md border border-border p-2.5 text-left transition-colors hover:bg-muted/50",
+                              ins.status === "unread" &&
+                                "border-l-2 border-l-primary",
+                            )}
+                          >
+                            <button
+                              className="w-full cursor-pointer text-left"
+                              onClick={async () => {
+                                await window.api.invoke("mark-insight", {
+                                  id: ins.id,
+                                  status: "actioned",
+                                });
+                                setInsights((prev) =>
+                                  prev.filter((x) => x.id !== ins.id),
+                                );
+                                setInsightsUnread((n) => Math.max(0, n - 1));
+                                setInsightsOpen(false);
+                                navigate(ins.route || "/reports");
+                              }}
+                            >
+                              <p className="text-[14px] font-semibold text-foreground">
+                                {ins.title}
+                              </p>
+                              <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                                {ins.body}
+                              </p>
+                              <p className="mt-1 text-[11px] font-medium text-primary">
+                                Ver detalle →
+                              </p>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <button
+                      className="mt-2 w-full cursor-pointer border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      onClick={handleRefreshPulse}
+                    >
+                      Generar pulso semanal ahora
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <SystemStatus
+                register={register}
+                clock={clockLabel}
+                serverRunning={serverRunning}
+                scaleConnected={scaleConnected}
+                tasksCount={todayTasksCount}
+                isDark={isDark}
+                onToggleTheme={toggleMode}
+                onOpenScale={handleOpenScaleDialog}
+                onOpenTasks={() => setTaskDialogOpen(true)}
+              />
+              <UpdateButton />
             </div>
-            <SystemStatus
-              register={register}
-              clock={clockLabel}
-              serverRunning={serverRunning}
-              scaleConnected={scaleConnected}
-              tasksCount={todayTasksCount}
-              isDark={isDark}
-              onToggleTheme={toggleMode}
-              onOpenScale={handleOpenScaleDialog}
-              onOpenTasks={() => setTaskDialogOpen(true)}
-            />
-            <UpdateButton />
           </div>
         </header>
 
@@ -1108,6 +1228,21 @@ const Layout = () => {
             </div>
           </Suspense>
         </main>
+
+        {/* ─── PALETA DE COMANDOS (Ctrl + K) ─── */}
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          sections={navSections}
+          register={register}
+          isDark={isDark}
+          onToggleTheme={toggleMode}
+          onOpenScale={handleOpenScaleDialog}
+          onOpenTasks={() => setTaskDialogOpen(true)}
+          onOpenShortcuts={() => setShortcutsDialogOpen(true)}
+          onRefreshPulse={handleRefreshPulse}
+          onLogout={logout}
+        />
 
         {/* ─── ATAJOS DE TECLADO ─── */}
         <Dialog
@@ -1181,6 +1316,20 @@ const Layout = () => {
           </DialogContent>
         </Dialog>
 
+        {/* ─── CONFIRMACIÓN DE CIERRE DE SESIÓN (F12 con venta en curso) ─── */}
+        <ConfirmDialog
+          open={logoutConfirmOpen}
+          onOpenChange={setLogoutConfirmOpen}
+          title="¿Cerrar sesión?"
+          description="Hay una venta en curso. Si cierras ahora, el carrito se perderá."
+          confirmLabel="Cerrar sesión"
+          cancelLabel="Seguir vendiendo"
+          onCancel={() => setLogoutConfirmOpen(false)}
+          onConfirm={() => {
+            setLogoutConfirmOpen(false);
+            logout();
+          }}
+        />
 
         {/* ─── CAJA ANTERIOR ABIERTA (CAMBIO DE TURNO) ─── */}
         <Modal
@@ -1218,7 +1367,7 @@ const Layout = () => {
                 Efectivo a declarar
               </span>
               <span className="block text-2xl font-extrabold text-emerald-600">
-                ${(handover?.currentCash || 0).toFixed(2)}
+                {fmtMoney(handover?.currentCash)}
               </span>
               <span className="mt-1 block text-[0.68rem] text-muted-foreground">
                 Se declarará como cierre y quedará como apertura de tu nueva

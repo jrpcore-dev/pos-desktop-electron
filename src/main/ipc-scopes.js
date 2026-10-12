@@ -75,9 +75,14 @@ const CLASSIFICATION = Object.freeze({
   "box-discover-hosts": SCOPES.SYSTEM,
   "box-pair": SCOPES.SYSTEM,
   "box-wait-approval": SCOPES.SYSTEM,
+  // 3d · sincronizar la réplica escribe en la BD y usa la red: SYSTEM.
+  "replica-sync-now": SCOPES.SYSTEM,
+  "replica-reset": SCOPES.SYSTEM,
 
   // ── LOCAL_READ: lectura local ───────────────────────────────────────────
   "get-next-barcode": SCOPES.LOCAL_READ,
+  // 3d · estado de la réplica: lectura local de la propia BD de la caja.
+  "replica-status": SCOPES.LOCAL_READ,
 
   // ── HOST_READ: lectura de datos compartidos ─────────────────────────────
   "check-barcode-exists": SCOPES.HOST_READ,

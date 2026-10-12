@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useCashier } from "../contexts/CashierContext";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   ShoppingCart,
   Trash2,
@@ -53,6 +54,8 @@ import {
   resolveUnitPrice,
 } from "../utils/cartMath";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
+import { fmtMoney, fmtMoneyAbs } from "../utils/format";
+import { setSaleInProgress } from "../utils/posState";
 
 let roundEnabled = true;
 let roundStep = 0.5;
@@ -143,6 +146,14 @@ const SalesTerminal = () => {
   const [waitingDrawer, setWaitingDrawer] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  // 3d · versión local del catálogo. Sube con `db-changed` (venta local o
+  // réplica) y relanza la búsqueda abierta para que sugerencias/precios no
+  // queden desfasados. NO toca el carrito.
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  useDbChanges(
+    useCallback(() => setCatalogVersion((v) => v + 1), []),
+    ["products", "product_prices", "customers", "customer_prices", "tier_prices"],
+  );
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [manualProductModalOpen, setManualProductModalOpen] = useState(false);
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
@@ -241,8 +252,8 @@ const processSaleRef = useRef(null);
           : "Sin método";
   const itemCount = `${cart.length} ${cart.length === 1 ? "producto" : "productos"}`;
 
-  const totalAccentClass = "bg-success/10 border-success/30";
-  const totalValueClass = "text-success";
+  const totalAccentClass = "bg-muted/40 border-border";
+  const totalValueClass = "text-foreground";
 
   const [removingKeys, setRemovingKeys] = useState(() => new Set());
 
@@ -426,14 +437,21 @@ const processSaleRef = useRef(null);
       const now = Date.now();
       const saleKeyLocked = isEnter && now < saleKeyLockRef.current;
 
-      if (
+      // Cualquier diálogo abierto (incluido el de cliente, que antes no estaba)
+      // o una impresión/cobro en curso invalidan todos los atajos de función.
+      const anyDialogOpen =
         cashDialogOpen ||
         discountDialog.open ||
         boxChoiceDialog.open ||
         weightDialog.open ||
         manualProductModalOpen ||
-        qtyDialogOpen
-      ) {
+        qtyDialogOpen ||
+        customerDialogOpen ||
+        !!document.querySelector(
+          '[data-state="open"].dialog-content, [data-state="open"].sheet-content-right',
+        );
+
+      if (anyDialogOpen || printing) {
         if (isEnter || e.key === "Escape")
           saleKeyLockRef.current = now + 200;
         return;
@@ -534,6 +552,7 @@ const processSaleRef = useRef(null);
       }
       if (e.key === "F11") {
         e.preventDefault();
+        if (now < saleKeyLockRef.current) return;
         if (cartRef.current.length > 0) {
           showNotification(
             "Termina la venta actual antes de cerrar la caja",
@@ -541,11 +560,22 @@ const processSaleRef = useRef(null);
           );
           return;
         }
+        saleKeyLockRef.current = now + 600;
         localStorage.setItem("eodPendingAction", "close-register");
         navigate("/end-of-day");
       }
       if (e.key === "F10") {
         e.preventDefault();
+        if (now < saleKeyLockRef.current) return;
+        // Mismo criterio que F11: no abrir un corte de caja con la venta a medias.
+        if (cartRef.current.length > 0) {
+          showNotification(
+            "Termina la venta actual antes de retirar de caja",
+            "warning",
+          );
+          return;
+        }
+        saleKeyLockRef.current = now + 600;
         localStorage.setItem("eodPendingAction", "withdraw");
         navigate("/end-of-day");
       }
@@ -677,8 +707,17 @@ if (e.key === "Tab" && !isEditable) {
     weightDialog.open,
     manualProductModalOpen,
     qtyDialogOpen,
+    customerDialogOpen,
+    printing,
     pendingQty,
   ]);
+
+  // Publica si hay una venta en curso para que los atajos globales sensibles
+  // (F12 = cerrar sesión en Layout) puedan pedir confirmación.
+  useEffect(() => {
+    setSaleInProgress(cart.length > 0);
+    return () => setSaleInProgress(false);
+  }, [cart.length]);
 
   useEffect(() => {
     if (!weightDialog.open || !weightDialog.product) return;
@@ -756,7 +795,9 @@ if (e.key === "Tab" && !isEditable) {
       cancelled = true;
       clearTimeout(debounceTimer);
     };
-  }, [barcode]);
+    // catalogVersion: si el catálogo cambia con la búsqueda abierta, se vuelve
+    // a consultar para que el precio/stock mostrados no queden viejos.
+  }, [barcode, catalogVersion]);
 
   useEffect(() => {
     if (selectedSuggestionIndex < 0) return;
@@ -1319,13 +1360,13 @@ if (e.key === "Tab" && !isEditable) {
         ? promo.type === "mayoreo"
           ? `Mayoreo desde ${promo.qty} pz`
           : promo.type === "fijo"
-            ? `Precio fijo $${promo.price.toFixed(2)}`
-            : `Oferta ${promo.qty} x $${promo.price.toFixed(2)}`
+            ? `Precio fijo ${fmtMoney(promo.price)}`
+            : `Oferta ${promo.qty} x ${fmtMoney(promo.price)}`
         : null;
       const discountParts = [];
       if (item.discount_percent > 0)
         discountParts.push(`-${item.discount_percent}%`);
-      if (item.discount > 0) discountParts.push(`-$${item.discount.toFixed(2)}`);
+      if (item.discount > 0) discountParts.push(`-${fmtMoneyAbs(item.discount)}`);
 
       return {
         name,
@@ -1438,7 +1479,7 @@ if (e.key === "Tab" && !isEditable) {
             size="icon-sm"
             aria-label="Vaciar carrito"
             onClick={() => setCart([])}
-            className="text-destructive hover:text-destructive"
+            className="h-9 w-9 text-destructive hover:text-destructive"
           >
             <Trash2 size={18} />
           </ShadButton>
@@ -1487,7 +1528,7 @@ if (e.key === "Tab" && !isEditable) {
         <div className="border-t border-border bg-muted/30 p-3">
           <div className="mb-2.5">
             {customer ? (
-              <div className="flex h-12 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
+              <div className="flex h-11 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
                 <span className="min-w-0 truncate text-sm font-semibold text-foreground">
                   {customer.name}
                   {customer.tier_name && (
@@ -1509,7 +1550,7 @@ if (e.key === "Tab" && !isEditable) {
               <button
                 type="button"
                 onClick={() => setCustomerDialogOpen(true)}
-                className="flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                className="flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
               >
                 <UserPlus size={18} />
                 Cliente
@@ -1523,7 +1564,7 @@ if (e.key === "Tab" && !isEditable) {
                 Subtotal
               </span>
               <span className="text-base font-bold tabular-nums text-foreground">
-                ${displaySubtotal.toFixed(2)}
+                {fmtMoney(displaySubtotal)}
               </span>
             </div>
             {displayDiscountTotal > 0 && (
@@ -1532,14 +1573,14 @@ if (e.key === "Tab" && !isEditable) {
                   Descuentos
                 </span>
                 <span className="text-base font-bold tabular-nums text-destructive">
-                  -${displayDiscountTotal.toFixed(2)}
+                  -{fmtMoney(displayDiscountTotal)}
                 </span>
               </div>
             )}
             <div className="my-1 border-t border-dashed border-border" />
             <div
               className={cn(
-                "flex items-end justify-between gap-3 rounded-xl border px-4 py-2",
+                "flex items-end justify-between gap-3 rounded-xl border px-4 py-2 transition-shadow hover:shadow-sm",
                 totalAccentClass,
               )}
             >
@@ -1558,7 +1599,7 @@ if (e.key === "Tab" && !isEditable) {
                   totalValueClass,
                 )}
               >
-                ${displayTotal.toFixed(2)}
+                {fmtMoney(displayTotal)}
               </span>
             </div>
           </div>
@@ -1577,7 +1618,7 @@ if (e.key === "Tab" && !isEditable) {
               onClick={() => handlePayClick("cash")}
               title="Efectivo"
               className={cn(
-                "flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "cash"
                   ? "border-primary bg-primary/10 text-primary shadow-sm"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
@@ -1599,7 +1640,7 @@ if (e.key === "Tab" && !isEditable) {
               onClick={() => handlePayClick("card")}
               title="Tarjeta"
               className={cn(
-                "flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "card"
                   ? "border-primary bg-primary/10 text-primary shadow-sm"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
@@ -1621,7 +1662,7 @@ if (e.key === "Tab" && !isEditable) {
               onClick={() => handlePayClick("transfer")}
               title="Transferencia"
               className={cn(
-                "flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "transfer"
                   ? "border-primary bg-primary/10 text-primary shadow-sm"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
@@ -1666,7 +1707,7 @@ if (e.key === "Tab" && !isEditable) {
                 if (paymentMethod === "cash") setCashDialogOpen(true);
                 else processSale(paymentMethod);
               }}
-              className="w-full min-h-[58px] px-4 py-4 text-xl font-black uppercase tracking-wide bg-success text-white hover:bg-success/90 shadow-sm shadow-success/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+              className="w-full min-h-[58px] px-4 py-4 text-xl font-black uppercase tracking-wide bg-success text-white hover:bg-success/90 hover:shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
             >
               {printing ? (
                 <Spinner size={20} />

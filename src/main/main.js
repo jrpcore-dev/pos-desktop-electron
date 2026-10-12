@@ -146,6 +146,7 @@ if (!gotTheLock) {
 const apiServer = require("./api-server");
 const clientLink = require("./client-link");
 const discovery = require("./discovery");
+const replicaEngine = require("./replica-engine");
 
 let mainWin = null;
 let isQuitting = false;
@@ -2581,6 +2582,54 @@ ipcMain.handle("box-get-settings", async () => clientLink.getSettings(db));
 ipcMain.handle("box-save-settings", async (event, patch) =>
   clientLink.saveSettings(db, patch || {}),
 );
+
+// ─── RÉPLICA EN LA CAJA (Entrega 3d) ───────────────────────
+// El motor escribe en las MISMAS tablas que el Host, por una ruta interna:
+// ningún canal IPC escribe en ellas.
+
+// 3d · coalescencia de 'db-changed': agrupa tablas/ids durante ~150 ms para no
+// inundar al renderer con un evento por fila (una venta toca varias tablas).
+const dbChangedPending = { tables: new Set(), ids: {} };
+let dbChangedTimer = null;
+const emitDbChanged = (tables = [], ids = {}) => {
+  for (const t of tables) dbChangedPending.tables.add(t);
+  for (const [t, list] of Object.entries(ids)) {
+    const acc = (dbChangedPending.ids[t] = dbChangedPending.ids[t] || new Set());
+    for (const id of list || []) acc.add(String(id));
+  }
+  if (dbChangedTimer) return;
+  dbChangedTimer = setTimeout(() => {
+    dbChangedTimer = null;
+    if (!mainWin || mainWin.isDestroyed()) return;
+    const payload = {
+      tables: [...dbChangedPending.tables],
+      ids: Object.fromEntries(
+        Object.entries(dbChangedPending.ids).map(([t, s]) => [t, [...s]]),
+      ),
+      at: Date.now(),
+    };
+    dbChangedPending.tables.clear();
+    dbChangedPending.ids = {};
+    mainWin.webContents.send("db-changed", payload);
+  }, 150);
+};
+
+ipcMain.handle("replica-status", async () => replicaEngine.state(db));
+
+ipcMain.handle("replica-sync-now", async (event, opts) => {
+  const st = replicaEngine.state(db);
+  if (!st.sync_completed) {
+    // Descarga inicial: staging + swap atómico. `db-changed` se emite al final.
+    const result = await replicaEngine.downloadSnapshot(db, opts || {});
+    if (result && result.success) {
+      emitDbChanged(result.tables || [], {});
+    }
+    return result;
+  }
+  return { success: false, code: "ALREADY_SYNCED", error: "La réplica ya está al día" };
+});
+
+ipcMain.handle("replica-reset", async () => replicaEngine.resetSync(db));
 
 ipcMain.handle("get-server-status", () => {
   const api = apiServer.getStatus();
