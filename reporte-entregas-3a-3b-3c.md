@@ -663,3 +663,160 @@ pide `./batch-runner` mientras que `api-server.js` pide `./change-stream`.
   ha implementado y probado el **consumo** de ese hueco (`LOG_COMPACTED`).
 - Latido y coalescencia con la app real abierta y varias cajas a la vez (el harness
   levanta una sola caja simulada y mide contra reloj propio).
+
+---
+
+## 3f · Réplica incremental en tiempo real (`57dcbc5` + `843cf8e`)
+
+### Qué se entrega
+
+- **3f.i — esquema y tumba-sigilos.** `updated_at INTEGER` en las 8 tablas de entidad;
+  tabla `replica_tombstones(tbl, row_id, ts)` que NO se compacta; endpoint
+  `GET /api/replica/tombstones` con cursor compuesto; y `ensureChangeLog` reescribiendo
+  el conjunto entero de triggers en cada arranque.
+- **3f.ii — bucle vivo.** `src/main/replica-live.js`: la caja se conecta al túnel SSE
+  del Host y sólo hace HTTP cuando avisan, aplicando el delta con `applyChanges` y
+  emitiendo `db-changed` con el coalescer que ya existía.
+
+### Archivos tocados
+
+- **`src/main/db-schema.js`** — `REPLICATED_LOCAL_COLUMNS`, `UPDATED_AT_TABLES`,
+  `TOMBSTONE_TABLE`; `tombstoneClear`/`tombstoneWrite` plegados en los cuerpos de
+  `_delete`/`_leave`/`_insert`; el refresco de `updated_at` en su propio trigger
+  `trg_change_log_<tabla>_touch`; `replicaPlan` excluye `updated_at`.
+- **`src/main/replica-live.js`** (nuevo, 292 líneas) — SSE a mano, `pullDelta`,
+  backoff, `handleResync`.
+- **`src/main/api-server.js`** — `GET /api/replica/tombstones`.
+- **`src/main/replica-engine.js`** — sólo exporta `getJson` (aditivo).
+- **`src/main/main.js`** — `startLiveReplica()` y su enganche en `app.on("ready")` y al
+  final de la primera descarga.
+- **`scripts/check-3f-replica.cjs`** (nuevo, 71 aserciones) y los contadores 28→36 en
+  `check-3d-replica`/`check-3e-events`, más el golden de `check-3a-register`.
+
+### Decisiones que quedan fijadas `[LEÍDO EN CÓDIGO]`
+
+1. **`updated_at` es metadato del Host y NO viaja a la caja.** Si replicara, la caja lo
+   pisaría al aplicar el cambio y sólo quedaría su hora local en vez de la del Host.
+2. **`settings` queda fuera de `UPDATED_AT_TABLES`.** Es clave/valor: no hay fila-entidad
+   que marcar, y su `change_log.ts` ya dice cuándo cambió. Además `swap()` sólo copia
+   `key`/`value`, así que una columna de más moriría en el staging.
+3. **El refresco de `updated_at` va en un trigger PROPIO con `WHEN`, no plegado en el de
+   `_update`.** SQLite no admite sentencias condicionales dentro de un cuerpo, así que
+   plegado se ejecutaba en cada escritura aunque el valor no hubiera cambiado. Es —medido
+   en 4 corridas, 2 de ellas fuera de umbral— lo único que hacía incumplir el coste por
+   venta de la 3d. El umbral
+   `< 2 ms` **no se relajó**; se hizo barato el código.
+4. **Trigger count 28 → 36.** Los 8 `*_touch` llevan prefijo `trg_change_log_` a
+   propósito, para que el modo lote los apague con los demás y no quede ningún
+   `updated_at` a medias durante una importación.
+5. **`ensureChangeLog` dropea y reescribe el conjunto completo** (no usa la comodidad de
+   `CREATE TRIGGER IF NOT EXISTS` para ahorrar trabajo). Ver el bug de más abajo.
+6. **Cursor compuesto `(ts, tbl, row_id)` en el endpoint de tumba-sigilos.** `changeLogNow`
+   resuelve a segundos, así que paginar sólo por `ts` perdería filas justo en la mitad de
+   un segundo — el fallo silencioso que esta tabla existe para evitar.
+7. **`changeLogNow` se queda en segundos** (`strftime('%s')*1000`, heredado de la 3d).
+   Decisión del usuario: el cursor incremental real es `seq`, no `ts`, y no compensa
+   reescribir todos los cuerpos de triggers otra vez.
+8. **El bucle en vivo reanuda con el MISMO `replica_last_seq` de la descarga inicial**, no
+   con el `Last-Event-ID` del frame. El cursor propio sobrevive a un apagón; el del
+   protocolo, no.
+9. **Un `resync` es conservador:** `resetSync` (la caja queda en «sin vender») y luego
+   snapshot entero. Un delta con un hueco silencioso es peor que no vender.
+10. **Sólo arranca con `sync_completed = 1`.** Antes no hay delta que aplicar y el
+    snapshot manda.
+11. **Sin canales IPC nuevos** → ni `ipc-scopes`, ni la allowlist, ni el golden de canales
+    cambian (`test-ipc-scopes` 0 diffs, `gen-ipc-allowlist --check` 0 mismatches).
+
+### Bugs encontrados y corregidos en el camino `[EJECUTADO]`
+
+- **Los tres cuerpos de triggers que corrigió la 3e nunca llegaron a una BD existente.**
+  Comparando el SQL *generado* entre `0e69694` y `8243491`:
+  `trg_change_log_products_insert`, `_update` y `_delete` cambiaron (ganan
+  `WHEN COALESCE(is_active,0) = 1`), pero `CREATE TRIGGER IF NOT EXISTS` **no reescribe un
+  trigger ya creado**. En cualquier base real migrada con la 3d, un producto inactivo
+  seguía generando `upsert` y borrarlo seguía emitiendo `delete`: el fallo exacto que la
+  3e venía a arreglar, silenciosamente sin aplicar. Arreglado dropeando y reescribiendo
+  en `ensureChangeLog`; queda cubierto por la sección C del harness, que escribe un cuerpo
+  viejo a mano y verifica que el arranque lo reescribe. `[EJECUTADO]`
+- **El toque plegado incumplía la puerta de coste de la 3d.** Con el refresco dentro del
+  cuerpo de `_update`, `check-3d-replica` pasó de 4/4 a **2/4**. Separado en `*_touch` con
+  guardia: vuelve a **8/8**.
+- **`ALTER TABLE ADD COLUMN` rechaza un `DEFAULT` dinámico** si la tabla tiene filas
+  (`Cannot add a column with non-constant default`). Descarta el `DEFAULT`; sólo trigger.
+- **SQLite no admite `AFTER INSERT OR UPDATE`.** Hay que crear dos triggers.
+- **`_update` se disparaba con el propio toque.** Con `recursive_triggers = OFF` el UPDATE
+  de un trigger no re-dispara su trigger pero **sí dispara a otro** sobre la misma tabla;
+  se evita con `NEW.updated_at IS OLD.updated_at`.
+- **El propio harness fallaba al probar la recuperación de columna** (`no such column:
+  NEW.updated_at`): al hacer `DROP COLUMN` faltaba dropear el `*_touch` junto a los tres
+  de siempre.
+- **`check-3a-register` falló al commitear la 3f.i**, correctamente: el golden declaraba
+  45 altas / 36 bajas y ya no había delta sin commitear. Se reseteó a `[]`, dejando el
+  detalle como documentación.
+- **`replica-live.js` no se copiaba al build.** `check-build-requires` lo detectó en los
+  dos sitios (`.vite/build` y el `app.asar`): el bundle pide `require("./replica-live")`
+  y la lista de copia de `vite.main.config.mjs` no lo incluía. No se tocó el harness —
+  la falta era del build. Arreglado con la línea de copia junto a la de `replica-engine`.
+
+### Pruebas `[EJECUTADO]`
+
+```
+ELECTRON_RUN_AS_NODE=1 node_modules\electron\dist\electron.exe scripts\check-3f-replica.cjs
+=== 3f: 71 PASS / 0 FAIL ===   (EXIT=0)
+```
+
+| Sección | n | Qué cubre |
+|---|---:|---|
+| A · `updated_at` | 24 | columna en las 8 tablas de entidad y **no** en `settings`; 36 triggers; la guardia `WHEN` del `*_touch`; `NEW.updated_at IS OLD.updated_at` en `_update`; `recursive_triggers = 0`; INSERT y UPDATE generan **un solo evento**; dentro del mismo segundo no cambia y **pasado un segundo sí sube**; `replicaPlan` no incluye `updated_at` ni en snapshot ni en plan |
+| B · tumba-sigilos | 13 | activo sin tumba; desactivar (1→0) la **escribe**; reactivar (0→1) la **borra**; borrar la fila la escribe; el PIN de un cajero no genera evento ni tumba; setting fuera de la lista, 0 eventos; `ensureChangeLog` idempotente a 36; los datos no se pierden al re-ejecutar |
+| C · reescritura | 8 | cuerpo viejo escrito a mano → el arranque lo reescribe con la 3f; 1 evento tras reescribir; `DROP COLUMN` + recuperación de la columna, del `*_touch` y del refresco |
+| D · endpoint | 10 | 403 sin emparejar y con token malo; tumba-sigilo presente; **paginación con `limit=1` sin pérdidas**; `since_ts` estricto; una sola página con `limit` alto |
+| E · bucle en vivo | 16 | token cifrado y releído por la misma ruta; **no arranca sin réplica aplicada**; conexión SSE; **INSERT y DELETE del Host aparecen en la caja sin sondeo**; aviso con tabla e id concretos; **caída del Host → reconexión sola → recuperación del hecho sin conexión**; contador de reconexiones; parada limpia |
+
+Coste por venta sobre `check-3d-replica`, 24 corridas `[EJECUTADO]` (4 por variante
+hasta el diseño fijo; las 12 de la última fila son 8 de la 3f.i y 4 tras la 3f.ii):
+
+| Variante | medidas (ms/venta) | pase |
+|---|---|---|
+| base 3d | −7,55 · −6,57 · −0,73 · +0,69 | 4/4 |
+| sólo tumba-sigilo | −3,07 · +0,29 · −0,94 · −2,04 | 4/4 |
+| 3f con toque plegado | +0,76 · +2,50 · +7,47 · −1,98 | **2/4** |
+| 3f con `*_touch` guardado | −0,25 · −2,14 · −2,54 · −0,62 · −5,54 · −3,30 · −2,00 · −1,84 · −2,52 · −5,09 · −0,95 · −8,98 | **12/12** |
+
+La banda de ruido es ancha (dos BD de fichero distintas, ±4 ms/venta), pero el
+criterio no es la media: **ninguna** de las 12 corridas del diseño fijo supera el
+umbral de 2 ms, mientras que el diseño plegado lo superaba en 2 de 4.
+
+### Regresión y empaquetado `[EJECUTADO]`
+
+Todos `EXIT=0`:
+
+| Harness | Resultado |
+|---|---|
+| `check-3f-replica` | 71 PASS / 0 FAIL |
+| `check-3d-replica` | 64 PASS / 0 FAIL (**4/4 corridas**) |
+| `check-3e-events` | 66 PASS / 0 FAIL |
+| `check-3a-register` | 35 PASS / 0 FAIL (golden en `[]`) |
+| `check-3c-link` | 69 PASS / 0 FAIL |
+| `check-3b-sessions` | 31 PASS / 0 FAIL |
+| `check-3a-ipc` | 26 PASS / 0 FAIL |
+| `check-2d-api` | 25 PASS / 0 FAIL |
+| `check-empty-db` | 17 PASS / 0 FAIL |
+| `check-2d-nucleo` | 12 PASS / 0 FAIL |
+| `check-main-load` | 4 PASS / 0 FAIL |
+| `check-role` · `harness-2b` · `harness-2c-nucleo` · `harness-2c-api` | 0 fallos (14 escenarios · 32 checks) |
+| `test-ipc-scopes` · `gen-ipc-allowlist --check` | 0 diffs · 0 mismatches |
+| `npm run package` | artefacto regenerado en `out/Vendia-win32-x64` (2.ª pasada, tras añadir la copia de `replica-live.js`) |
+| `check-build-requires` (**Node normal**, no `ELECTRON_RUN_AS_NODE`) | `OK · arranque-list@` — 29 requires relativos en build, 58 globales en el `app.asar` |
+
+### `[NO VERIFICADO]` en la 3f
+- `safeStorage` real de Electron (heredado de 3c/3d): el harness corre con `RUN_AS_NODE`.
+- El bucle con **varias cajas** a la vez y con la app real abierta; el harness levanta
+  una.
+- La compactación que sube `change_log_first_seq` **sigue sin existir**: aquí sólo se ha
+  implementado y probado su consumo (`resync` → snapshot entero).
+- **El `change_log` propio de la caja crece con cada fila aplicada** (6 eventos y 1
+  tumba-sigilo en el harness de la sección E): la caja tiene los mismos triggers que el
+  Host y nadie lee ese log. Medido, no bloqueante, pero sin límite definido.
+- Coste real del refresco en la BD de producción: el harness usa BD de fichero
+  sintéticas.
