@@ -676,6 +676,33 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     });
   }));
 
+  // 3f · Tumba-sigilos. A diferencia de `change_log` esta tabla NO se
+  // compacta: es la vía de reconciliación cuando a la caja le queda algún
+  // `delete` sin aplicar o cuando el tramo del log ya ni se puede pedir.
+  // El cursor va compuesto porque `ts` resuelve a segundos: varias tumba-sigilos
+  // pueden compartirlo y paginar sólo por `ts` haría saltar filas al cortar en
+  // mitad de un segundo, justo el fallo silencioso que esta tabla viene a evitar.
+  app.get("/api/replica/tombstones", protectBox(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
+    const sinceTs = Number(req.query.since_ts) || 0;
+    const sinceTbl = String(req.query.since_tbl || "");
+    const sinceRow = String(req.query.since_row_id || "");
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
+    const rows = db
+      .prepare(
+        `SELECT tbl, row_id, ts FROM ${dbSchema.TOMBSTONE_TABLE} ` +
+          `WHERE ts > ? OR (ts = ? AND (tbl > ? OR (tbl = ? AND row_id > ?))) ` +
+          `ORDER BY ts, tbl, row_id LIMIT ?`,
+      )
+      .all(sinceTs, sinceTs, sinceTbl, sinceTbl, sinceRow, limit);
+    const last = rows[rows.length - 1];
+    res.json({
+      success: true,
+      tombstones: rows,
+      has_more: rows.length === limit,
+      next: last ? { ts: last.ts, tbl: last.tbl, row_id: last.row_id } : null,
+    });
+  }));
+
   // 3e · Túnel de eventos. La caja se conecta una vez y recibe el pulso del
   // Host sin sondear; si se cae, `EventSource` reconecta solo y reenvía
   // `Last-Event-ID`, que es todo el estado que hace falta para reanudar.

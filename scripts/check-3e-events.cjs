@@ -502,7 +502,7 @@ const countTriggers = (db) => db.prepare(TRIGGER_COUNT_SQL).get().c;
       JSON.stringify(r.data).slice(0, 160),
     );
 
-    check(countTriggers(dbA) === 28, "endBulk restaura los 28 triggers", String(countTriggers(dbA)));
+    check(countTriggers(dbA) === 36, "endBulk restaura los 36 triggers", String(countTriggers(dbA)));
     n = logAll().length;
     addProduct.run("B-2", "Tras el lote", 1, 1, 1, 0);
     check(logAll().length === n + 1, "tras el lote los triggers vuelven a registrar", `${logAll().length - n}`);
@@ -536,7 +536,7 @@ const countTriggers = (db) => db.prepare(TRIGGER_COUNT_SQL).get().c;
       "…y adelanta el hueco MÁS ALLÁ de lo perdido (nada queda mudo)",
       `${recFirst} > ${lost}`,
     );
-    check(countTriggers(dbC) === 28, "…y restaura los 28 triggers", String(countTriggers(dbC)));
+    check(countTriggers(dbC) === 36, "…y restaura los 36 triggers", String(countTriggers(dbC)));
     dbC.close();
   } catch (err) {
     fail++;

@@ -709,6 +709,18 @@ const REPLICATED_TABLES = [
   "settings",
 ];
 const REPLICATED_DENY_COLUMNS = ["cost_price"]; // costos: no viajan a la caja
+// 3f · columnas que sólo interesan en el Host. `updated_at` es metadato de
+// reconciliación: si viajara, la caja lo pisaría al aplicar el cambio y sólo
+// quedaría su hora local en vez de la del Host.
+const REPLICATED_LOCAL_COLUMNS = ["updated_at"];
+// 3f · tablas de entidad que llevan `updated_at`. `settings` queda fuera: es
+// clave/valor, no hay fila-entidad que marcar, y su `change_log.ts` ya dice
+// cuándo cambió.
+const UPDATED_AT_TABLES = REPLICATED_TABLES.filter((t) => t !== "settings");
+// 3f · tumba-sigilo: «(tbl, row_id) ya no está en el conjunto replicable».
+// A diferencia de `change_log` no se compacta, así que aunque la caja pierda
+// el evento `delete` le sigue quedando de dónde reconciliar.
+const TOMBSTONE_TABLE = "replica_tombstones";
 const REPLICATED_CASHIER_COLUMNS = ["id", "name", "role", "is_active"]; // sin PINs
 // Subconjunto de `settings` que la caja necesita para vender/mostrar tickets.
 const REPLICATED_SETTINGS_KEYS = [
@@ -760,6 +772,29 @@ const sqlList = (items) => items.map((k) => `'${String(k).replace(/'/g, "''")}'`
 // Clave de fila en el log: `key` para settings, `id` para el resto.
 const changeLogRowId = (tbl, ref) => `CAST(${ref}.${tbl === "settings" ? "key" : "id"} AS TEXT)`;
 
+// 3f · Sentencias que los triggers escriben además del evento. Van dentro de
+// los ya existentes para que se apaguen juntos en el modo lote y haya UN solo
+// sitio que vigilar. La única excepción es el refresco de `updated_at` en un
+// UPDATE, que necesita `WHEN` propio: ver `changeLogTouchTrigger`.
+const tombstoneClear = (tbl, ref) =>
+  `  DELETE FROM ${TOMBSTONE_TABLE} WHERE tbl = '${tbl}' AND row_id = ${changeLogRowId(tbl, ref)};`;
+
+const tombstoneWrite = (tbl, ref) =>
+  `  INSERT OR REPLACE INTO ${TOMBSTONE_TABLE} (tbl, row_id, ts) ` +
+  `VALUES ('${tbl}', ${changeLogRowId(tbl, ref)}, ${changeLogNow});`;
+
+// Refresca `updated_at`. SQLite no deja asignar a `NEW` desde un trigger, así
+// que sólo cabe un UPDATE sobre la propia tabla; la condición de parada evita
+// que el trigger se dispare a sí mismo si algún día se activa
+// `recursive_triggers`.
+const touchUpdatedAt = (tbl, ref) => {
+  if (!UPDATED_AT_TABLES.includes(tbl)) return null;
+  return (
+    `  UPDATE ${tbl} SET updated_at = ${changeLogNow} ` +
+    `WHERE id = ${ref}.id AND (updated_at IS NULL OR updated_at <> ${changeLogNow});`
+  );
+};
+
 // Trigger de una tabla/operación. `WHEN` filtra el ruido: los PINs de cajero,
 // las claves de settings que la caja no usa y las filas que no están en el
 // conjunto replicable no generan eventos.
@@ -773,14 +808,25 @@ const changeLogTrigger = (tbl, op) => {
   }
   const filter = replicaFilterSql(tbl, op === "DELETE" ? "OLD" : "NEW");
   if (filter) whens.push(filter);
+  // 3f · el refresco de `updated_at` es un UPDATE sobre ESTA misma tabla. Sin
+  // esta cláusula, el trigger de `_insert` dispararía el de `_update` y una
+  // sola inserción escribiría dos eventos en el log.
+  if (op === "UPDATE" && UPDATED_AT_TABLES.includes(tbl)) {
+    whens.push("NEW.updated_at IS OLD.updated_at");
+  }
   const when = whens.length ? `WHEN ${whens.join(" AND ")}` : "";
   const source = op === "DELETE" ? "OLD" : "NEW";
+  const body = [
+    `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
+      `VALUES ('${tbl}', ${changeLogRowId(tbl, source)}, '${op === "DELETE" ? "delete" : "upsert"}', ${changeLogNow});`,
+    op === "DELETE" ? tombstoneWrite(tbl, source) : tombstoneClear(tbl, source),
+    // En INSERT la fila siempre acaba de nacer, así que el toque es inevitable
+    // y va plegado aquí. El del UPDATE vive en `changeLogTouchTrigger`.
+    op === "INSERT" ? touchUpdatedAt(tbl, source) : null,
+  ].filter(Boolean);
   return (
     `CREATE TRIGGER IF NOT EXISTS trg_change_log_${tbl}_${op.toLowerCase()} ` +
-    `AFTER ${op} ON ${tbl}\n${when}\nBEGIN\n` +
-    `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
-    `VALUES ('${tbl}', ${changeLogRowId(tbl, source)}, '${op === "DELETE" ? "delete" : "upsert"}', ${changeLogNow});\n` +
-    `END`
+    `AFTER ${op} ON ${tbl}\n${when}\nBEGIN\n${body.join("\n")}\nEND`
   );
 };
 
@@ -792,15 +838,32 @@ const changeLogTrigger = (tbl, op) => {
 // los otros tres podrían discrepar sobre qué filas viajan.
 const changeLogLeaveTrigger = (tbl) => {
   const inside = (ref) => replicaFilterSql(tbl, ref);
+  const body = [
+    `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
+      `VALUES ('${tbl}', ${changeLogRowId(tbl, "OLD")}, 'delete', ${changeLogNow});`,
+    tombstoneWrite(tbl, "OLD"),
+  ].filter(Boolean);
   return (
     `CREATE TRIGGER IF NOT EXISTS trg_change_log_${tbl}_leave ` +
     `AFTER UPDATE ON ${tbl}\n` +
-    `WHEN ${inside("OLD")} AND NOT ${inside("NEW")}\nBEGIN\n` +
-    `  INSERT INTO ${CHANGE_LOG_TABLE} (tbl, row_id, op, ts) ` +
-    `VALUES ('${tbl}', ${changeLogRowId(tbl, "OLD")}, 'delete', ${changeLogNow});\n` +
-    `END`
+    `WHEN ${inside("OLD")} AND NOT ${inside("NEW")}\nBEGIN\n${body.join("\n")}\nEND`
   );
 };
+
+// 3f · Refresco de `updated_at` en un trigger PROPIO y no plegado en el de
+// `_update`: sólo así puede llevar `WHEN`, porque SQLite no admite sentencias
+// condicionales dentro de un cuerpo. Sin esa guardia el UPDATE se ejecutaba en
+// cada escritura aunque el valor no hubiera cambiado, y era —medido, 12
+// corridas— lo único que hacía incumplir el coste por venta de la 3d. El nombre
+// empieza por `trg_change_log_` a propósito: el modo lote lo apaga con los
+// demás y no queda ningún `updated_at` a medias durante una importación.
+// Su propio UPDATE vuelve a dispararse sólo si se activara
+// `recursive_triggers`, y entonces el `WHEN` ya no cumple → termina solo.
+const changeLogTouchTrigger = (tbl) =>
+  `CREATE TRIGGER IF NOT EXISTS trg_change_log_${tbl}_touch ` +
+  `AFTER UPDATE ON ${tbl}\n` +
+  `WHEN NEW.updated_at IS NULL OR NEW.updated_at <> ${changeLogNow}\n` +
+  `BEGIN\n  UPDATE ${tbl} SET updated_at = ${changeLogNow} WHERE id = NEW.id;\nEND`;
 
 // 3e · Crea/elimina el conjunto completo de triggers. Centralizado porque los
 // usa el arranque Y el modo lote: si estuvieran escritos en dos sitios,
@@ -815,6 +878,10 @@ const changeLogCreateTriggers = (db) => {
   for (const tbl of Object.keys(REPLICATED_FILTERS)) {
     db.exec(changeLogLeaveTrigger(tbl));
   }
+  // 3f · refresco de `updated_at` (las 8 tablas de entidad; `settings` no).
+  for (const tbl of UPDATED_AT_TABLES) {
+    db.exec(changeLogTouchTrigger(tbl));
+  }
 };
 
 const changeLogDropTriggers = (db) => {
@@ -825,6 +892,9 @@ const changeLogDropTriggers = (db) => {
   }
   for (const tbl of Object.keys(REPLICATED_FILTERS)) {
     db.exec(`DROP TRIGGER IF EXISTS trg_change_log_${tbl}_leave`);
+  }
+  for (const tbl of UPDATED_AT_TABLES) {
+    db.exec(`DROP TRIGGER IF EXISTS trg_change_log_${tbl}_touch`);
   }
 };
 
@@ -911,6 +981,25 @@ const ensureChangeLog = (db) => {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_change_log_tbl_row ON ${CHANGE_LOG_TABLE}(tbl, row_id)`,
   );
+  // 3f · la tumba-sigilo se crea aquí y no en `createTables`: es parte del
+  // mismo mecanismo que `change_log`, y una BD sin réplica no la necesita.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ${TOMBSTONE_TABLE} (
+      tbl TEXT NOT NULL,
+      row_id TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      PRIMARY KEY (tbl, row_id)
+    );
+  `);
+  // 3f · las columnas se aseguran ANTES de escribir los triggers que las usan.
+  // Idéntico en BD nueva y en BD existente: si el `DEFAULT` se declarara en
+  // CREATE TABLE, la migración de una BD con filas lo rechazaría
+  // ("Cannot add a column with non-constant default").
+  for (const tbl of UPDATED_AT_TABLES) ensureColumnOn(db, tbl, "updated_at", "INTEGER");
+  // 3f · `CREATE TRIGGER IF NOT EXISTS` no reescribe un cuerpo ya creado, así
+  // que se dropean y se vuelven a crear: sin esto, una BD existente se
+  // quedaría para siempre con los triggers de la entrega que los creó.
+  changeLogDropTriggers(db);
   changeLogCreateTriggers(db);
   // Recuperación: si el Host murió con un lote abierto, aquí se cierra. Es
   // conservador (adelanta el hueco aunque no se haya apagado nada) y siempre
@@ -929,7 +1018,11 @@ const replicaPlan = (db) => {
     plan[tbl] =
       tbl === "cashiers"
         ? cols.filter((c) => REPLICATED_CASHIER_COLUMNS.includes(c))
-        : cols.filter((c) => !REPLICATED_DENY_COLUMNS.includes(c));
+        : cols.filter(
+            (c) =>
+              !REPLICATED_DENY_COLUMNS.includes(c) &&
+              !REPLICATED_LOCAL_COLUMNS.includes(c),
+          );
   }
   return plan;
 };
@@ -949,6 +1042,9 @@ module.exports = {
   REPLICATED_TABLES,
   REPLICATED_FILTERS,
   REPLICATED_DENY_COLUMNS,
+  REPLICATED_LOCAL_COLUMNS,
+  UPDATED_AT_TABLES,
+  TOMBSTONE_TABLE,
   REPLICATED_CASHIER_COLUMNS,
   REPLICATED_SETTINGS_KEYS,
   BULK_FLAG_KEY,

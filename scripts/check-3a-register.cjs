@@ -147,14 +147,35 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas cambia respecto a HEAD. Hoy: ninguno, la 3e
-  // ya está commiteada. En concreto dejó 28 triggers: los tres de `products`
-  // con `WHEN COALESCE(NEW.is_active, 0) = 1` (sólo lo vendible viaja) y el
-  // cuarto `trg_change_log_products_leave`, que entrega la baja (1 → 0) como
-  // `delete`. La próxima entrega que toque el esquema declara aquí SU delta:
-  // cualquier statement no declarado (por arriba o por abajo) rompe la prueba.
-  const DDL_AGREGADO = [];
-  const DDL_BORRADO = [];
+  // DDL que esta línea de entregas cambia respecto a HEAD. La 3e ya está
+  // commiteada; éste es el delta SIN commitear de la 3f:
+  //   · las 8 tablas de entidad ganan `updated_at` —al hacer ALTER, SQLite
+  //     reescribe su `CREATE TABLE`, así que cuentan como alta Y baja—,
+  //   · aparece la tumba-sigilo `replica_tombstones`,
+  //   · los 28 triggers que ya había reescriben su cuerpo (tumba-sigilo +
+  //     cláusula `NEW.updated_at IS OLD.updated_at`),
+  //   · y son NUEVOS los 8 `*_touch`, el trigger con guardia propio que
+  //     refresca `updated_at` sólo cuando de verdad cambia: sólo alta.
+  // Cualquier statement no declarado (por arriba o por abajo) rompe la prueba.
+  const OLD_TRIGGER_NAMES = [
+    ...dbSchema.REPLICATED_TABLES.flatMap((t) =>
+      ["insert", "update", "delete"].map((op) => `trg_change_log_${t}_${op}`),
+    ),
+    "trg_change_log_products_leave",
+  ];
+  const TOUCH_TRIGGER_NAMES = dbSchema.UPDATED_AT_TABLES.map(
+    (t) => `trg_change_log_${t}_touch`,
+  );
+  const DDL_AGREGADO = [
+    ...dbSchema.UPDATED_AT_TABLES.map((t) => new RegExp(`^CREATE TABLE ${t} \\(`)),
+    /^CREATE TABLE replica_tombstones/,
+    ...OLD_TRIGGER_NAMES.map((n) => new RegExp(`CREATE TRIGGER ${n} `)),
+    ...TOUCH_TRIGGER_NAMES.map((n) => new RegExp(`CREATE TRIGGER ${n} `)),
+  ];
+  const DDL_BORRADO = [
+    ...dbSchema.UPDATED_AT_TABLES.map((t) => new RegExp(`^CREATE TABLE ${t} \\(`)),
+    ...OLD_TRIGGER_NAMES.map((n) => new RegExp(`CREATE TRIGGER ${n} `)),
+  ];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -216,7 +237,17 @@ const cashRegisterRow = (db, id) =>
       colDe(before.cols.cash_register, "device_id");
     // 3d · la tabla change_log puede no existir aún en la copia de la BD real.
     const yaTieneLog = Array.isArray(before.cols.change_log);
-    const ESPERADO_3D = yaTieneLog
+    // 3f · delta de esta entrega sobre la BD real: `updated_at` en las 8
+    // tablas de entidad (`settings` se queda fuera: es clave/valor, no tiene
+    // fila-entidad que marcar) y la tumba-sigilo `replica_tombstones`.
+    const ESPERADO_3F = [
+      ...dbSchema.UPDATED_AT_TABLES.map((t) => `+ ${t}.updated_at|INTEGER|nn=0|dflt=null`),
+      "+ tabla nueva replica_tombstones",
+      "+ replica_tombstones.tbl|TEXT|nn=1|dflt=null",
+      "+ replica_tombstones.row_id|TEXT|nn=1|dflt=null",
+      "+ replica_tombstones.ts|INTEGER|nn=1|dflt=null",
+    ];
+    const ESPERADO_3D = (yaTieneLog
       ? []
       : [
           "+ tabla nueva change_log",
@@ -225,7 +256,9 @@ const cashRegisterRow = (db, id) =>
           "+ change_log.row_id|TEXT|nn=0|dflt=null",
           "+ change_log.op|TEXT|nn=1|dflt=null",
           "+ change_log.ts|INTEGER|nn=1|dflt=null",
-        ].sort();
+        ])
+      .concat(ESPERADO_3F)
+      .sort();
     const ESPERADO_B = [
       "+ cash_register.device_id|TEXT|nn=0|dflt=null",
       "+ tabla nueva box_sessions",

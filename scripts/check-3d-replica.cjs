@@ -125,10 +125,10 @@ const dropTriggers = (db) => {
   const dbA = fixture.createFileDb(path.join(TMP, "host.db"));
   seedHost(dbA);
 
-  check(countTriggers(dbA) === 28, "28 triggers de change_log (9 tablas × 3 ops + `_leave` de 3e)", String(countTriggers(dbA)));
+  check(countTriggers(dbA) === 36, "36 triggers de change_log (28 de 3d/3e + 8 `*_touch` de 3f)", String(countTriggers(dbA)));
   dbSchema.ensureChangeLog(dbA);
   dbSchema.ensureChangeLog(dbA);
-  check(countTriggers(dbA) === 28, "ensureChangeLog es idempotente (2 pasadas)", String(countTriggers(dbA)));
+  check(countTriggers(dbA) === 36, "ensureChangeLog es idempotente (2 pasadas)", String(countTriggers(dbA)));
 
   const logAll = () => dbA.prepare("SELECT seq, tbl, row_id, op FROM change_log").all();
   const seqBefore = logAll().length;
@@ -272,7 +272,7 @@ const dropTriggers = (db) => {
       JSON.stringify({ before, after }),
     );
     check(integrity === "ok", "integrity_check = ok tras la migración", String(integrity));
-    check(countTriggers(rdb) === 28, "la BD real gana los 28 triggers", String(countTriggers(rdb)));
+    check(countTriggers(rdb) === 36, "la BD real gana los 36 triggers", String(countTriggers(rdb)));
     check(
       changeLogCols.join(",") === "seq,tbl,row_id,op,ts",
       "change_log tiene exactamente seq,tbl,row_id,op,ts",
