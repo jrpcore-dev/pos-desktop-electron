@@ -32,6 +32,8 @@ const SETTINGS = Object.freeze({
   SYNC_COMPLETED: "sync_completed",
   BOX_DEVICE_ID: "box_device_id",
   BOX_PAIRED_TOKEN: "box_paired_token",
+  // 3g/D · sesión de cajero abierta en el Host (PIN verificado allí).
+  BOX_SESSION_TOKEN: "box_session_token",
 });
 
 // Nombre con el que se escribía el Host remoto antes de separar las claves. Se
@@ -80,26 +82,28 @@ const deleteSetting = (db, key) => {
 };
 
 // Devuelve true si quedó persistida (cifrada), false si no se guardó nada.
-const savePairedToken = (db, token) => {
+// 3g/D · genérico: el mismo trato sirve para el token de emparejamiento y
+// para el de sesión; sólo cambia la clave.
+const saveSecret = (db, key, token) => {
   if (!token) return { persisted: false, reason: "token vacío" };
   if (!cipherReady()) {
-    deleteSetting(db, SETTINGS.BOX_PAIRED_TOKEN); // sin cifrar no se guarda
+    deleteSetting(db, key); // sin cifrar no se guarda
     return { persisted: false, reason: "safeStorage no disponible" };
   }
   activation.setSetting(
     db,
-    SETTINGS.BOX_PAIRED_TOKEN,
+    key,
     TOKEN_ENC_PREFIX + secretCipher.encrypt(String(token)),
   );
   return { persisted: true };
 };
 
 // El token solo se devuelve si está cifrado y hay cipher para abrirlo.
-const readPairedToken = (db) => {
-  const raw = activation.getSetting(db, SETTINGS.BOX_PAIRED_TOKEN);
+const readSecret = (db, key) => {
+  const raw = activation.getSetting(db, key);
   if (!raw) return null;
   if (!raw.startsWith(TOKEN_ENC_PREFIX)) {
-    deleteSetting(db, SETTINGS.BOX_PAIRED_TOKEN); // residuo en claro: se borra
+    deleteSetting(db, key); // residuo en claro: se borra
     return null;
   }
   if (!cipherReady()) return null;
@@ -109,6 +113,19 @@ const readPairedToken = (db) => {
     return null;
   }
 };
+
+const savePairedToken = (db, token) =>
+  saveSecret(db, SETTINGS.BOX_PAIRED_TOKEN, token);
+
+const readPairedToken = (db) => readSecret(db, SETTINGS.BOX_PAIRED_TOKEN);
+
+// 3g/D · sesión de cajero: misma bóveda que el token de emparejamiento.
+const saveSessionToken = (db, token) =>
+  saveSecret(db, SETTINGS.BOX_SESSION_TOKEN, token);
+
+const readSessionToken = (db) => readSecret(db, SETTINGS.BOX_SESSION_TOKEN);
+
+const clearSessionToken = (db) => deleteSetting(db, SETTINGS.BOX_SESSION_TOKEN);
 
 const tokenPersisted = (db) =>
   String(activation.getSetting(db, SETTINGS.BOX_PAIRED_TOKEN) || "").startsWith(TOKEN_ENC_PREFIX);
@@ -125,8 +142,8 @@ const ensureBoxDeviceId = (db) => {
 const getSettings = (db) => {
   const out = { deviceId: ensureBoxDeviceId(db) };
   for (const key of Object.values(SETTINGS)) {
-    // El token cifrado NUNCA sale hacia el renderer: sólo se dice si existe.
-    if (key === SETTINGS.BOX_PAIRED_TOKEN) continue;
+    // Los tokens cifrados NUNCAN salen hacia el renderer: sólo se dice si existe.
+    if (key === SETTINGS.BOX_PAIRED_TOKEN || key === SETTINGS.BOX_SESSION_TOKEN) continue;
     out[key] = activation.getSetting(db, key);
   }
   out.tokenPersisted = tokenPersisted(db);
@@ -144,6 +161,7 @@ const saveSettings = (db, patch = {}) => {
       rawKey === LEGACY_HOST_DEVICE_ID ? SETTINGS.HOST_DEVICE_ID : rawKey;
     if (!Object.values(SETTINGS).includes(key)) continue; // solo claves conocidas
     if (key === SETTINGS.BOX_PAIRED_TOKEN) continue; // sólo por savePairedToken
+    if (key === SETTINGS.BOX_SESSION_TOKEN) continue; // sólo por saveSessionToken
     if (value === undefined || value === null) continue;
     activation.setSetting(db, key, String(value));
   }
@@ -402,6 +420,10 @@ module.exports = {
   safeStorageCipher,
   savePairedToken,
   readPairedToken,
+  // 3g/D · sesión de cajero abierta en el Host.
+  saveSessionToken,
+  readSessionToken,
+  clearSessionToken,
   tokenPersisted,
   ensureBoxDeviceId,
   getSettings,

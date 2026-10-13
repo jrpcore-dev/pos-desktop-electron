@@ -1,36 +1,37 @@
 "use strict";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// C9 · Lista blanca de canales que una CAJA puede ejecutar en el Host.
+// C9/3g-D · Lista blanca de canales que una CAJA ejecuta en el Host.
 //
-// Se derivó leyendo qué invoca exactamente cada pantalla que la caja tiene
-// permitida (Terminal de Ventas, Caja, Layout y el login). La regla es
-// sencilla y es fallar-cerrado: sólo pasa el canal que NO se puede resolver
-// con datos que la caja ya tiene replicados.
+// Regla (paridad total, decisión del dueño): la caja es el sistema completo.
+// Todo lo que NO se puede resolver con datos replicados viaja al Host:
 //
-//   NO aparecen aquí (se resuelven en la propia caja):
-//     get-setting, get-cashiers, search-products, get-customer-by-qr,
-//     get-customer-pricing, get-low-stock-count
-//     → settings, cashiers, products y customers SÍ están replicados, y
-//       volver a pedirlos al Host por cada tecla costaría una ida y vuelta
-//       para traer lo que ya está en disco.
-//     get-server-status, print-receipt, open-cash-drawer, el hilo de la
-//     báscula, list-serial-ports, disconnect-scale, is-scale-connected
-//     → SYSTEM: son hardware del aparato.
+//   · Se resuelven en la propia caja (replicados o hardware): productos,
+//     categorías, clientes, precios, cajeros y settings de negocio se leen
+//     local; Báscula, impresora, respaldos locales y descubrimiento son del
+//     propio aparato.
+//   · Pasan por aquí: ventas, cajas, gastos, movimientos de stock, proveedores,
+//     tareas, insights, saldos, informes, y las ESCRITURAS de catálogo y
+//     clientes. El Host serializa las escrituras y la réplica se las manda a
+//     todas las cajas: un solo dueño del dato, sin choques.
 //
-//   Dos van por su PROPIO endpoint, no por aquí (entrega 3g/D):
+//   Dos van por su PROPIO endpoint, no por /api/rpc:
 //     record-sale         → POST /api/sales   (Idempotency-Key)
 //     verify-cashier-pin  → POST /api/auth    (token de sesión)
 //
-//   Todo lo demás queda FUERA de la lista y se rechaza. En particular
-//   `add-product`, `save-setting`, `import-catalog-data` o `adjust-stock`
-//   jamás deberían poder ejecutarse en el Host desde una caja.
+//   `save-setting` va por aquí con truco: sólo las claves de negocio
+//   (REPLICATED_SETTINGS_KEYS) viajan al Host; las del propio aparato
+//   (báscula, impresora) se escriben en la caja (ver box-rpc-client).
+//
+//   FUERA de la lista, y por tanto rechazadas en la caja, queda sólo la
+//   ADMINISTRACIÓN de la instalación: activación, dispositivos emparejados,
+//   restauración de respaldos, importación masiva del catálogo y las
+//   credenciales de vendesaldo. Eso se hace en el Host.
 //
 // Nota sobre `get-outside-register-sales` y `cancel-sale`: son los dos casos
 // en los que "la venta" puede no tener caja asignada (`register_id IS NULL`).
-// Se incluyen en la lista y se les añadió el filtro por `sales.device_id`
-// (entrega 3g/C): sin esa columna, una caja habría podido leer y cancelar
-// ventas hechas en otra.
+// Se les añadió el filtro por `sales.device_id` (entrega 3g/C): así una caja
+// no puede leer ni cancelar ventas hechas en otra.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RPC_CHANNELS = new Set([
@@ -44,16 +45,69 @@ const RPC_CHANNELS = new Set([
   "close-cash-register",
   "register-cash-expense",
   "delete-cash-expense",
-  // ── caja: cancelaciones (con comprobación de propiedad en main.js) ────────
+  "get-closed-registers",
+  "get-register-movements",
+  "get-register-products",
+  "get-register-sales-detail",
+  // ── cancelaciones (con comprobación de propiedad en main.js) ──────────────
   "cancel-sale",
   "cancel-sale-item",
-  // ── home / Layout: tareas e insights no están replicadas ─────────────────
+  // ── ventas e informes: las ventas viven en el Host ────────────────────────
+  "get-sale-details",
+  "get-sales-by-date",
+  "get-sales-by-range",
+  "get-daily-sales-week",
+  "get-weekly-sales",
+  "get-weekly-sales-range",
+  "get-top-products",
+  "get-expenses-by-date",
+  "get-expenses-by-range",
+  // ── catálogo: el inventario se lee local, se ESCRIBE en el Host ───────────
+  "get-stock-movements",
+  "add-product",
+  "update-product",
+  "delete-product",
+  "add-category",
+  "update-category",
+  "delete-category",
+  "add-stock",
+  "remove-stock",
+  "adjust-stock",
+  "activate-catalog-product",
+  "delete-catalog-product",
+  "update-catalog-name",
+  // ── clientes, niveles y precios ───────────────────────────────────────────
+  "add-customer",
+  "update-customer",
+  "delete-customer",
+  "set-customer-price",
+  "delete-customer-price",
+  "set-tier-price",
+  "delete-tier-price",
+  // ── proveedores ───────────────────────────────────────────────────────────
+  "get-suppliers",
+  "add-supplier",
+  "update-supplier",
+  "delete-supplier",
+  // ── cajeros y tareas (se replican; la escritura va al Host) ───────────────
+  "add-cashier",
+  "update-cashier",
+  "delete-cashier",
+  "add-task",
+  "update-task",
+  "delete-task",
+  "complete-task",
+  "get-tasks-by-date",
+  // ── home: tareas e insights no están replicadas ───────────────────────────
   "get-today-tasks",
   "get-insights",
   "mark-insight",
   "run-weekly-pulse",
-  // ── terminal: el "cliente visto por última vez" se actualiza en el Host ──
   "touch-customer",
+  // ── ajustes de negocio (los del propio aparato se quedan locales) ─────────
+  "save-setting",
+  // ── saldo de clientes: la integración vive en el Host ─────────────────────
+  "vendesaldo:recharge",
 ]);
 
 const has = (channel) => RPC_CHANNELS.has(channel);

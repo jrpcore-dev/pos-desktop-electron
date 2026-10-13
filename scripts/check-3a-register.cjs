@@ -147,20 +147,24 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas cambia respecto a HEAD. Lo único sin
-  // commitear hoy es 3g/C: `sales` gana `device_id`. Como el literal del
-  // CREATE TABLE también lo lleva, SQLite lo reescribe —alta Y baja, igual
-  // que hizo con `updated_at`— y se añade su índice. Cualquier statement no
-  // declarado (por arriba o por abajo) rompe la prueba.
+  // DDL que esta línea de entregas cambia respecto a HEAD. 3g/C (`sales`
+  // gana `device_id`) quedó commiteado en da0f688: si HEAD ya lleva su
+  // índice, no queda delta sin commitear y lo esperado es 0 altas / 0 bajas.
+  // Como el literal del CREATE TABLE también lo lleva, SQLite lo reescribe
+  // —alta Y baja, igual que hizo con `updated_at`— y se añade su índice.
+  // Cualquier statement no declarado (por arriba o por abajo) rompe la prueba.
   //
   // Lo que la 3f.i dejó (ya dentro de HEAD, sólo para que conste): las 8
   // tablas de entidad con `updated_at`, la tumba-sigilo `replica_tombstones`,
   // los 28 triggers reescritos y los 8 `*_touch` nuevos (45 altas / 36 bajas).
-  const DDL_AGREGADO = [
-    /^CREATE TABLE[^;]*\bsales\s*\(/,
-    /CREATE INDEX[^;]*\bidx_sales_device_id\b/,
-  ];
-  const DDL_BORRADO = [/^CREATE TABLE[^;]*\bsales\s*\(/];
+  const headYaMigrado = ddlOld.some((s) => /idx_sales_device_id/.test(s));
+  const DDL_AGREGADO = headYaMigrado
+    ? []
+    : [
+        /^CREATE TABLE[^;]*\bsales\s*\(/,
+        /CREATE INDEX[^;]*\bidx_sales_device_id\b/,
+      ];
+  const DDL_BORRADO = headYaMigrado ? [] : [/^CREATE TABLE[^;]*\bsales\s*\(/];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);

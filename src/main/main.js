@@ -28,6 +28,9 @@ const changeLogCompact = require("./change-log-compact");
 // 3g/C · identidad del que hace la petición: se rellena sólo dentro de
 // `/api/rpc`, para que los handlers sepan de qué caja viene la llamada.
 const rpcContext = require("./rpc-context");
+// 3g/D · puente IPC→HTTP de la caja: el rol cliente manda al Host los
+// canales con scope `rpc` en lugar de ejecutarlos aquí.
+const boxRpc = require("./box-rpc-client");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -40,6 +43,9 @@ let deviceRole = ipcScopes.ROLES.HOST;
 ipcScopes.installIpcScopeGuard({
   ipcMain,
   getRole: () => deviceRole,
+  // 3g/D · `db` se lee al vuelo en cada llamada: el guard se instala antes de
+  // abrir la BD y esto sólo se ejecuta cuando un renderer invoca un canal.
+  forwardRpc: (channel, args) => boxRpc.forward(db, channel, args),
 });
 
 const legacyUserData = path.join(app.getPath("appData"), "JRP POS");
