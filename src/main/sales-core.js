@@ -103,7 +103,9 @@ const createSaleTx = (
   const registerId = openReg ? openReg.id : null;
 
   const saleStmt = db.prepare(
-    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id) VALUES (?, ?, ?, ?, ?, ?)",
+    // 3g/C · `device_id` deja constancia de qué aparato hizo la venta: sin él,
+    // una venta sin caja abierta no se puede atribuir a nadie.
+    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   const saleInfo = saleStmt.run(
     total,
@@ -112,6 +114,7 @@ const createSaleTx = (
     registerId,
     cashierName || "Usuario Principal",
     resolvedCustomerId,
+    deviceId || null,
   );
   const saleId = saleInfo.lastInsertRowid;
 

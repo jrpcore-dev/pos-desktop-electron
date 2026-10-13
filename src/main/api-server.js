@@ -7,6 +7,11 @@ const salesCore = require("./sales-core");
 const dbSchema = require("./db-schema");
 const protocol = require("./protocol");
 const { createChangeStream } = require("./change-stream");
+// 3g/C · puerta única: los handlers IPC del Host, su lista blanca y el
+// contexto de quién llama.
+const ipcRegistry = require("./ipc-registry");
+const rpcChannels = require("./rpc-channels");
+const rpcContext = require("./rpc-context");
 
 // Serialización canónica para la huella de idempotencia (Entrega 2c-B):
 // claves ordenadas en cada nivel, arrays en orden y tipos JSON normales, para
@@ -840,6 +845,76 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
   // vive en el núcleo (MAX_CART_LINES). La huella de idempotencia se calcula
   // sobre una serialización canónica (claves ordenadas) de los campos del
   // cliente; la identidad del cajero siempre viene del token, nunca del body.
+  // ─── 3g/C · PUERTA ÚNICA: la caja pide handlers del Host ──────────────────
+  //
+  // Un handler de `ipcMain` no sabe si lo está llamando el renderer local o
+  // una caja remota, y justamente eso es lo que hay que arreglar. Aquí la
+  // petición se ejecuta DENTRO de un contexto con el device_id del que llama,
+  // así que `currentDeviceId()` en el handler devuelve la caja de la que vino
+  // y no el Host: eso es lo que impide que dos cajas se cuelen los registros
+  // la una a la otra.
+  //
+  // Tres filtros, en este orden:
+  //   1. identidad de la caja + su scope (protectBox),
+  //   2. sesión de cajero viva (requireAuth) — abrir caja es un acto de cajero,
+  //   3. lista blanca de canales (rpc-channels) — todo lo demás se rechaza
+  //      aunque el handler exista en el Host.
+  const protectRpc = [
+    requirePairedApproved,
+    requireAuth,
+    requireDeviceScope(scopeDefs.SCOPE.REGISTER_ALL),
+  ];
+
+  app.post("/api/rpc", protectRpc, safe(async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const channel = String(body.channel || "");
+    const args = Array.isArray(body.args) ? body.args : [];
+
+    if (!channel) {
+      return res
+        .status(400)
+        .json({ success: false, code: "RPC_CHANNEL_REQUIRED", error: "Falta el canal" });
+    }
+    if (args.length > 64) {
+      return res
+        .status(413)
+        .json({ success: false, code: "RPC_ARGS_TOO_MANY", error: "Demasiados argumentos" });
+    }
+    if (!rpcChannels.has(channel)) {
+      return res.status(403).json({
+        success: false,
+        code: "RPC_CHANNEL_NOT_ALLOWED",
+        error: `El canal "${channel}" no está en la lista blanca del Host`,
+      });
+    }
+    const listener = ipcRegistry.get(channel);
+    if (!listener) {
+      return res.status(404).json({
+        success: false,
+        code: "RPC_CHANNEL_UNKNOWN",
+        error: `El Host no expone "${channel}"`,
+      });
+    }
+
+    try {
+      const result = await rpcContext.runWithCallContext(
+        { deviceId: req.deviceId, cashierId: req.cashierId || null },
+        () => listener(null, ...args),
+      );
+      // El valor del handler tal cual: si devuelve {success:false, ...} eso
+      // es lo que el renderer tenía que ver, igual que por IPC.
+      return res.json({ success: true, result: result === undefined ? null : result });
+    } catch (err) {
+      // Misma conducta que el IPC local: una excepción del handler se
+      // devuelve como fallo de la llamada, no como 500 genérico del servidor.
+      return res.json({
+        success: false,
+        code: "RPC_HANDLER_ERROR",
+        error: (err && err.message) || String(err),
+      });
+    }
+  }));
+
   app.post("/api/sales", protect(scopeDefs.SCOPE.SALES_WRITE), safe(async (req, res) => {
     const key = String(req.headers["idempotency-key"] || "").trim();
     if (!key)

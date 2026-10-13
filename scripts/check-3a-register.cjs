@@ -147,23 +147,20 @@ const cashRegisterRow = (db, id) =>
   const ddlOld = buildDdlWith(oldMod);
   const ddlNew = buildDdlWith(dbSchema);
   const d = diffSets(ddlOld, ddlNew);
-  // DDL que esta línea de entregas cambia respecto a HEAD. La 3f.i ya está
-  // commiteada, así que hoy no hay NINGÚN cambio de esquema sin commitear:
-  // éste es el estado correcto, y si vuelve a salir un statement de aquí es
-  // que alguien tocó el esquema y no lo declaró.
+  // DDL que esta línea de entregas cambia respecto a HEAD. Lo único sin
+  // commitear hoy es 3g/C: `sales` gana `device_id`. Como el literal del
+  // CREATE TABLE también lo lleva, SQLite lo reescribe —alta Y baja, igual
+  // que hizo con `updated_at`— y se añade su índice. Cualquier statement no
+  // declarado (por arriba o por abajo) rompe la prueba.
   //
-  // Lo que la 3f.i dejó (ya dentro de HEAD, sólo para que conste):
-  //   · las 8 tablas de entidad ganan `updated_at` —al hacer ALTER, SQLite
-  //     reescribe su `CREATE TABLE`, así que contaron como alta Y baja—,
-  //   · aparece la tumba-sigilo `replica_tombstones`,
-  //   · los 28 triggers que ya había reescribieron su cuerpo (tumba-sigilo +
-  //     cláusula `NEW.updated_at IS OLD.updated_at`),
-  //   · y son NUEVOS los 8 `*_touch`, el trigger con guardia propio que
-  //     refresca `updated_at` sólo cuando de verdad cambia.
-  // Total: 45 altas / 36 bajas. La 3f.ii (bucle en vivo) no toca el esquema.
-  // Cualquier statement no declarado (por arriba o por abajo) rompe la prueba.
-  const DDL_AGREGADO = [];
-  const DDL_BORRADO = [];
+  // Lo que la 3f.i dejó (ya dentro de HEAD, sólo para que conste): las 8
+  // tablas de entidad con `updated_at`, la tumba-sigilo `replica_tombstones`,
+  // los 28 triggers reescritos y los 8 `*_touch` nuevos (45 altas / 36 bajas).
+  const DDL_AGREGADO = [
+    /^CREATE TABLE[^;]*\bsales\s*\(/,
+    /CREATE INDEX[^;]*\bidx_sales_device_id\b/,
+  ];
+  const DDL_BORRADO = [/^CREATE TABLE[^;]*\bsales\s*\(/];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -227,14 +224,22 @@ const cashRegisterRow = (db, id) =>
     const yaTieneLog = Array.isArray(before.cols.change_log);
     // 3f · delta de esta entrega sobre la BD real: `updated_at` en las 8
     // tablas de entidad (`settings` se queda fuera: es clave/valor, no tiene
-    // fila-entidad que marcar) y la tumba-sigilo `replica_tombstones`.
-    const ESPERADO_3F = [
-      ...dbSchema.UPDATED_AT_TABLES.map((t) => `+ ${t}.updated_at|INTEGER|nn=0|dflt=null`),
-      "+ tabla nueva replica_tombstones",
-      "+ replica_tombstones.tbl|TEXT|nn=1|dflt=null",
-      "+ replica_tombstones.row_id|TEXT|nn=1|dflt=null",
-      "+ replica_tombstones.ts|INTEGER|nn=1|dflt=null",
-    ];
+    // fila-entidad que marcar) y la tumba-sigilo `replica_tombstones`. Si la
+    // BD real ya pasó por 3f —la app corrió tras commitearla— el delta es 0.
+    const yaTieneTumbas = Array.isArray(before.cols.replica_tombstones);
+    const ESPERADO_3F = yaTieneTumbas
+      ? []
+      : [
+          ...dbSchema.UPDATED_AT_TABLES.map((t) => `+ ${t}.updated_at|INTEGER|nn=0|dflt=null`),
+          "+ tabla nueva replica_tombstones",
+          "+ replica_tombstones.tbl|TEXT|nn=1|dflt=null",
+          "+ replica_tombstones.row_id|TEXT|nn=1|dflt=null",
+          "+ replica_tombstones.ts|INTEGER|nn=1|dflt=null",
+        ];
+    // 3g/C · `sales` gana `device_id`: es lo que faltaba para saber qu�
+    // APARATO hizo cada venta, y por tanto para filtrar por caja las ventas
+    // sin registro y para que una caja no cancele la venta de otra.
+    const ESPERADO_3G = colDe(before.cols.sales, "device_id") ? [] : ["+ sales.device_id|TEXT|nn=0|dflt=null"];
     const ESPERADO_3D = (yaTieneLog
       ? []
       : [
@@ -272,36 +277,37 @@ const cashRegisterRow = (db, id) =>
     for (const i of idxDiff.removed) console.log("    - indice " + i);
     const visto = [...colDiff].sort();
     // La BD real puede venir ya migrada de 3a.i+3b, pero change_log es nuevo
-    // en 3d: el diff esperado es el de 3b (si falta migrar) más el de 3d.
-    const esperadoCol = yaMigrada ? ESPERADO_3D : ESPERADO_B;
+    // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
+    // falta migrar) más el de 3d más el de 3g.
+    const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B).concat(ESPERADO_3G).sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
       yaMigrada
-        ? "la BD real ganó SOLO change_log (3d): nada más cambió"
-        : "el esquema SOLO gana device_id + box_sessions + change_log",
+        ? "la BD real ganó SOLO change_log (3d) + sales.device_id (3g/C)"
+        : "el esquema SOLO gana device_id + box_sessions + change_log + sales.device_id",
       JSON.stringify(colDiff),
     );
+    // Índices declarados por esta línea (3a+3d+3g), quitando los que la BD
+    // real ya traiga de antes: el resto tiene que aparecer exactamente así.
+    const idxDeclarados = [
+      ...(yaMigrada ? [] : ["cash_register.idx_cash_register_device"]),
+      ...(yaTieneLog ? [] : ["change_log.idx_change_log_tbl_row"]),
+      "sales.idx_sales_device_id",
+    ]
+      .filter((i) => !before.indexes.includes(i))
+      .sort();
     check(
-      yaMigrada
-        ? idxDiff.added.length === (yaTieneLog ? 0 : 1) &&
-            (yaTieneLog || idxDiff.added[0] === "change_log.idx_change_log_tbl_row") &&
-            idxDiff.removed.length === 0
-        : idxDiff.added.length === 2 &&
-            idxDiff.added.includes("cash_register.idx_cash_register_device") &&
-            idxDiff.added.includes("change_log.idx_change_log_tbl_row") &&
-            idxDiff.removed.length === 0,
-      yaMigrada
-        ? yaTieneLog
-          ? "con la BD ya migrada tampoco aparecen índices nuevos"
-          : "la BD ganó sólo el índice del change_log (3d)"
-        : "el esquema SOLO gana idx_cash_register_device + idx_change_log_tbl_row",
-      JSON.stringify(idxDiff),
+      idxDiff.added.join(",") === idxDeclarados.join(",") && idxDiff.removed.length === 0,
+      "los índices ganados son exactamente los declarados (3a+3d+3g)",
+      JSON.stringify({ esperado: idxDeclarados, ...idxDiff }),
     );
     check(
       colDe(after.cols.cash_register, "device_id") &&
+        colDe(after.cols.sales, "device_id") &&
         BOX_SESSIONS_COLS.every((c) => colDe(after.cols.box_sessions, c)) &&
-        after.indexes.includes("cash_register.idx_cash_register_device"),
-      "el esquema terminado tiene device_id + box_sessions + su índice",
+        after.indexes.includes("cash_register.idx_cash_register_device") &&
+        after.indexes.includes("sales.idx_sales_device_id"),
+      "el esquema terminado tiene device_id + box_sessions + sales.device_id y sus índices",
       JSON.stringify({ box_sessions: after.cols.box_sessions }),
     );
     check(integrity === "ok", "integrity_check = ok", String(integrity));

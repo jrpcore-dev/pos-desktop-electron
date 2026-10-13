@@ -70,6 +70,7 @@ const createTables = (db) => {
     discount_total REAL DEFAULT 0,
     cashier_name TEXT DEFAULT 'Usuario Principal',
     customer_id INTEGER,
+    device_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -229,6 +230,12 @@ const createTables = (db) => {
   ensureColumn("sales", "stock_conflict", "INTEGER DEFAULT 0");
   ensureColumn("sales", "conflict_detail", "TEXT");
   ensureColumn("sales", "customer_id", "INTEGER");
+  // 3g/C · qué APARATO hizo la venta. `sales` sólo se puede atribuir a una
+  // caja a través de `register_id`, y una venta sin caja (`register_id IS NULL`)
+  // no se podía filtrar de ninguna forma: una caja habría leído y cancelado
+  // ventas hechas en otra. Las filas antiguas quedan a NULL, que es lo que
+  // significa "no sabido"; los filtros de más abajo las tratan como ajenas.
+  ensureColumn("sales", "device_id", "TEXT");
   // Make product_id nullable (recreate table) using a fresh PRAGMA check
   const siColsFresh = db.prepare("PRAGMA table_info(sale_items)").all();
   const pcol = siColsFresh.find((c) => c.name === "product_id");
@@ -348,6 +355,12 @@ const runMigrations = (db) => {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_sales_register_id ON sales(register_id)`,
+  );
+  // 3g/C · filtro por aparato en las ventas sin caja. Cada `db.exec` es de un
+  // solo statement: pasar dos literales como argumentos extras se ignora en
+  // silencio y el índice no llega a crearse.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sales_device_id ON sales(device_id)`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_sales_payment_method ON sales(payment_method)`,

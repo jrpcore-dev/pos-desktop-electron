@@ -25,6 +25,10 @@ const CLIENT_ROLE_ENABLED = false;
 
 const ROLES = Object.freeze({ HOST: "host", CLIENT: "client" });
 
+// C9 · los listeners registrados aquí se guardan también en el registro que
+// lee `/api/rpc`; es el único punto por el que pasa todo `ipcMain.handle`.
+const ipcRegistry = require("./ipc-registry");
+
 const SCOPES = Object.freeze({
   SYSTEM: "system",
   LOCAL_READ: "local_read",
@@ -214,6 +218,10 @@ const installIpcScopeGuard = ({ ipcMain, getRole, onDenied }) => {
 
   const originalHandle = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, listener) => {
+    // C9 · se archiva el listener CRUDO, sin envolver. `/api/rpc` lo ejecuta
+    // con el contexto del llamante y con su propia lista blanca; el guard de
+    // rol de abajo sólo protege el IPC local.
+    ipcRegistry.set(channel, listener);
     const guarded = (event, ...args) => {
       const role =
         typeof getRole === "function" ? getRole() : ROLES.HOST;

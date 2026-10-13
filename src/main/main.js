@@ -25,6 +25,9 @@ const { runBatched } = require("./batch-runner");
 // stock o edición). A2 · poda del log y de las tumbas.
 const { startChangeLogWatch } = require("./change-log-watch");
 const changeLogCompact = require("./change-log-compact");
+// 3g/C · identidad del que hace la petición: se rellena sólo dentro de
+// `/api/rpc`, para que los handlers sepan de qué caja viene la llamada.
+const rpcContext = require("./rpc-context");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -153,6 +156,15 @@ runMigrations(db);
 
 // 3a.i · device_id del Host, generado en el primer arranque (settings).
 const hostDeviceId = dbSchema.ensureHostDeviceId(db);
+
+// 3g/C · el device_id al que pertenece la caja del llamante.
+//
+// Fuera de una llamada RPC no hay contexto y devuelve el del propio Host, con
+// lo que el comportamiento local queda idéntico al de siempre. Dentro de
+// `/api/rpc` devuelve el de la caja que pidió el handler, y así cada consulta
+// de registro se recorta a SU caja en vez de mirar el cajón del vecino.
+// Un solo sitio: todos los handlers de registro pasan por aquí.
+const callerDeviceId = () => rpcContext.currentDeviceId() || hostDeviceId;
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -1950,7 +1962,7 @@ ipcMain.handle(
         cashierId,
         role,
         customerId,
-        deviceId: hostDeviceId,
+        deviceId: callerDeviceId(),
       }),
     );
 
@@ -2177,7 +2189,7 @@ function toUTCDateRange(mxDateStr) {
 
 // ─── REGISTER HELPERS ──────────────────────────────────────
 function findOpenRegister(cashierId, role) {
-  return salesCore.findOpenRegister(db, cashierId, role, hostDeviceId);
+  return salesCore.findOpenRegister(db, cashierId, role, callerDeviceId());
 }
 
 function isWithinCancelWindow(closedAt) {
@@ -2862,7 +2874,7 @@ ipcMain.handle(
           .prepare(
             "SELECT * FROM cash_register WHERE date = ? AND device_id = ? ORDER BY id DESC LIMIT 1",
           )
-          .get(mxToday(), hostDeviceId);
+          .get(mxToday(), callerDeviceId());
       }
       if (register) {
         const opener = db
@@ -2898,7 +2910,7 @@ ipcMain.handle(
         .prepare(
           "SELECT * FROM cash_register WHERE status = 'open' AND device_id = ? ORDER BY id ASC",
         )
-        .all(hostDeviceId);
+        .all(callerDeviceId());
       for (const existing of openRegisters) {
         // Auto-close the previous register before opening new one
         const sales = db
@@ -2936,7 +2948,7 @@ ipcMain.handle(
 
       db.prepare(
         "INSERT INTO cash_register (date, opening_balance, cashier_id, opened_by, device_id) VALUES (?, ?, ?, ?, ?)",
-      ).run(today, openingBalance || 0, cashierId || null, cashierId || null, hostDeviceId);
+      ).run(today, openingBalance || 0, cashierId || null, cashierId || null, callerDeviceId());
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -2970,7 +2982,7 @@ ipcMain.handle(
              WHERE cr.status = 'open' AND cr.device_id = ?
              ORDER BY cr.id DESC LIMIT 1`,
           )
-          .get(hostDeviceId);
+          .get(callerDeviceId());
       }
       if (!register) return { success: false, error: "No hay caja abierta" };
 
@@ -3087,7 +3099,7 @@ ipcMain.handle("get-previous-register-today", async () => {
       .prepare(
         "SELECT * FROM cash_register WHERE status = 'closed' AND closed_at IS NOT NULL AND device_id = ? ORDER BY closed_at DESC LIMIT 1",
       )
-      .get(hostDeviceId);
+      .get(callerDeviceId());
     return { success: true, register: register || null };
   } catch (error) {
     return { success: false, error: error.message };
