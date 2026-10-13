@@ -24,11 +24,20 @@ const DEVICE_TYPE = "desktop_box";
 const SETTINGS = Object.freeze({
   DEVICE_ROLE: "device_role",
   HOST_URL: "host_url",
-  HOST_DEVICE_ID: "host_device_id",
+  // B6 · ANTES esta clave era `host_device_id`, la MISMA que el Host guarda
+  // como identidad propia (db-schema HOST_DEVICE_ID_KEY). En una sola BD se
+  // pisaban: `ensureHostDeviceId` leía aquí el id del Host VECINO y lo usaba
+  // como device_id local de la caja. Ahora cada uno tiene la suya.
+  HOST_DEVICE_ID: "linked_host_device_id",
   SYNC_COMPLETED: "sync_completed",
   BOX_DEVICE_ID: "box_device_id",
   BOX_PAIRED_TOKEN: "box_paired_token",
 });
+
+// Nombre con el que se escribía el Host remoto antes de separar las claves. Se
+// sigue aceptando al escribir para que una caja ya emparejada no pierda su
+// vínculo al actualizar.
+const LEGACY_HOST_DEVICE_ID = "host_device_id";
 
 const fail = (code, error, extra = {}) => ({ success: false, code, error, ...extra });
 const trimUrl = (u) => String(u || "").replace(/\/+$/, "");
@@ -121,11 +130,18 @@ const getSettings = (db) => {
     out[key] = activation.getSetting(db, key);
   }
   out.tokenPersisted = tokenPersisted(db);
+  // B7 · la caja decide desde AQUÍ si puede vender, con la misma `canSell` que
+  // usa main. Si se calculara en el renderer habría dos verdades distintas.
+  out.canSell = canSell(db);
   return out;
 };
 
 const saveSettings = (db, patch = {}) => {
-  for (const [key, value] of Object.entries(patch)) {
+  for (const [rawKey, value] of Object.entries(patch)) {
+    // B6 · `host_device_id` es la clave del Host y aquí significa el Host
+    // REMOTO: se traduce a `linked_host_device_id` en lugar de tirarla.
+    const key =
+      rawKey === LEGACY_HOST_DEVICE_ID ? SETTINGS.HOST_DEVICE_ID : rawKey;
     if (!Object.values(SETTINGS).includes(key)) continue; // solo claves conocidas
     if (key === SETTINGS.BOX_PAIRED_TOKEN) continue; // sólo por savePairedToken
     if (value === undefined || value === null) continue;

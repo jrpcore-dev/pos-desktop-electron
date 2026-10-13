@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { flushSync } from "react-dom";
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import SetupWizardScreen from "./components/SetupWizardScreen";
 import AddProductModal from "./components/AddProductModal";
 import LoginScreen from "./components/LoginScreen";
+import BoxSetupScreen from "./components/BoxSetupScreen";
 import Catalog from "./components/Catalog";
 import ToastProvider from "./components/ToastProvider";
 import { Spinner } from "./components/ui/spinner";
@@ -50,6 +51,33 @@ const AppInner = () => {
   const [showSetup, setShowSetup] = useState(false);
   const [setupPreview, setSetupPreview] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
+
+  // B7 · estado de la caja. `null` = todavía sin preguntar; `{}` = no se pudo
+  // saber (se trata como Host en vez de quedarse cargando para siempre).
+  const [box, setBox] = useState(null);
+  const loadBox = useCallback(async () => {
+    try {
+      const s = await window.api.invoke("box-get-settings");
+      setBox(s && typeof s === "object" ? s : {});
+    } catch {
+      setBox({});
+    }
+  }, []);
+
+  const isBoxDevice = !!box && box.device_role === "client";
+  const canSell = isBoxDevice && box.canSell === true;
+
+  useEffect(() => {
+    loadBox();
+  }, [loadBox]);
+
+  // Sólo la caja se vigila, y sólo mientras no pueda vender: así el paso de
+  // vincular y la descarga se reflejan solos sin sondear nada en el Host.
+  useEffect(() => {
+    if (!isBoxDevice || canSell) return;
+    const timer = setInterval(loadBox, 1200);
+    return () => clearInterval(timer);
+  }, [isBoxDevice, canSell, loadBox]);
 
   const applyModeClass = (next) => {
     const root = document.documentElement;
@@ -153,6 +181,30 @@ const AppInner = () => {
       </div>
     </div>
   );
+
+  // B7 · la caja corta ANTES que todo lo demás. Mientras no esté sincronizada
+  // no hay catálogo propio ni cajeros propios, así que ni el asistente de
+  // instalación ni el login tienen sentido: sólo vincular y descargar. No es
+  // un botón desactivado, es que no existe ningún sitio al que se pueda llegar.
+  if (box === null) {
+    return (
+      <ThemeModeContext.Provider value={colorMode}>
+        <ToastProvider>
+          {loadingScreen}
+        </ToastProvider>
+      </ThemeModeContext.Provider>
+    );
+  }
+
+  if (isBoxDevice && !canSell) {
+    return (
+      <ThemeModeContext.Provider value={colorMode}>
+        <ToastProvider>
+          <BoxSetupScreen settings={box} onRefresh={loadBox} />
+        </ToastProvider>
+      </ThemeModeContext.Provider>
+    );
+  }
 
   if (isFirstTime === null) {
     return (

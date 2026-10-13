@@ -92,7 +92,7 @@ const parseFrames = (text) => {
   return { frames, buffer };
 };
 
-const pullDelta = async (ctx) => {
+const pullDelta = async (ctx, opts = {}) => {
   if (ctx.pulling) return; // un solo vuelo a la vez: el bucle se re-entraría
   ctx.pulling = true;
   try {
@@ -123,7 +123,10 @@ const pullDelta = async (ctx) => {
       if (!Number.isFinite(next) || next <= since) break; // nada que avanzar
       since = next;
     }
-    setLive(ctx, "connected", null);
+    // B8 · durante la espera de reconexión se sondea SIN pisar el estado: el
+    // flujo sigue caído aunque el HTTP conteste, y enseñar "conectado" mientras
+    // pasa eso engaña a quien esté mirando `replica-status`.
+    if (!opts.quiet) setLive(ctx, "connected", null);
   } finally {
     ctx.pulling = false;
   }
@@ -176,6 +179,35 @@ const handleFrame = async (ctx, frame) => {
       break;
     default:
       break;
+  }
+};
+
+// B8 · red de seguridad bajo el SSE. El flujo es lo primero, pero mientras
+// espera a que vuelva el bucle no se queda ciego: dentro de la espera se pide
+// el delta a `/api/replica/changes` cada 4 s (ventana objetivo 3-5 s).
+//
+// · El cursor manda: aplicar dos veces el mismo cambio es inocuo (upserts y
+//   borrados por clave primaria), así que esto sólo puede añadir, no romper.
+// · Un tramo ya podado sigue contestando `resync`, igual que por el flujo, así
+//   que la compactación de A2 también queda cubierta en este camino.
+// · El estado no se toca (`quiet`): sigue habiendo una caída que arreglar, y
+//   `replica-status` tiene que poder verla.
+const POLL_MS = 4000;
+
+const sleepWhilePolling = async (ctx, waitMs) => {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const left = deadline - Date.now();
+    if (left <= 0 || !ctx.running) return;
+    await sleep(ctx, Math.min(POLL_MS, left));
+    if (!ctx.running) return;
+    try {
+      const creds = credentials(ctx.db);
+      if (!creds.hostUrl || !creds.deviceId || !creds.token) return;
+      await pullDelta(ctx, { quiet: true });
+    } catch (err) {
+      // El Host sigue sin estar: se reintenta en la vuelta siguiente del bucle.
+    }
   }
 };
 
@@ -257,7 +289,7 @@ const startLiveSync = (opts = {}) => {
         const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.retry, 5));
         ctx.retry += 1;
         activation.setSetting(ctx.db, KEYS.RECONNECTS, String(ctx.retry));
-        await sleep(ctx, wait);
+        await sleepWhilePolling(ctx, wait);
         continue;
       }
       if (!ctx.running) return;
@@ -265,7 +297,7 @@ const startLiveSync = (opts = {}) => {
       const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.retry, 5));
       ctx.retry += 1;
       activation.setSetting(ctx.db, KEYS.RECONNECTS, String(ctx.retry));
-      await sleep(ctx, wait);
+      await sleepWhilePolling(ctx, wait);
     }
   })().catch((err) => {
     // Por si algo escapa del try: el bucle ya no puede notificar por su cuenta,

@@ -139,6 +139,15 @@ try {
   deviceRole = ipcScopes.ROLES.HOST;
 }
 
+// B6 · ¿Este aparato es una caja? No basta con `device_role`: existe una
+// ventana (par no escrito todavía) en la que la caja ya lleva `host_url` pero
+// el rol aún no. En esa ventana también tiene que dejar de ejecutar las tareas
+// de Host, porque las cuatro de abajo arreglan o respaldan datos LOCALES y en
+// una caja no hay nada propio que migrar: su verdad vive en el Host.
+const isBoxDevice = () =>
+  deviceRole === ipcScopes.ROLES.CLIENT ||
+  String(activation.getSetting(db, "host_url") || "").trim() !== "";
+
 
 runMigrations(db);
 
@@ -395,15 +404,26 @@ const createMainWindow = () => {
 app.on("ready", async () => {
   // Sin menú de aplicación: evita recargas accidentales (Ctrl+R) y devtools
   Menu.setApplicationMenu(null);
-  migrateLegacyBackups();
-  migrateRegisterContinuity();
-  maybeRunAutoBackup();
-  setInterval(maybeRunAutoBackup, 6 * 60 * 60 * 1000);
+  // B6 · en caja se saltan las cuatro tareas de datos locales del Host:
+  // migrar respaldos propios, migrar continuidad de caja, respaldo automático
+  // y su temporizador de 6 h. El temporizador tampoco se crea, para no dejar
+  // un intervalo vivo que nada va a consumir.
+  const boxDevice = isBoxDevice();
+  if (!boxDevice) {
+    migrateLegacyBackups();
+    migrateRegisterContinuity();
+    maybeRunAutoBackup();
+    setInterval(maybeRunAutoBackup, 6 * 60 * 60 * 1000);
+  }
 
   // 3e · se espera dentro de `ready` a propósito: el orden de arranque es el
   // de siempre (catálogo cargado ANTES de crear la ventana), solo que ahora
   // la carga troceada devuelve el hilo y no congela el arranque.
-  await seedCatalogIfEmpty(process.env.JRP_FORCE_CATALOG_IMPORT === "1");
+  // B6 · en caja no se siembra nada: el snapshot del Host la reemplaza entero
+  // con `swap`, así que importar el catálogo local sólo sería perder tiempo.
+  if (!boxDevice) {
+    await seedCatalogIfEmpty(process.env.JRP_FORCE_CATALOG_IMPORT === "1");
+  }
 
   createMainWindow();
   createTray();
@@ -2678,7 +2698,18 @@ ipcMain.handle("replica-sync-now", async (event, opts) => {
   const st = replicaEngine.state(db);
   if (!st.sync_completed) {
     // Descarga inicial: staging + swap atómico. `db-changed` se emite al final.
-    const result = await replicaEngine.downloadSnapshot(db, opts || {});
+    // B7 · el progreso se manda como EVENTO: `onProgress` es una función de
+    // main y por IPC sólo pasan datos. Canal nuevo, por eso se declara aquí y
+    // se regenera el allowlist de preload.
+    const onProgress = (payload) => {
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send("replica-progress", payload);
+      }
+    };
+    const result = await replicaEngine.downloadSnapshot(db, {
+      ...(opts || {}),
+      onProgress,
+    });
     if (result && result.success) {
       emitDbChanged(result.tables || [], {});
       // De aquí en adelante la caja sigue sola: los deltas ya no pide nada.
