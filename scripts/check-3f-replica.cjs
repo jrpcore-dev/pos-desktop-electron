@@ -531,9 +531,11 @@ const tombstones = (db, tbl, rowId) =>
       JSON.stringify(replicaLive.liveState(boxDb)),
     );
 
-    // Observación (sin aserción): la caja tiene los MISMOS triggers que el
-    // Host, así que cada fila aplicada también escribe en SU change_log. No lo
-    // lee nadie, pero conviene ver cuánto pesa.
+    // Observación (sin aserción): esta caja de la prueba NUNCA adoptó el rol
+    // "client" (no se le escribió `device_role`), así que conserva los mismos
+    // triggers que el Host y cada fila aplicada también escribe en SU
+    // change_log. En una caja de verdad A3 le retira los triggers y este
+    // contador sale 0. No lo lee nadie, pero conviene ver cuánto pesa.
     const boxLog = boxDb.prepare("SELECT COUNT(*) c FROM change_log").get().c;
     const boxTomb = boxDb.prepare(`SELECT COUNT(*) c FROM ${dbSchema.TOMBSTONE_TABLE}`).get().c;
     console.log(`    · la caja acumula ${boxLog} eventos y ${boxTomb} tumba-sigilos propios`);

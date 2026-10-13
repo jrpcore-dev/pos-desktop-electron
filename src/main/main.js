@@ -20,6 +20,11 @@ const dbSchema = require("./db-schema");
 // 3e · troceado de imports: el proceso principal es uno solo y un lote de
 // 27 000 filas no tiene por qué ocupárselo entero.
 const { runBatched } = require("./batch-runner");
+// A1 · único punto del que sale el aviso `db-changed` del Host: se mira
+// `change_log`, que es por donde PASA toda escritura (local, por /api/sales,
+// stock o edición). A2 · poda del log y de las tumbas.
+const { startChangeLogWatch } = require("./change-log-watch");
+const changeLogCompact = require("./change-log-compact");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -414,6 +419,33 @@ app.on("ready", async () => {
   // 3f · si esta caja ya tenía la réplica aplicada, retoma el delta desde donde
   // se quedó. Va DESPUÉS del cipher porque necesita leer el token de emparejar.
   startLiveReplica();
+
+  // A1 · aviso al renderer del Host: UN solo sonda sobre `change_log`, que es
+  // por donde pasa toda escritura (venta local, /api/sales, stock, edición).
+  // Sale ya coalescido y entra en `emitDbChanged`. En rol cliente no apaga:
+  // la caja tiene su propio aviso desde la réplica y, además, A3 le deja el
+  // `change_log` vacío.
+  if (deviceRole !== ipcScopes.ROLES.CLIENT) {
+    startChangeLogWatch(db, { onRows: emitDbChanged });
+
+    // A2 · poda al arrancar y una vez al día. Retención: `change_log` 7 días
+    // (suelo de 1000 filas) y `replica_tombstones` 30 días; al borrar se
+    // sube `change_log_first_seq` para que ninguna caja pida un hueco muerto.
+    const runChangeLogCompaction = () => {
+      try {
+        const r = changeLogCompact.compact(db);
+        if (r.deleted || r.tombstones) {
+          console.log(
+            `[change_log] poda · ${r.deleted} eventos · ${r.tombstones} tumbas · first_seq=${r.firstSeq}`,
+          );
+        }
+      } catch (err) {
+        console.error("[change_log] poda fallida:", err && err.message);
+      }
+    };
+    runChangeLogCompaction();
+    setInterval(runChangeLogCompaction, changeLogCompact.RUN_EVERY_MS);
+  }
 
   // Start local API server for mobile app
   (async () => {

@@ -8,6 +8,9 @@ const crypto = require("crypto");
 const dgram = require("dgram");
 const activation = require("./activation");
 const protocol = require("./protocol");
+// A3 · al volverse cliente, la caja se queda SIN triggers de réplica: sólo
+// consume la del Host, y su propio `change_log`/tumbas no tienen lector.
+const dbSchema = require("./db-schema");
 
 const DISCOVERY_PORT = 3457;
 const DISCOVERY_MSG = "POS_DISCOVERY";
@@ -128,6 +131,10 @@ const saveSettings = (db, patch = {}) => {
     if (value === undefined || value === null) continue;
     activation.setSetting(db, key, String(value));
   }
+  // A3 · si este parche encendió el rol cliente, los triggers de réplica se
+  // retiran en el acto; `ensureChangeLog` lo repetirá en cada arranque por si
+  // la BD ya venía siendo de caja.
+  if (patch && patch[SETTINGS.DEVICE_ROLE] !== undefined) dbSchema.ensureTriggersForRole(db);
   return getSettings(db);
 };
 
@@ -276,6 +283,9 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
   activation.setSetting(db, SETTINGS.DEVICE_ROLE, "client");
   activation.setSetting(db, SETTINGS.HOST_URL, url);
   activation.setSetting(db, SETTINGS.HOST_DEVICE_ID, hostDeviceId);
+  // A3 · el rol acaba de pasar a "client": los triggers creados con el rol
+  // por defecto se retiran YA, sin esperar al próximo arranque.
+  dbSchema.ensureTriggersForRole(db);
   const persisted = savePairedToken(db, data.pairedToken); // cifrado, nunca en claro
   activation.setSetting(db, SETTINGS.SYNC_COMPLETED, "0");
 

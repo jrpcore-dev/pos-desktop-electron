@@ -963,9 +963,33 @@ const endBulk = (db) => {
   // arrancar `ensureChangeLog` verá la bandera y repetirá este cierre; si
   // soltáramos la bandera primero, los triggers podrían quedar ausentes para
   // siempre y la caja dejaría de recibir cambios sin enterarse.
-  changeLogCreateTriggers(db);
+  ensureTriggersForRole(db);
   bulkFlagClear(db);
   return { seq };
+};
+
+// A3 · el rol del dispositivo leído de la propia BD. Tolera una BD sin
+// `settings` (una recién nacida) y una clave basura: para algo falla a host.
+const isClientRole = (db) => {
+  try {
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'device_role'")
+      .get();
+    return !!row && String(row.value || "").toLowerCase() === "client";
+  } catch (err) {
+    return false;
+  }
+};
+
+// A3 · reescribe el conjunto completo de triggers PERO en rol cliente no
+// instala ninguno. La caja no genera eventos de réplica (sólo los consume) y
+// sus propios `change_log`/`replica_tombstones` crecerían sin que los lea
+// nadie. Si ya existían de cuando el rol era host, aquí se eliminan.
+const ensureTriggersForRole = (db) => {
+  changeLogDropTriggers(db);
+  if (isClientRole(db)) return false;
+  changeLogCreateTriggers(db);
+  return true;
 };
 
 const ensureChangeLog = (db) => {
@@ -998,9 +1022,9 @@ const ensureChangeLog = (db) => {
   for (const tbl of UPDATED_AT_TABLES) ensureColumnOn(db, tbl, "updated_at", "INTEGER");
   // 3f · `CREATE TRIGGER IF NOT EXISTS` no reescribe un cuerpo ya creado, así
   // que se dropean y se vuelven a crear: sin esto, una BD existente se
-  // quedaría para siempre con los triggers de la entrega que los creó.
-  changeLogDropTriggers(db);
-  changeLogCreateTriggers(db);
+  // quedaría para siempre con los triggers de la entrega que los creó. En rol
+  // cliente no se reinstalan (A3): la caja no genera eventos de réplica.
+  ensureTriggersForRole(db);
   // Recuperación: si el Host murió con un lote abierto, aquí se cierra. Es
   // conservador (adelanta el hueco aunque no se haya apagado nada) y siempre
   // mejor que dejar los triggers ausentes.
@@ -1034,6 +1058,8 @@ module.exports = {
   createTables,
   runMigrations,
   ensureChangeLog,
+  ensureTriggersForRole,
+  isClientRole,
   replicaPlan,
   replicaFilterSql,
   beginBulk,
