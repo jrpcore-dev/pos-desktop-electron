@@ -21,12 +21,10 @@
 // HTTP contra el Host) y BLOQUEADO (cualquier otro scope, se rechaza).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Kill-switch (Entrega 2b): mientras esté en false, es imposible activar el rol
-// cliente. Motivo: con el rol cliente aún no hay aislamiento por scope en la API
-// local y HOST_READ se resuelve localmente, así que mantener el rol apagado
-// evita exponer datos compartidos. Se encenderá cuando el Bloque 3 (proxy al
-// Host) esté listo. Ponlo en true para habilitar `device_role = "client"`.
-const CLIENT_ROLE_ENABLED = false;
+// 3g/E · candado ENCENDIDO: el rol cliente ya tiene su puente al Host (scope
+// `rpc` + box-rpc-client), así que `device_role = "client"` se toma en serio.
+// Sólo el asistente de vinculación lo pone; `save-setting` lo rechaza.
+const CLIENT_ROLE_ENABLED = true;
 
 const ROLES = Object.freeze({ HOST: "host", CLIENT: "client" });
 

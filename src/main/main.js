@@ -2506,18 +2506,13 @@ ipcMain.handle("get-setting", async (event, key) => {
 
 ipcMain.handle("save-setting", async (event, key, value) => {
   try {
-    // Kill-switch (Entrega 2b): rechaza activar el rol cliente mientras
-    // CLIENT_ROLE_ENABLED sea false. Un valor "client" ya guardado se trata
-    // como "host" al arrancar (ver normalizeRole).
-    if (
-      key === "device_role" &&
-      !ipcScopes.CLIENT_ROLE_ENABLED &&
-      String(value || "").toLowerCase() === ipcScopes.ROLES.CLIENT
-    ) {
+    // 3g/E · el rol NO se cambia por aquí: sólo el asistente de vinculación
+    // (box-save-settings → clientLink.saveSettings) puede poner la caja en
+    // modo cliente o devolverla a Host.
+    if (key === "device_role") {
       return {
         success: false,
-        error:
-          "El modo cliente está deshabilitado en esta versión (CLIENT_ROLE_ENABLED=false).",
+        error: "El rol del dispositivo sólo se cambia desde el asistente de vinculación.",
       };
     }
     db.prepare(
