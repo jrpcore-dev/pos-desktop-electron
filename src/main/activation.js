@@ -183,7 +183,11 @@ const registerPairing = (
   },
 ) => {
   const name = String(deviceName || "Dispositivo móvil").slice(0, 80);
-  const type = deviceType || scopes.DEVICE_TYPE.MOBILE;
+  // En conflicto sólo se pisan tipo/scopes/approved si el llamante los
+  // declaró: la rotación de token (autoPairIfGrace) no trae nada de eso y no
+  // debe degradar una caja aprobada a "móvil" (eso le borraba register:*).
+  const declaredType = deviceType || null;
+  const type = declaredType || scopes.DEVICE_TYPE.MOBILE;
   const isApproved =
     approved === undefined ? (type === scopes.DEVICE_TYPE.DESKTOP_BOX ? 0 : 1) : approved ? 1 : 0;
   const list = Array.isArray(scopeList)
@@ -212,10 +216,10 @@ const registerPairing = (
       activated_at = CURRENT_TIMESTAMP,
       last_seen_at = CURRENT_TIMESTAMP,
       device_code = COALESCE(paired_devices.device_code, excluded.device_code),
-      device_type = excluded.device_type,
-      scopes = excluded.scopes,
+      device_type = COALESCE(?, paired_devices.device_type),
+      scopes = COALESCE(?, paired_devices.scopes),
       protocol_version = COALESCE(excluded.protocol_version, paired_devices.protocol_version),
-      approved = excluded.approved
+      approved = COALESCE(?, paired_devices.approved)
   `).run(
     deviceId,
     name,
@@ -226,6 +230,9 @@ const registerPairing = (
     JSON.stringify(list),
     protocolVersion || null,
     isApproved,
+    declaredType,
+    Array.isArray(scopeList) ? JSON.stringify(scopeList) : null,
+    approved === undefined ? null : approved ? 1 : 0,
   );
   return { deviceId, deviceCode, approved: isApproved };
 };
@@ -265,16 +272,23 @@ const deviceScopes = (db, deviceId) => {
   if (!deviceId)
     return { ok: false, approved: false, scopes: [], reason: "unknown_device" };
   const row = db
-    .prepare("SELECT device_type, scopes, approved, revoked FROM paired_devices WHERE device_id = ?")
+    .prepare("SELECT device_type, device_code, scopes, approved, revoked FROM paired_devices WHERE device_id = ?")
     .get(deviceId);
   if (!row || row.revoked)
     return { ok: false, approved: false, scopes: [], reason: "not_paired" };
   if (Number(row.approved) !== 1)
     return { ok: true, approved: false, scopes: [], reason: "pending" };
-  const parsed = scopes.parseScopes(row.scopes);
-  const list =
-    parsed && parsed.length > 0 ? parsed : scopes.scopesForDeviceType(row.device_type);
-  return { ok: true, approved: true, scopes: list, reason: "ok" };
+  // Autocuración: una versión anterior pisaba device_type a 'mobile' al rotar
+  // el token; el código de letra (A-G) delata a la caja. Y el set del tipo
+  // actual SIEMPRE se suma al guardado: los sets sólo crecen entre entregas.
+  const letterCode = typeof row.device_code === "string" && /^[A-G]$/.test(row.device_code);
+  const type =
+    row.device_type === scopes.DEVICE_TYPE.DESKTOP_BOX || letterCode
+      ? scopes.DEVICE_TYPE.DESKTOP_BOX
+      : row.device_type;
+  const stored = scopes.parseScopes(row.scopes) || [];
+  const merged = [...new Set([...stored, ...scopes.scopesForDeviceType(type)])];
+  return { ok: true, approved: true, scopes: merged, reason: "ok" };
 };
 
 // Aprueba un dispositivo pendiente (p.ej. desktop_box auto-declarado) y le

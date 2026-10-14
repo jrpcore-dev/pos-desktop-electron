@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { Spinner } from "./ui/spinner";
@@ -106,11 +106,18 @@ const BoxLinkWizard = ({ api, className }) => {
 
   const poll = () =>
     run(async () => {
-      const res = await invoke("box-wait-approval", { timeoutMs: 30000, intervalMs: 1500 });
+      const res = await invoke("box-wait-approval", { timeoutMs: 120000, intervalMs: 2000 });
       if (!res?.success) return setError(message(res));
       setStatus(res);
       setStep(3);
     });
+
+  // El Host aprueba y la caja pasa sola: sin clic ni recarga.
+  useEffect(() => {
+    if (step !== 2) return;
+    const t = window.setTimeout(() => poll(), 1200);
+    return () => window.clearTimeout(t);
+  }, [step]);
 
   const input =
     "w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";

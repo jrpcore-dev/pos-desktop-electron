@@ -29,21 +29,25 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
   const pinRef = useRef(null);
 
   useEffect(() => {
-    const load = async () => {
-      setUsersLoading(true);
+    const load = async (initial) => {
+      // En caja la lista viene del Host: se refresca sola cada 10 s para
+      // mostrar cajeros nuevos sin recargar la pantalla.
+      if (initial) setUsersLoading(true);
       try {
         const [list, name, logo] = await Promise.all([
           window.api.invoke("get-cashiers"),
           window.api.invoke("get-setting", "store_name"),
           window.api.invoke("get-setting", "store_logo"),
         ]);
-        setCashiers(list);
+        if (Array.isArray(list)) setCashiers(list);
         if (name) setStoreName(name.toUpperCase());
         if (logo) setStoreLogo(logo);
       } catch {}
-      setUsersLoading(false);
+      if (initial) setUsersLoading(false);
     };
-    load();
+    load(true);
+    const timer = window.setInterval(() => load(false), 10000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
