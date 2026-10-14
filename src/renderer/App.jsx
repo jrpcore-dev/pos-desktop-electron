@@ -246,7 +246,13 @@ const AppInner = () => {
             onClose={handleSetupClose}
           />
 
-          {!showSetup && <LoginScreen onLogin={handleLogin} />}
+          {!showSetup && (
+            <LoginScreen
+              onLogin={handleLogin}
+              isFirstTime={isFirstTime}
+              onConvertToBox={loadBox}
+            />
+          )}
         </ToastProvider>
       </ThemeModeContext.Provider>
     );

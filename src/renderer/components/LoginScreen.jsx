@@ -15,13 +15,14 @@ const colors = [
   "hsl(var(--category-6))",
 ];
 
-const LoginScreen = ({ onLogin }) => {
+const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
   const [cashiers, setCashiers] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [usersLoading, setUsersLoading] = useState(true);
+  const [converting, setConverting] = useState(false);
   const [storeName, setStoreName] = useState("MI TIENDA");
   const [storeLogo, setStoreLogo] = useState("");
   const { setCashier } = useCashier();
@@ -75,6 +76,21 @@ const LoginScreen = ({ onLogin }) => {
       }
     } catch { setError("Error al verificar PIN"); }
     setLoading(false);
+  };
+
+  // 3g/F · única puerta para instalar esta PC como caja adicional: escribe el
+  // rol con box-save-settings (el asistente de vinculación toma el relevo).
+  const handleConvertToBox = async () => {
+    if (converting) return;
+    setConverting(true);
+    try {
+      const res = await window.api.invoke("box-save-settings", { device_role: "client" });
+      if (res?.device_role === "client" && onConvertToBox) onConvertToBox();
+      else setError("No se pudo activar el modo caja");
+    } catch {
+      setError("No se pudo activar el modo caja");
+    }
+    setConverting(false);
   };
 
   const selectedCashier = cashiers.find((c) => c.id === selectedId);
@@ -270,6 +286,17 @@ const LoginScreen = ({ onLogin }) => {
           )}
         </div>
       </div>
+
+      {isFirstTime && (
+        <button
+          type="button"
+          onClick={handleConvertToBox}
+          disabled={converting}
+          className="relative z-10 mx-auto mt-6 block cursor-pointer rounded-lg px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-white/60 transition-colors hover:text-white/90 disabled:opacity-50"
+        >
+          {converting ? "Activando caja..." : "¿Esta PC será una caja adicional? Actívala aquí"}
+        </button>
+      )}
 
       <p className="login-footer relative z-10 mt-6 text-center text-[11px] font-medium uppercase tracking-wider text-white/50">
         Powered by JRP Core v2.0
