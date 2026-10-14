@@ -2761,10 +2761,13 @@ ipcMain.handle("replica-reset", async () => replicaEngine.resetSync(db));
 
 ipcMain.handle("get-server-status", () => {
   const api = apiServer.getStatus();
-  return {
-    running: api.running,
-    port: api.port || 3456,
-  };
+  const out = { running: api.running, port: api.port || 3456 };
+  // 3g/F · en la caja el estado que importa es el Host al que sirve: el
+  // encabezado lo enseña como "conectado/desconectado" en vez del servidor local.
+  if (deviceRole === ipcScopes.ROLES.CLIENT) {
+    out.host = replicaLive.hostOkInfo(db);
+  }
+  return out;
 });
 
 // ─── CASHIERS ────────────────────────────────────────────────

@@ -260,6 +260,8 @@ const Layout = () => {
 const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
+  // 3g/F · sólo en caja: estado del Host al que sirve (null en el Host).
+  const [hostStatus, setHostStatus] = useState(null);
   const { cashier, logout } = useCashier();
   const [register, setRegister] = useState(null);
   const [handover, setHandover] = useState(null);
@@ -443,6 +445,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       try {
         const status = await window.api.invoke("get-server-status");
         setServerRunning(status.running);
+        setHostStatus(status.host || null);
       } catch (e) {
         setServerRunning(false);
       }
@@ -1205,6 +1208,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 register={register}
                 clock={clockLabel}
                 serverRunning={serverRunning}
+                hostStatus={hostStatus}
                 scaleConnected={scaleConnected}
                 tasksCount={todayTasksCount}
                 isDark={isDark}

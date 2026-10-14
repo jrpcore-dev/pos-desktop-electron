@@ -92,6 +92,7 @@ const SystemStatus = ({
   register,
   clock,
   serverRunning,
+  hostStatus,
   scaleConnected,
   tasksCount,
   isDark,
@@ -165,12 +166,32 @@ const openRegister = () => {
           <span className="h-4 w-px shrink-0 bg-border" />
           <span
             className="flex shrink-0 items-center gap-1.5"
-            title={`Servidor: ${serverRunning ? "activo" : "caído"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`}
+            title={
+              hostStatus
+                ? `Host: ${hostStatus.reachable ? "conectado" : "desconectado"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
+                : `Servidor: ${serverRunning ? "activo" : "caído"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
+            }
           >
             <Wifi
               size={14}
-              aria-label={serverRunning ? "Servidor activo" : "Servidor caído"}
-              className={serverRunning ? "text-success" : "text-destructive"}
+              aria-label={
+                hostStatus
+                  ? hostStatus.reachable
+                    ? "Conectado al Host"
+                    : "Host desconectado"
+                  : serverRunning
+                    ? "Servidor activo"
+                    : "Servidor caído"
+              }
+              className={
+                hostStatus
+                  ? hostStatus.reachable
+                    ? "text-success"
+                    : "text-destructive"
+                  : serverRunning
+                    ? "text-success"
+                    : "text-destructive"
+              }
             />
             <span
               title={
@@ -269,22 +290,34 @@ const openRegister = () => {
         <Divider />
 
         <div className="p-1.5">
-          {!serverRunning && (
+          {(hostStatus ? !hostStatus.reachable : !serverRunning) && (
             <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
               <p className="text-[14px] font-semibold text-destructive">
-                Servidor móvil detenido
+                {hostStatus ? "Host desconectado" : "Servidor móvil detenido"}
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">
-                La app móvil no está conectada. La venta local sigue funcionando.
+                {hostStatus
+                  ? "La caja no puede vender ni sincronizar hasta que el Host vuelva."
+                  : "La app móvil no está conectada. La venta local sigue funcionando."}
               </p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-1.5">
             <StateTile
-              icon={Server}
-              label="Servidor"
-              status={serverRunning ? "Activo" : "Caído"}
-              tone={serverRunning ? "ok" : "err"}
+              icon={hostStatus ? Wifi : Server}
+              label={hostStatus ? "Host" : "Servidor"}
+              status={
+                hostStatus
+                  ? hostStatus.reachable
+                    ? "Conectado"
+                    : "Desconectado"
+                  : serverRunning
+                    ? "Activo"
+                    : "Caído"
+              }
+              tone={
+                (hostStatus ? hostStatus.reachable : serverRunning) ? "ok" : "err"
+              }
             />
             <StateTile
               icon={Scale}

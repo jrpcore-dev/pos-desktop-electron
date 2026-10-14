@@ -194,6 +194,13 @@ const handleFrame = async (ctx, frame) => {
 //   `replica-status` tiene que poder verla.
 const POLL_MS = 4000;
 
+// 3g/F · huella de "el Host contesta": el badge de la caja y la venta viven
+// del HTTP, no del SSE (que puede estar en reconstrucción con el flujo caído).
+let lastHostOkAt = 0;
+const markHostOk = () => {
+  lastHostOkAt = Date.now();
+};
+
 const sleepWhilePolling = async (ctx, waitMs) => {
   const deadline = Date.now() + waitMs;
   for (;;) {
@@ -205,6 +212,7 @@ const sleepWhilePolling = async (ctx, waitMs) => {
       const creds = credentials(ctx.db);
       if (!creds.hostUrl || !creds.deviceId || !creds.token) return;
       await pullDelta(ctx, { quiet: true });
+      markHostOk();
     } catch (err) {
       // El Host sigue sin estar: se reintenta en la vuelta siguiente del bucle.
     }
@@ -231,6 +239,7 @@ const connectOnce = async (ctx) => {
   if (!res.ok || !res.body) throw new Error(`El Host respondió HTTP ${res.status}`);
 
   setLive(ctx, "connected", null);
+  markHostOk();
   // Conectado: por si el cursor se quedó atrás de lo que ya se aplicó.
   await pullDelta(ctx);
 
@@ -316,9 +325,19 @@ const liveState = (db) => ({
   running: !!(active && active.db === db),
 });
 
+// 3g/F · ¿el Host está vivo? Un SSE conectado lo prueba; con el flujo en
+// reconstrucción manda la huella del último HTTP bueno (< 15 s = vivo).
+const hostOkInfo = (db) => ({
+  reachable:
+    liveState(db).state === "connected" ||
+    (lastHostOkAt > 0 && Date.now() - lastHostOkAt < 15000),
+  okAt: lastHostOkAt || null,
+});
+
 module.exports = {
   KEYS,
   startLiveSync,
   liveState,
+  hostOkInfo,
   parseFrames,
 };
