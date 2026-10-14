@@ -131,3 +131,19 @@ Thumbs.db
 
 # Configuració entorno IA
 AGENTS.MD
+
+# ── No se sube al repositorio (pedido del dueño, 3g/F) ──────────────────────
+docs/
+.agents/
+.opencode/
+skills-lock.json
+# scripts de prueba (diagnóstico en la raíz)
+/automation-*.js
+/click-*.js
+/login-*.js
+/open-*.js
+/revisar-*.js
+/robust-click.js
+/scroll-*.js
+/wait-*.js
+/check-empty-db.cjs
