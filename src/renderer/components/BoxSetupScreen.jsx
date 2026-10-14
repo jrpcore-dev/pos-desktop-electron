@@ -33,7 +33,10 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [busy, setBusy] = useState(false);
   const startedRef = useRef(false);
 
-  const paired = !!settings?.host_url;
+  // Si una respuesta vieja llega tarde, la caja no vuelve al asistente.
+  const pairedRef = useRef(!!settings?.host_url);
+  if (settings?.host_url) pairedRef.current = true;
+  const paired = pairedRef.current;
 
   // El avance de la descarga llega por IPC desde main (replica-progress).
   useEffect(() => {

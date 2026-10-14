@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { flushSync } from "react-dom";
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import SetupWizardScreen from "./components/SetupWizardScreen";
@@ -55,6 +55,9 @@ const AppInner = () => {
   // B7 · estado de la caja. `null` = todavía sin preguntar; `{}` = no se pudo
   // saber (se trata como Host en vez de quedarse cargando para siempre).
   const [box, setBox] = useState(null);
+  // Una vez que la caja pudo vender, un sondeo viejo en vuelo no la regresa
+  // a la pantalla de vinculación (el asistente que "salta otra vez").
+  const canSellRef = useRef(false);
   const loadBox = useCallback(async () => {
     try {
       const s = await window.api.invoke("box-get-settings");
@@ -65,7 +68,8 @@ const AppInner = () => {
   }, []);
 
   const isBoxDevice = !!box && box.device_role === "client";
-  const canSell = isBoxDevice && box.canSell === true;
+  if (isBoxDevice && box.canSell === true) canSellRef.current = true;
+  const canSell = (isBoxDevice && box.canSell === true) || canSellRef.current;
 
   useEffect(() => {
     loadBox();
@@ -240,10 +244,11 @@ const AppInner = () => {
       <ThemeModeContext.Provider value={colorMode}>
         <ToastProvider>
           <SetupWizardScreen
-            open={showSetup}
+            open={showSetup && !isBoxDevice}
             isPreviewMode={setupPreview}
             onComplete={handleSetupComplete}
             onClose={handleSetupClose}
+            onConvertToBox={loadBox}
           />
 
           {!showSetup && (
@@ -262,10 +267,11 @@ const AppInner = () => {
     <ThemeModeContext.Provider value={colorMode}>
       <ToastProvider>
         <SetupWizardScreen
-          open={showSetup}
+          open={showSetup && !isBoxDevice}
           isPreviewMode={setupPreview}
           onComplete={handleSetupComplete}
           onClose={handleSetupClose}
+          onConvertToBox={loadBox}
         />
 
         <AddProductModal open={showAddProduct} onClose={() => setShowAddProduct(false)} onProductAdded={() => setShowAddProduct(false)} />

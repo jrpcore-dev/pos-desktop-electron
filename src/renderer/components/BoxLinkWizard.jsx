@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { Spinner } from "./ui/spinner";
 
 /* ────────────────────────────────────────────────────────────
    BoxLinkWizard — asistente de vinculación de una caja con el Host.
@@ -11,6 +12,16 @@ import { cn } from "@/lib/utils";
    ──────────────────────────────────────────────────────────── */
 
 const STEPS = ["Buscar Host", "Código", "Aprobación"];
+
+// Animación mínima del emparejado: aunque el Host conteste enseguida, la
+// pantalla avanza etapa por etapa para que se vea el proceso (no un salto).
+const PAIR_STAGES = [
+  "Enviando el código al Host…",
+  "Registrando esta caja…",
+  "Confirmando el vínculo…",
+];
+const PAIR_MIN_MS = 2100;
+const PAIR_STAGE_MS = 700;
 
 // Mensajes de los códigos que devuelve client-link / api-server.
 const ERRORS = {
@@ -42,6 +53,7 @@ const BoxLinkWizard = ({ api, className }) => {
   const [code, setCode] = useState("");
   const [deviceName, setDeviceName] = useState("");
   const [status, setStatus] = useState(null);
+  const [pairStage, setPairStage] = useState(-1);
 
   const run = useCallback(
     async (fn) => {
@@ -72,10 +84,24 @@ const BoxLinkWizard = ({ api, className }) => {
 
   const pair = () =>
     run(async () => {
-      const res = await invoke("box-pair", { hostUrl, code, deviceName });
-      if (!res?.success) return setError(message(res));
-      setStatus(res);
-      setStep(2);
+      const t0 = Date.now();
+      setPairStage(0);
+      const timer = window.setInterval(
+        () => setPairStage((s) => Math.min(s + 1, PAIR_STAGES.length - 1)),
+        PAIR_STAGE_MS,
+      );
+      try {
+        const res = await invoke("box-pair", { hostUrl, code, deviceName });
+        if (!res?.success) return setError(message(res));
+        setStatus(res);
+        // Deja ver la animación aunque la respuesta haya llegado ya.
+        const left = Math.max(0, PAIR_MIN_MS - (Date.now() - t0));
+        await new Promise((r) => window.setTimeout(r, left));
+        setStep(2);
+      } finally {
+        window.clearInterval(timer);
+        setPairStage(-1);
+      }
     });
 
   const poll = () =>
@@ -150,7 +176,27 @@ const BoxLinkWizard = ({ api, className }) => {
         </section>
       )}
 
-      {step === 1 && (
+      {step === 1 && pairStage >= 0 && (
+        <section className="flex flex-col gap-3 rounded-lg border border-border p-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Spinner size={16} className="text-brand" />
+            Emparejando con el Host…
+          </div>
+          <p className="text-sm text-muted-foreground">{PAIR_STAGES[pairStage]}</p>
+          <div
+            className="h-2 w-full overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={Math.round(((pairStage + 1) / PAIR_STAGES.length) * 100)}
+          >
+            <div
+              className="h-full rounded-full bg-brand transition-[width] duration-700 ease-linear"
+              style={{ width: `${((pairStage + 1) / PAIR_STAGES.length) * 100}%` }}
+            />
+          </div>
+        </section>
+      )}
+
+      {step === 1 && pairStage < 0 && (
         <section className="flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-sm">
             Nombre de la caja

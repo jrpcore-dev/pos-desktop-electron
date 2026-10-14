@@ -168,7 +168,7 @@ const PinBoxes = ({ value, onValueChange, show, error, groupLabel, firstCellRef 
   );
 };
 
-const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose }) => {
+const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, onConvertToBox }) => {
   const [activeStep, setActiveStep] = useState(0);
   const [formData, setFormData] = useState({
     storeName: "",
@@ -186,6 +186,10 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
   const [loaderPhase, setLoaderPhase] = useState("starting");
   const [progress, setProgress] = useState(0);
   const [isExiting, setIsExiting] = useState(false);
+  // Conversión a caja: el botón sólo aparece si la red tiene un Host vivo.
+  const [serverFound, setServerFound] = useState(false);
+  const [confirmConvert, setConfirmConvert] = useState(false);
+  const [converting, setConverting] = useState(false);
 
   const storeNameRef = useRef(null);
   const firstPinRef = useRef(null);
@@ -223,6 +227,18 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
       setProgress(0);
       setIsExiting(false);
       clearLoadTimers();
+      setConfirmConvert(false);
+      setServerFound(false);
+      // ¿Hay un Host en la red? Si no, ni se muestra el botón de caja.
+      (async () => {
+        try {
+          const res = await window.api.invoke("box-discover-hosts", {
+            manualIps: [],
+            manualPort: 3456,
+          });
+          if (res?.success && res.hosts?.length) setServerFound(true);
+        } catch {}
+      })();
     } else {
       clearLoadTimers();
       setLoading(false);
@@ -242,6 +258,24 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
   }, [open, activeStep]);
 
   useEffect(() => () => clearLoadTimers(), []);
+
+  // Convierte esta PC en caja (dos clics: el segundo confirma).
+  const handleConvert = async () => {
+    if (converting) return;
+    if (!confirmConvert) {
+      setConfirmConvert(true);
+      return;
+    }
+    setConverting(true);
+    try {
+      const res = await window.api.invoke("box-save-settings", {
+        device_role: "client",
+      });
+      if (res?.device_role === "client" && onConvertToBox) onConvertToBox();
+    } finally {
+      setConverting(false);
+    }
+  };
 
   const validateStep = (step) => {
     const nextErrors = {};
@@ -746,9 +780,25 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
             <footer className="flex shrink-0 items-center justify-between border-t border-border/70 px-8 py-5 sm:px-10 xl:px-14">
               <div className="flex min-w-0 flex-1 justify-start">
                 {activeStep === 0 ? (
-                  onClose && !isSubmitting && (
-                    <CancelButton onClick={handleCancel}>Cancelar</CancelButton>
-                  )
+                  <div className="flex items-center gap-3">
+                    {onClose && !isSubmitting && (
+                      <CancelButton onClick={handleCancel}>Cancelar</CancelButton>
+                    )}
+                    {serverFound && (
+                      <button
+                        type="button"
+                        onClick={handleConvert}
+                        disabled={converting || isSubmitting}
+                        className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                      >
+                        {converting
+                          ? "Activando caja…"
+                          : confirmConvert
+                            ? "Sí, convertir esta PC en caja (el catálogo lo manda el Host)"
+                            : "¿Esta PC será una caja adicional? Actívala aquí"}
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <Button variant="ghost" onClick={handleBack} disabled={isSubmitting}>
                     <ChevronLeft size={16} />
