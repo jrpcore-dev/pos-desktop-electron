@@ -53,13 +53,17 @@ module.exports = class NsisMaker extends MakerBase {
         },
       }
     ).then((result) => {
-      // electron-builder NO incluye latest.yml en su lista de artefactos y el
-      // publisher de Forge solo sube lo que el maker reporta. Lo agregamos
-      // explícitamente para que npm run publish suba .exe + .blockmap + latest.yml.
       const artifactPaths = result && result.artifactPaths ? [...result.artifactPaths] : [];
-      const latestYml = path.join(makeDir, "latest.yml");
-      if (fs.existsSync(latestYml) && !artifactPaths.includes(latestYml)) {
-        artifactPaths.push(latestYml);
+      const add = (file) => {
+        if (fs.existsSync(file) && !artifactPaths.includes(file)) {
+          artifactPaths.push(file);
+        }
+      };
+      add(path.join(makeDir, "latest.yml"));
+      for (const file of fs.readdirSync(makeDir)) {
+        if (file.endsWith(".exe") || file.endsWith(".blockmap")) {
+          add(path.join(makeDir, file));
+        }
       }
       return artifactPaths;
     });

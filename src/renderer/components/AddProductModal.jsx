@@ -21,6 +21,7 @@ import {
   Warehouse,
   BadgePercent,
   CalendarRange,
+  TriangleAlert,
 } from "lucide-react";
 
 import { Button } from "./ui/button";
@@ -45,8 +46,15 @@ import {
 } from "./ui/select";
 import { InputGroup, InputGroupInput, InputGroupAddon } from "./ui/input-group";
 import { Alert } from "./ui/alert";
+import {
+  Tooltip as STooltip,
+  TooltipContent as STooltipContent,
+  TooltipProvider as STooltipProvider,
+  TooltipTrigger as STooltipTrigger,
+} from "./ui/tooltip";
 import { cn } from "@/lib/utils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
+import { fmtMoney } from "../utils/format";
 
 const productSchema = z.object({
   barcode: z.string().optional(),
@@ -357,6 +365,7 @@ const AddProductModal = ({
   const [barcodeStatus, setBarcodeStatus] = useState({ type: null, name: "" });
   const [priceTiers, setPriceTiers] = useState([]);
   const [promoOpen, setPromoOpen] = useState(false);
+  const [promoMode, setPromoMode] = useState("percent"); // "percent" | "fixed"
 
   const addPriceTier = () =>
     setPriceTiers((prev) => [
@@ -519,7 +528,8 @@ const AddProductModal = ({
     return d && m && y ? `${d}/${m}/${y}` : iso;
   };
   const promoFixed = parseFloat(wPromoFixed || "0") || 0;
-  const autoConfigured = promoPercent > 0 || promoFixed > 0;
+  const isFixedMode = promoMode === "fixed";
+  const autoConfigured = isFixedMode ? promoFixed > 0 : promoPercent > 0 || promoFixed > 0;
   const tiersConfigured = hasTiers;
   const autoActive = promoNowActive && autoConfigured;
   const tiersActive = promoNowActive && tiersConfigured;
@@ -527,13 +537,13 @@ const AddProductModal = ({
   const autoBlocked = tiersConfigured;
   const tiersBlocked = autoConfigured;
   const promoChips = [];
-  if (promoPercent > 0) promoChips.push(`-${promoPercent}%`);
-  if (promoFixed > 0) promoChips.push(`Fijo $${promoFixed.toFixed(2)}`);
+  if (promoPercent > 0 && !isFixedMode) promoChips.push(`-${promoPercent}%`);
+  if (promoFixed > 0 && isFixedMode) promoChips.push(`Fijo ${fmtMoney(promoFixed)}`);
   priceTiers.forEach((t) => {
     const q = parseInt(t.qty, 10) || 0;
     const p = parseFloat(t.price) || 0;
     if (q <= 0 || p <= 0) return;
-    if (t.type === "combo") promoChips.push(`${q}×$${p.toFixed(2)}`);
+    if (t.type === "combo") promoChips.push(`${q}×${fmtMoney(p)}`);
     else promoChips.push(`Mayoreo ${q}+`);
   });
   if (wAllowManual && !manualBlocked) promoChips.push("Manual en caja");
@@ -555,8 +565,10 @@ const AddProductModal = ({
   const effective =
     promoFixed > 0 ? promoFixed : basePrice * (1 - promoPercent / 100);
   const autoHelper =
-    promoFixed > 0
-      ? "Precio fijo de promoción: aplica a cualquier cantidad."
+    promoMode === "fixed"
+      ? promoFixed > 0
+        ? "Precio fijo de promoció: aplica a cualquier cantidad."
+        : "Ingresa el precio fijo de promoción."
       : promoPercent > 0
         ? "Este % se aplicará automáticamente en cada venta."
         : hasTiers
@@ -571,11 +583,11 @@ const AddProductModal = ({
     if (t.type === "combo") {
       const per = p / q;
       return basePrice > 0
-        ? `≈ $${per.toFixed(2)}/pieza (ahorro $${(basePrice - per).toFixed(2)})`
-        : `≈ $${per.toFixed(2)}/pieza`;
+        ? `≈ ${fmtMoney(per)}/pieza (ahorro ${fmtMoney(basePrice - per)})`
+        : `≈ ${fmtMoney(per)}/pieza`;
     }
     return basePrice > 0
-      ? `Ahorro de $${(basePrice - p).toFixed(2)}/pieza`
+      ? `Ahorro de ${fmtMoney(basePrice - p)}/pieza`
       : null;
   };
 
@@ -647,6 +659,7 @@ const AddProductModal = ({
           })),
         );
         setPromoOpen(!!editProduct.has_discount);
+        setPromoMode(editProduct.promo_fixed_price > 0 ? "fixed" : "percent");
       } else if (catalogProduct) {
         reset({
           barcode: catalogProduct.barcode || "",
@@ -698,6 +711,7 @@ const AddProductModal = ({
           packs_per_box: "",
         });
         setPriceTiers([]);
+        setPromoMode("percent");
       }
       setSubmitError("");
       setIsSubmitting(false);
@@ -1371,18 +1385,22 @@ const AddProductModal = ({
                           <Button
                             type="button"
                             size="sm"
-                            variant={promoFixed > 0 ? "outline" : "default"}
+                            variant={promoMode === "fixed" ? "outline" : "default"}
                             disabled={autoBlocked}
-                            onClick={() => setValue("promo_fixed_price", "0")}
+                            onClick={() => {
+                              setPromoMode("percent");
+                              setValue("promo_fixed_price", "0");
+                            }}
                           >
-                            %
+                            Porcentaje %
                           </Button>
                           <Button
                             type="button"
                             size="sm"
-                            variant={promoFixed > 0 ? "default" : "outline"}
+                            variant={promoMode === "fixed" ? "default" : "outline"}
                             disabled={autoBlocked}
                             onClick={() => {
+                              setPromoMode("fixed");
                               setValue("discount_percent", "0");
                               setValue(
                                 "promo_fixed_price",
@@ -1393,7 +1411,7 @@ const AddProductModal = ({
                             Precio fijo
                           </Button>
                         </div>
-                        {promoFixed > 0 ? (
+                        {promoMode === "fixed" ? (
                           <NumberField
                             icon={DollarSign}
                             label="Precio de promoción ($)"
@@ -1427,16 +1445,16 @@ const AddProductModal = ({
                             )}
                           />
                         )}
-                        {basePrice > 0 && promoFixed > 0 && (
+                        {basePrice > 0 && promoMode === "fixed" && promoFixed > 0 && (
                           <p className="text-[0.75rem] font-medium text-emerald-600">
-                            Precio de promoción: ${promoFixed.toFixed(2)} — ahorras $
-                            {(basePrice - promoFixed).toFixed(2)}.
+                            Precio de promoción: {fmtMoney(promoFixed)} —
+                            ahorras {fmtMoney(basePrice - promoFixed)}.
                           </p>
                         )}
-                        {basePrice > 0 && promoPercent > 0 && promoFixed <= 0 && (
+                        {basePrice > 0 && promoMode === "percent" && promoPercent > 0 && (
                           <p className="text-[0.75rem] font-medium text-emerald-600">
-                            Queda en ${effective.toFixed(2)} — ahorras $
-                            {(basePrice - effective).toFixed(2)}.
+                            Queda en {fmtMoney(effective)} — ahorras{" "}
+                            {fmtMoney(basePrice - effective)}.
                           </p>
                         )}
                         {autoBlocked && (
@@ -1447,8 +1465,9 @@ const AddProductModal = ({
                         )}
                       </div>
 
+                      <STooltipProvider delayDuration={200}>
                       <div className={`space-y-3 rounded-lg border border-border p-3 ${tiersBlocked ? "opacity-60" : ""}`}>
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex items-center gap-2">
                             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/10 text-blue-600">
                               <Boxes className="h-3.5 w-3.5" />
@@ -1460,9 +1479,9 @@ const AddProductModal = ({
                           <Button
                             type="button"
                             size="sm"
-                            variant="outline"
                             onClick={addPriceTier}
                             disabled={tiersBlocked}
+                            className="shrink-0"
                           >
                             <Plus className="h-4 w-4" />
                             Agregar
@@ -1476,88 +1495,122 @@ const AddProductModal = ({
                         )}
 
                         {priceTiers.length === 0 ? (
-                          <p className="text-[0.8rem] text-muted-foreground">
-                            Sin promos. Haz clic en "Agregar" para crear una promo o un precio de
-                            mayoreo.
-                          </p>
+                          <div className="text-center py-6 rounded-lg border-2 border-dashed border-border/50 bg-muted/30">
+                            <Boxes className="h-10 w-10 mx-auto mb-2 text-muted-foreground/50" />
+                            <p className="text-sm text-muted-foreground">
+                              Sin promos configuradas
+                            </p>
+                            <p className="text-[0.75rem] text-muted-foreground/70 mt-0.5">
+                              Haz clic en <strong>"Agregar"</strong> para crear una promo
+                              o precio de mayoreo.
+                            </p>
+                          </div>
                         ) : (
                           <div className="space-y-2">
                             {priceTiers.map((tier, i) => (
                               <div
                                 key={i}
-                                className="space-y-1 rounded-lg border border-border bg-background p-2"
+                                className="rounded-xl border border-border/60 bg-card p-3"
                               >
-                                <div className="flex flex-wrap items-end gap-2">
-                                  <div className="space-y-1">
-                                    <Label className="text-muted-foreground">Tipo</Label>
-                                    <Select
-                                      value={tier.type}
-                                      onValueChange={(v) => updatePriceTier(i, "type", v)}
-                                      disabled={tiersBlocked}
-                                    >
-                                      <SelectTrigger className="w-44">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="combo">Promo X por $Y</SelectItem>
-                                        <SelectItem value="mayoreo">Mayoreo desde X</SelectItem>
-                                      </SelectContent>
-                                    </Select>
+                                {/* Header: índice + tipo + eliminar */}
+                                <div className="mb-3 flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[0.7rem] font-bold text-primary">
+                                      {i + 1}
+                                    </span>
+                                    <div className="flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5">
+                                      <button
+                                        type="button"
+                                        disabled={tiersBlocked}
+                                        onClick={() => updatePriceTier(i, "type", "combo")}
+                                        className={cn(
+                                          "rounded-md px-2.5 py-1 text-[0.7rem] font-semibold transition-colors disabled:opacity-50",
+                                          tier.type === "combo"
+                                            ? "bg-amber-500/15 text-amber-600"
+                                            : "text-muted-foreground hover:text-foreground"
+                                        )}
+                                      >
+                                        COMBO
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={tiersBlocked}
+                                        onClick={() => updatePriceTier(i, "type", "mayoreo")}
+                                        className={cn(
+                                          "rounded-md px-2.5 py-1 text-[0.7rem] font-semibold transition-colors disabled:opacity-50",
+                                          tier.type === "mayoreo"
+                                            ? "bg-blue-500/15 text-blue-600"
+                                            : "text-muted-foreground hover:text-foreground"
+                                        )}
+                                      >
+                                        MAYOREO
+                                      </button>
+                                    </div>
                                   </div>
-                                  <div className="flex flex-col gap-1">
-                                    <NumberField
-                                      icon={Hash}
-                                      label={tier.type === "combo" ? "Cantidad (X)" : "Desde (X)"}
-                                      value={tier.qty}
-                                      onChange={(e) => updatePriceTier(i, "qty", e.target.value)}
-                                      min={1}
-                                      placeholder="0"
-                                      disabled={tiersBlocked}
-                                    />
-                                  </div>
-                                  <div className="flex flex-col gap-1">
-                                    <NumberField
-                                      label={
-                                        tier.type === "mayoreo"
-                                          ? "Precio por pieza ($)"
-                                          : "Precio ($)"
-                                      }
-                                      value={tier.price}
-                                      onChange={(e) =>
-                                        updatePriceTier(i, "price", e.target.value)
-                                      }
-                                      min={0}
-                                      step={0.01}
-                                      placeholder="0.00"
-                                      disabled={tiersBlocked}
-                                    />
-                                  </div>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    className="text-destructive hover:text-destructive"
-                                    onClick={() => removePriceTier(i)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  <STooltip>
+                                    <STooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-40"
+                                        onClick={() => removePriceTier(i)}
+                                        disabled={tiersBlocked}
+                                        aria-label="Eliminar esta promo"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </STooltipTrigger>
+                                    <STooltipContent side="top" align="center">
+                                      Eliminar promo
+                                    </STooltipContent>
+                                  </STooltip>
                                 </div>
-                                <p className="text-[0.7rem] text-muted-foreground">
-                                  {tier.type === "combo"
-                                    ? "Precio fijo al comprar esa cantidad exacta; si piden de más, el sobrante va a precio normal."
-                                    : "Precio por pieza con descuento al comprar desde esa cantidad."}
-                                </p>
-                                {tierPreview(tier) && (
-                                  <p className="text-[0.7rem] font-medium text-emerald-600">
-                                    {tierPreview(tier)}
+
+                                {/* Campos */}
+                                <div className="grid grid-cols-2 gap-2">
+                                  <NumberField
+                                    icon={Hash}
+                                    label={tier.type === "combo" ? "Cantidad" : "Desde"}
+                                    value={tier.qty}
+                                    onChange={(e) => updatePriceTier(i, "qty", e.target.value)}
+                                    min={1}
+                                    placeholder="0"
+                                    disabled={tiersBlocked}
+                                  />
+                                  <NumberField
+                                    icon={DollarSign}
+                                    label={tier.type === "mayoreo" ? "Precio / pieza ($)" : "Precio total ($)"}
+                                    value={tier.price}
+                                    onChange={(e) => updatePriceTier(i, "price", e.target.value)}
+                                    min={0}
+                                    step={0.01}
+                                    placeholder="0.00"
+                                    disabled={tiersBlocked}
+                                  />
+                                </div>
+
+                                {/* Preview */}
+                                <div className="mt-2 space-y-1">
+                                  <p className="text-[0.7rem] leading-relaxed text-muted-foreground">
+                                    {tier.type === "combo"
+                                      ? "Precio fijo por esa cantidad; el sobrante se cobra a precio normal."
+                                      : "Precio especial por pieza desde esa cantidad."}
                                   </p>
-                                )}
+                                  {tierPreview(tier) && (
+                                    <p className="flex items-center gap-1 text-[0.72rem] font-medium text-emerald-600">
+                                      <CheckCircle2 className="h-3 w-3" />
+                                      {tierPreview(tier)}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             ))}
                             {tierIssues.length > 0 && (
                               <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
                                 {tierIssues.map((issue, j) => (
-                                  <p key={j} className="text-[0.75rem] text-destructive">
+                                  <p key={j} className="text-[0.75rem] text-destructive flex items-center gap-1.5">
+                                    <TriangleAlert className="h-3.5 w-3.5 flex-shrink-0" />
                                     {issue}
                                   </p>
                                 ))}
@@ -1566,8 +1619,8 @@ const AddProductModal = ({
                           </div>
                         )}
                       </div>
+                      </STooltipProvider>
                     </div>
-
                     <div className="mt-4 space-y-2 rounded-lg border border-border p-3">
                       <div className="flex items-center justify-between gap-3">
                         <div>
@@ -1673,3 +1726,21 @@ const AddProductModal = ({
 };
 
 export default AddProductModal;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

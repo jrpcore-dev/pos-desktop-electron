@@ -12,6 +12,7 @@ import {
 import { useCashier } from "../contexts/CashierContext";
 import { formatMXDate, formatMXTime, mxToday, mxWeekRange } from "../utils/dateUtils";
 import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
@@ -27,6 +28,8 @@ import { CardSkeleton } from "./Skeletons";
 import { usePagination } from "../lib/usePagination";
 import PaginationBar from "./PaginationBar";
 import { DateRangePicker } from "./ui/date-range-picker";
+
+import PageHeader from "./PageHeader";
 
 const PAGE_SIZE = 25;
 
@@ -193,11 +196,9 @@ const StockMovements = () => {
 
   return (
     <div className="p-1">
-      <div className="mb-6">
-        <p className="text-sm text-muted-foreground">
-          Entradas, salidas, ajustes y devoluciones de inventario
-        </p>
-      </div>
+      <PageHeader
+        description="Entradas, salidas, ajustes y devoluciones de inventario"
+      />
 
       {loading ? (
         <CardSkeleton count={4} />
@@ -252,7 +253,7 @@ const StockMovements = () => {
               </p>
             </div>
             <p className="text-2xl font-bold tabular-nums text-foreground">
-              ${totalComprado.toFixed(2)}
+              {fmtMoney(totalComprado)}
             </p>
           </div>
         </div>
@@ -406,10 +407,10 @@ const StockMovements = () => {
                                 </span>
                                 <span className="text-base font-extrabold leading-tight tabular-nums text-foreground">
                                   {m.type === "in" || m.type === "devolution"
-                                    ? `$${(m.cost || 0).toFixed(2)}`
+                                    ? fmtMoney(m.cost || 0)
                                     : m.cost
-                                      ? `$${m.cost.toFixed(2)}`
-                                      : "—"}
+                                      ? fmtMoney(m.cost)
+                                      : "-"}
                                 </span>
                               </div>
                             </div>
@@ -547,10 +548,10 @@ const StockMovements = () => {
                     </TableCell>
                     <TableCell className="px-4 py-3 text-right text-sm tabular-nums text-muted-foreground">
                       {isIn || isDev
-                        ? `$${(m.cost || 0).toFixed(2)}`
+                        ? fmtMoney(m.cost || 0)
                         : m.cost
-                          ? `$${m.cost.toFixed(2)}`
-                          : "—"}
+                          ? fmtMoney(m.cost)
+                          : "-"}
                     </TableCell>
                     <TableCell className="px-4 py-3">
                       <span className="block max-w-[14rem] truncate text-sm text-muted-foreground">

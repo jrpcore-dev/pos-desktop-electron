@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -88,7 +89,7 @@ const WeightDialog = ({
               </p>
               <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
                 <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary tabular-nums">
-                  ${product.price.toFixed(2)} / kg
+                  {fmtMoney(product.price)} / kg
                 </span>
                 {product.discount_percent > 0 && (
                   <span className="rounded-full bg-destructive/10 px-2.5 py-0.5 text-xs font-semibold text-destructive">
@@ -125,11 +126,11 @@ const WeightDialog = ({
                 <p className="text-xs font-medium text-muted-foreground">
                   Total
                 </p>
-                <p className="text-3xl font-extrabold text-success tabular-nums">
-                  ${total.toFixed(2)}
+                <p className="text-3xl font-extrabold text-foreground tabular-nums">
+                  {fmtMoney(total)}
                 </p>
                 <p className="text-sm text-muted-foreground tabular-nums">
-                  ${effectivePrice.toFixed(2)} × {kg.toFixed(3)} kg
+                  {fmtMoney(effectivePrice)} × {kg.toFixed(3)} kg
                 </p>
               </div>
             )}
@@ -140,7 +141,7 @@ const WeightDialog = ({
           <Button
             type="button"
             variant="outline"
-            className="flex-1"
+            className="h-11 flex-1"
             onClick={onClose}
           >
             Cancelar
@@ -148,7 +149,7 @@ const WeightDialog = ({
           <Button
             type="button"
             variant="outline"
-            className="flex-1 border-success bg-success/5 text-success hover:bg-success/10 hover:text-success"
+            className="h-11 flex-1 border-success bg-success/5 text-success hover:bg-success/10 hover:text-success"
             disabled={!weightAmount || kg <= 0 || confirming}
             onClick={onConfirm}
           >

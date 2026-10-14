@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { fmtMoney } from "@/utils/format";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -84,11 +85,24 @@ import {
   Tooltip as ReTooltip,
   ResponsiveContainer,
 } from "recharts";
-import { jsPDF } from "jspdf";
-import { applyPlugin } from "jspdf-autotable";
-import interFontInline from "../assets/fonts/inter.ttf?inline";
 import { printDocument } from "../utils/printPdf";
-applyPlugin(jsPDF);
+
+import PageHeader from "./PageHeader";
+
+// ─── TOOLCHAIN PDF BAJO DEMANDA ─────────────────────────────
+// jsPDF, jspdf-autotable y la fuente Inter (TTF inlined en base64, ~1.5 MB)
+// solo se cargan la primera vez que el usuario exporta o imprime. Con imports
+// estáticos, Vite creaba un chunk compartido enganchado al entry: toda la app
+// pagaba ~1.5 MB de JS en el arranque aunque nunca se generara un PDF.
+const loadPdfToolchain = async () => {
+  const [{ jsPDF }, { applyPlugin }, fontModule] = await Promise.all([
+    import("jspdf"),
+    import("jspdf-autotable"),
+    import("../assets/fonts/inter.ttf?inline"),
+  ]);
+  applyPlugin(jsPDF);
+  return { jsPDF, interFontInline: fontModule.default };
+};
 
 const MONTH_NAMES = [
   "Enero",
@@ -140,12 +154,6 @@ const UI_PALETTE = [
   "hsl(var(--chart-3))",
   "hsl(var(--info))",
 ];
-
-const fmtMoney = (n) =>
-  `$${Number(n || 0).toLocaleString("es-MX", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
 
 const fmtCompact = (n) => {
   const v = Math.round(Number(n || 0));
@@ -222,7 +230,10 @@ const peakHourOf = (sales) => {
   }
   for (const [h, c] of Object.entries(hours))
     if (!best || c > best.count) best = { hour: Number(h), count: c };
-  return best;
+  return {
+    best,
+    histogram: Array.from({ length: 24 }, (_, h) => ({ hour: h, count: hours[h] || 0 })),
+  };
 };
 
 const categorizeExpenses = (expenses) => {
@@ -263,15 +274,15 @@ const Delta = ({ value, invert, suffix = "periodo anterior" }) => {
 };
 
 // ─── TARJETA DE MÉTRICA CLAVE ───────────────────────────────
-const MetricCard = ({ icon, label, value, sub, delta, deltaMeta, invert, accent, loading }) => {
+const MetricCard = ({ icon, label, value, sub, delta, deltaMeta, invert, accent, loading, compact }) => {
   if (loading) {
     return (
       <Card className="overflow-hidden">
-        <CardContent className="flex items-center gap-3 p-4">
-          <Skeleton className="h-11 w-11 rounded-xl" />
+        <CardContent className={cn("flex items-center gap-3", compact ? "p-3" : "p-4")}>
+          <Skeleton className={cn(compact ? "h-9 w-9 rounded-lg" : "h-11 w-11 rounded-xl")} />
           <div className="flex-1 space-y-2">
             <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-6 w-28" />
+            <Skeleton className={cn("w-28", compact ? "h-4" : "h-6")} />
           </div>
         </CardContent>
       </Card>
@@ -279,27 +290,33 @@ const MetricCard = ({ icon, label, value, sub, delta, deltaMeta, invert, accent,
   }
   return (
     <Card className="group overflow-hidden border-border/60 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-      <CardContent className="flex items-center gap-3 p-4">
+      <CardContent className={cn("flex items-center gap-3", compact ? "p-3" : "p-4")}>
         <div
           className={cn(
-            "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105",
+            "flex shrink-0 items-center justify-center transition-transform duration-200 group-hover:scale-105",
+            compact ? "h-9 w-9 rounded-lg" : "h-11 w-11 rounded-xl",
             accent?.bg
           )}
         >
           <span className={accent?.text}>{icon}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[0.62rem] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {label}
           </p>
-          <p className="truncate text-lg font-bold leading-tight text-foreground tabular-nums">
+          <p
+            className={cn(
+              "truncate font-bold leading-tight text-foreground tabular-nums",
+              compact ? "text-base" : "text-xl"
+            )}
+          >
             {value}
           </p>
           {typeof delta === "number" && (
             <>
               <Delta value={delta} invert={invert} />
-              {deltaMeta && (
-                <p className="text-[0.68rem] text-muted-foreground tabular-nums">{deltaMeta}</p>
+              {deltaMeta && !compact && (
+                <p className="text-[11px] text-muted-foreground tabular-nums">{deltaMeta}</p>
               )}
             </>
           )}
@@ -313,6 +330,77 @@ const MetricCard = ({ icon, label, value, sub, delta, deltaMeta, invert, accent,
 };
 
 // ─── TOOLTIP PERSONALIZADO PARA RECHARTS ────────────────────
+// Celda de día del calendario — definida a nivel de módulo para que React
+// mantenga la identidad del componente y no remonte las celdas del mes en
+// cada render de Reports. Los totales del día llegan por props.
+const CalendarDayButton = ({ day, modifiers, children, dailySales, dailyExpenses, ...btnProps }) => {
+  const ds = day.isoDate;
+  const sTotal = dailySales[ds]?.total || 0;
+  const eTotal = dailyExpenses[ds] || 0;
+  const isSelected = !!modifiers.selected;
+  const isToday = !!modifiers.today;
+  const isOutside = !!day.outside;
+  return (
+    <button
+      {...btnProps}
+      className={cn(
+        "relative flex h-16 w-full flex-col items-center justify-center gap-[3px] rounded-lg p-1 transition-colors duration-150",
+        isSelected
+          ? "bg-primary text-primary-foreground shadow-sm"
+          : "hover:bg-accent/70",
+        !isSelected && isToday && "font-bold ring-1 ring-inset ring-success",
+        isOutside && "text-muted-foreground opacity-60",
+        btnProps.className
+      )}
+    >
+      <span
+        className={cn(
+          "text-[12px] leading-none tabular-nums",
+          isSelected
+            ? "font-bold text-primary-foreground"
+            : isToday
+              ? "font-bold text-success"
+              : "font-semibold text-foreground"
+        )}
+      >
+        {children}
+      </span>
+      <span className="flex flex-col items-center gap-[2px] leading-none">
+        {sTotal > 0 && (
+          <span
+            className={cn(
+              "text-[11px] font-bold tabular-nums",
+              isSelected ? "text-primary-foreground/90" : "text-success"
+            )}
+          >
+            +{fmtCompact(sTotal)}
+          </span>
+        )}
+        {eTotal > 0 && (
+          <span
+            className={cn(
+              "text-[11px] font-bold tabular-nums",
+              isSelected ? "text-primary-foreground/90" : "text-destructive"
+            )}
+          >
+            -{fmtCompact(eTotal)}
+          </span>
+        )}
+        {sTotal === 0 && eTotal === 0 && (
+          <span
+            className={cn(
+              "text-[11px]",
+              isSelected ? "text-primary-foreground/70" : "text-muted-foreground/70"
+            )}
+          >
+            -
+          </span>
+        )}
+      </span>
+    </button>
+  );
+};
+
 const ChartTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -360,6 +448,626 @@ const UnitTooltip = ({ active, payload, label }) => {
     </div>
   );
 };
+
+// ═══ BLOQUE DE GRÁFICAS + DETALLE (memorizado) ═══
+// React.memo: los renders de Reports (p. ej. al seleccionar un día del
+// calendario) saltan este bloque completo si los datos no cambian,
+// evitando re-renderizar las 7 gráficas de recharts.
+const ChartsSection = React.memo(function ChartsSection({
+  loading,
+  chartLoading,
+  chartMode,
+  summary,
+  trendData,
+  hourly,
+  topProducts,
+  prodChartMode,
+  setProdChartMode,
+  topLoading,
+  onWeekClick,
+}) {
+  const pieData = [...(summary.byMethod || [])]
+    .sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0))
+    .map((m, i) => ({
+      name: methodLabels[m.payment_method] || m.payment_method,
+      value: Number(m.total) || 0,
+      count: m.count,
+      fill: UI_PALETTE[i % UI_PALETTE.length],
+    }));
+
+  const prodRows = topProducts.slice(0, 10);
+  const hasTrend = trendData.length > 0;
+
+  const totalUnits = topProducts.reduce((a, p) => a + (p.total_sold || 0), 0);
+
+  const productDonut = (() => {
+    if (totalUnits <= 0) return [];
+    const rows = topProducts.slice(0, 6).map((p, i) => ({
+      name: p.name,
+      value: p.total_sold || 0,
+      pct: ((p.total_sold || 0) / totalUnits) * 100,
+      fill: CHART_PALETTE[i % CHART_PALETTE.length],
+    }));
+    const rest = topProducts
+      .slice(6)
+      .reduce((a, p) => a + (p.total_sold || 0), 0);
+    if (rest > 0)
+      rows.push({
+        name: "Otros productos",
+        value: rest,
+        pct: (rest / totalUnits) * 100,
+        fill: CHART_PALETTE[6 % CHART_PALETTE.length],
+      });
+    return rows;
+  })();
+
+  const catData = (() => {
+    const map = {};
+    for (const p of topProducts) {
+      const key = p.category_name || "Sin categoría";
+      map[key] = (map[key] || 0) + (p.total_sold || 0);
+    }
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value], i) => ({
+        name: name.length > 16 ? `${name.slice(0, 15)}…` : name,
+        value,
+        fill: CHART_PALETTE[i % CHART_PALETTE.length],
+      }));
+  })();
+
+  return (
+    <section className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {/* Tendencia */}
+      <Card className="min-w-0 lg:col-span-2">
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm">Tendencia de ventas</CardTitle>
+          <CardDescription className="text-xs">
+            {chartMode === "semanal" ? "Ventas por día de la semana" : "Ventas por semana del mes"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-2">
+          {chartLoading ? (
+            <div className="flex h-[260px] items-end gap-2 p-3">
+              {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                <Skeleton
+                  key={i}
+                  className="flex-1 rounded-t-md"
+                  style={{ height: `${40 + ((i * 37) % 60)}%` }}
+                />
+              ))}
+            </div>
+          ) : hasTrend ? (
+            <div
+              role="img"
+              aria-label={`Tendencia diaria del período. Ventas: ${fmtMoney(summary.salesTotal)}. Gastos: ${fmtMoney(summary.expensesTotal)}. Utilidad: ${fmtMoney(summary.profit)}.`}
+              className="h-[260px] w-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="gradVentas" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.primary} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={C.primary} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="label" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} />
+                  <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} width={46} />
+                  <ReTooltip content={ChartTooltip} />
+                  <Area type="monotone" dataKey="ventas" name="Ventas" stroke={C.primary} strokeWidth={2.5} fill="url(#gradVentas)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyState
+              icon={<Receipt className="h-6 w-6" />}
+              title="Sin datos para mostrar"
+              description="No hay ventas registradas en este período"
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Ventas por hora del día */}
+      <Card className="min-w-0">
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm">Ventas por hora del día</CardTitle>
+          <CardDescription className="text-xs">
+            Concentración de ventas por hora (hora de México)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-2">
+          {loading || hourly.length === 0 ? (
+            <div className="flex h-[220px] items-end gap-1.5 p-2">
+              {Array.from({ length: 12 }).map((_, i) => (
+                <Skeleton
+                  key={i}
+                  className="flex-1 rounded-t-md"
+                  style={{ height: `${28 + ((i * 29) % 60)}%` }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div
+              role="img"
+              aria-label={`Ventas por hora del día. Hora pico: ${
+                summary.peakHour != null
+                  ? `${summary.peakHour}:00 con ${summary.peakHourCount} ventas`
+                  : "sin datos"
+              }.`}
+              className="h-[220px] w-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hourly} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis
+                    dataKey="hour"
+                    fontSize={11}
+                    tick={{ fill: C.muted }}
+                    tickLine={false}
+                    axisLine={false}
+                    interval={1}
+                    tickFormatter={(h) => `${h}h`}
+                  />
+                  <YAxis
+                    width={34}
+                    fontSize={11}
+                    tick={{ fill: C.muted }}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <ReTooltip
+                    content={<ChartTooltip />}
+                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                  />
+                  <Bar dataKey="count" name="Ventas" radius={[4, 4, 0, 0]} maxBarSize={26}>
+                    {hourly.map((d) => (
+                      <Cell key={d.hour} fill={d.count > 0 ? C.primary : "hsl(var(--border))"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Distribución por método */}
+      <Card className="min-w-0">
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm">Distribución por método de pago</CardTitle>
+          <CardDescription className="text-xs">
+            Desglose de ingresos del período
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-2">
+          {loading ? (
+            <div className="flex flex-col items-center gap-4 py-3">
+              <Skeleton className="h-[180px] w-[180px] rounded-full" />
+              <Skeleton className="h-4 w-40" />
+            </div>
+          ) : pieData.length > 0 ? (
+            <>
+              <div
+                role="img"
+                aria-label={`Ventas por método de pago. Total: ${fmtMoney(summary.salesTotal)}.`}
+                className="relative h-[220px] w-full"
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={64}
+                      outerRadius={86}
+                      paddingAngle={2}
+                      strokeWidth={2}
+                      stroke="hsl(var(--card))"
+                    >
+                      {pieData.map((p, i) => (
+                        <Cell key={i} fill={p.fill} />
+                      ))}
+                    </Pie>
+                    <ReTooltip content={ChartTooltip} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Total
+                  </p>
+                  <p className="text-base font-bold tabular-nums text-foreground">
+                    {fmtMoney(summary.salesTotal)}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-1 grid gap-1.5">
+                {pieData.map((p) => (
+                  <div
+                    key={p.name}
+                    className="flex items-center justify-between rounded-lg border border-border/50 px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="inline-flex items-center gap-2 font-semibold text-foreground">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
+                      {p.name}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className="tabular-nums text-muted-foreground">
+                        {p.count} ventas
+                      </span>
+                      <span className="font-bold tabular-nums">{fmtMoney(p.value)}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <EmptyState
+              icon={<CreditCard className="h-6 w-6" />}
+              title="Sin datos"
+              description="No hay ventas registradas en este período"
+            />
+          )}
+        </CardContent>
+      </Card>
+
+
+      {/* Comparativa Ingresos vs Gastos vs Ganancia */}
+      <Card className="min-w-0">
+        <CardHeader className="pb-0">
+          <CardTitle className="text-sm">Ingresos vs gastos vs ganancia</CardTitle>
+          <CardDescription className="text-xs">
+            Comparativa apilada del período · haz clic en una semana para profundizar
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-2">
+          {chartLoading ? (
+            <div className="flex h-[220px] items-end gap-2 p-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="flex-1 rounded-t-md" style={{ height: `${50 + ((i * 29) % 50)}%` }} />
+              ))}
+            </div>
+          ) : hasTrend ? (
+            <div
+              role="img"
+              aria-label="Ingresos, gastos y ganancia por día del período"
+              className="h-[220px] w-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="label" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} />
+                  <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} width={46} />
+                  <ReTooltip content={ChartTooltip} />
+                  <Bar
+                    dataKey="ventas"
+                    name="Ingresos"
+                    fill={C.primary}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={36}
+                    onClick={(d) => d?.weekStart && onWeekClick(d.weekStart)}
+                    style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
+                  />
+                  <Bar
+                    dataKey="gastos"
+                    name="Gastos"
+                    fill={C.destructive}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={36}
+                    onClick={(d) => d?.weekStart && onWeekClick(d.weekStart)}
+                    style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
+                  />
+                  <Line type="monotone" dataKey="utilidad" name="Ganancia" stroke={C.warning} strokeWidth={2.5} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyState
+              icon={<Wallet className="h-6 w-6" />}
+              title="Sin datos para mostrar"
+              description="No hay ventas registradas en este período"
+            />
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-3 border-t pt-2 text-[0.7rem] font-semibold text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: C.primary }} /> Ingresos
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: C.destructive }} /> Gastos
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-0.5 w-4 rounded-full" style={{ background: C.warning }} /> Ganancia
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Top productos */}
+      <Card className="min-w-0">
+        <CardHeader className="flex-row items-start justify-between pb-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-sm">Productos más vendidos</CardTitle>
+              <Badge
+                variant="outline"
+                className="border-border/60 text-[11px] font-medium text-muted-foreground"
+              >
+                Histórico
+              </Badge>
+            </div>
+            <CardDescription className="text-xs">
+              Ranking histórico de unidades vendidas
+            </CardDescription>
+          </div>
+          <Tabs value={prodChartMode} onValueChange={setProdChartMode}>
+            <TabsList className="h-7">
+              <TabsTrigger value="barras" className="px-2 text-[11px]">Barras</TabsTrigger>
+              <TabsTrigger value="pastel" className="px-2 text-[11px]">Pastel</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </CardHeader>
+        <CardContent className="pt-2">
+          {topLoading ? (
+            <div className="space-y-2 p-3">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-7 w-full" />
+              ))}
+            </div>
+          ) : prodRows.length > 0 && prodChartMode === "barras" ? (
+            <div
+              role="img"
+              aria-label="Top 10 de productos más vendidos en unidades (histórico)"
+              className="h-[220px] w-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={prodRows}
+                  layout="vertical"
+                  margin={{ top: 4, right: 28, bottom: 0, left: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                  <XAxis type="number" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtUnits(v)} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={128}
+                    fontSize={11}
+                    tick={{ fill: C.muted }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v) =>
+                      v.length > 22 ? `${v.slice(0, 21)}…` : v
+                    }
+                  />
+                  <ReTooltip content={UnitTooltip} />
+                  <Bar dataKey="total_sold" name="Unidades" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                    {prodRows.map((p, i) => (
+                      <Cell key={p.id} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : prodChartMode === "pastel" && productDonut.length > 0 ? (
+            <>
+              <div
+                role="img"
+                aria-label="Participación de los productos más vendidos en unidades (histórico)"
+                className="relative h-[220px] w-full"
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={productDonut} dataKey="value" nameKey="name" innerRadius={64} outerRadius={86} paddingAngle={2} strokeWidth={2} stroke="hsl(var(--card))">
+                      {productDonut.map((p, i) => (
+                        <Cell key={i} fill={p.fill} />
+                      ))}
+                    </Pie>
+                    <ReTooltip content={UnitTooltip} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Unidades</p>
+                  <p className="text-base font-bold tabular-nums text-foreground">{totalUnits.toLocaleString("es-MX")}</p>
+                </div>
+              </div>
+              <div className="mt-1 grid gap-1.5">
+                {productDonut.map((p) => (
+                  <div key={p.name} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 px-2.5 py-1.5 text-xs">
+                    <span className="inline-flex min-w-0 items-center gap-2 font-semibold text-foreground">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
+                      <span className="truncate">{p.name}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2.5">
+                      <span className="tabular-nums text-muted-foreground">{p.value.toLocaleString("es-MX")} uds</span>
+                      <span className="font-bold tabular-nums">{p.pct.toFixed(1)}%</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <EmptyState icon={<ShoppingCart className="h-6 w-6" />} title="Sin productos" description="Aún no hay ventas registradas" />
+          )}
+        </CardContent>
+      </Card>
+      {/* Unidades vendidas por categoría */}
+      <Card className="min-w-0">
+        <CardHeader className="pb-0">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm">Unidades vendidas por categoría</CardTitle>
+            <Badge
+              variant="outline"
+              className="border-border/60 text-[11px] font-medium text-muted-foreground"
+            >
+              Histórico
+            </Badge>
+          </div>
+          <CardDescription className="text-xs">
+            Suma de unidades de los productos más vendidos
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-2">
+          {topLoading ? (
+            <div className="flex h-[220px] items-end gap-2 p-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="flex-1 rounded-t-md" style={{ height: `${45 + ((i * 31) % 55)}%` }} />
+              ))}
+            </div>
+          ) : catData.length > 0 ? (
+            <div
+              role="img"
+              aria-label="Unidades vendidas por categoría (histórico)"
+              className="h-[220px] w-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={catData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis
+                    dataKey="name"
+                    fontSize={11}
+                    tick={{ fill: C.muted }}
+                    tickLine={false}
+                    axisLine={false}
+                    interval={0}
+                    angle={catData.length > 4 ? -16 : 0}
+                    textAnchor={catData.length > 4 ? "end" : "middle"}
+                    height={catData.length > 4 ? 52 : 28}
+                  />
+                  <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} width={34} />
+                  <ReTooltip content={UnitTooltip} />
+                  <Bar dataKey="value" name="Unidades" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                    {catData.map((c, i) => (
+                      <Cell key={i} fill={c.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyState
+              icon={<ShoppingCart className="h-6 w-6" />}
+              title="Sin categorías"
+              description="Aún no hay ventas registradas"
+            />
+          )}
+        </CardContent>
+      </Card>
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="border-b bg-muted/20 pb-3">
+          <CardTitle className="text-sm">Gastos por tipo</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="space-y-2 p-4">
+              {[0, 1].map((i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </div>
+          ) : summary.expensesCount > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.1em]">
+                    Tipo
+                  </TableHead>
+                  <TableHead className="px-4 text-right text-[11px] font-bold uppercase tracking-[0.1em]">
+                    Movimientos
+                  </TableHead>
+                  <TableHead className="px-4 text-right text-[11px] font-bold uppercase tracking-[0.1em]">
+                    Total
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow className="hover:bg-muted/30">
+                  <TableCell className="px-4 py-2.5">
+                    <Badge variant="outline" className="border-destructive/20 bg-destructive/5 text-[0.7rem] font-bold uppercase text-destructive">
+                      Compras
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
+                    {summary.compraCount}
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-right font-bold tabular-nums text-destructive">
+                    -{fmtMoney(summary.compra)}
+                  </TableCell>
+                </TableRow>
+                <TableRow className="hover:bg-muted/30">
+                  <TableCell className="px-4 py-2.5">
+                    <Badge variant="outline" className="border-warning/25 bg-warning/10 text-[0.7rem] font-bold uppercase text-warning">
+                      Retiros
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
+                    {summary.retiroCount}
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-right font-bold tabular-nums text-destructive">
+                    -{fmtMoney(summary.retiro)}
+                  </TableCell>
+                </TableRow>
+                <TableRow className="bg-muted/30 hover:bg-muted/30">
+                  <TableCell colSpan={2} className="px-4 py-3 text-right text-sm font-bold text-foreground">
+                    TOTAL
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right text-sm font-bold text-destructive tabular-nums">
+                    -{fmtMoney(summary.expensesTotal)}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <Ban className="h-8 w-8 text-muted-foreground opacity-40" />
+              <p className="text-sm text-muted-foreground">
+                No hay gastos en este período
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+});
+
+// ══ Calendario mensual de inspección (memorizado) ══
+// react-day-picker re-renderiza sus 42 celdas y recalcula los modificadores
+// en cada render de Reports; aislado en un memo, los renders del resumen
+// diario (dayLoading / dayKpi) lo saltan por completo y la animación de
+// entrada del panel corre sin competir con ese trabajo.
+const InspectionCalendar = React.memo(function InspectionCalendar({
+  selectedDay,
+  onSelect,
+  calendarDate,
+  onMonthChange,
+  CalendarDay,
+}) {
+  return (
+    <Calendar
+      mode="single"
+      selected={selectedDay ? parseDateStr(selectedDay) : undefined}
+      onSelect={onSelect}
+      month={calendarDate}
+      onMonthChange={onMonthChange}
+      components={{ DayButton: CalendarDay }}
+      className="w-full"
+      classNames={{
+        months: "flex w-full",
+        month: "w-full space-y-2",
+        month_caption: "hidden",
+        nav: "hidden",
+        month_grid: "w-full border-collapse",
+        weekdays: "mb-1 flex w-full",
+        weekday:
+          "w-full pb-1 text-center text-[11px] font-bold uppercase tracking-wider text-muted-foreground",
+        week: "flex w-full",
+        day: "relative flex-1 flex items-stretch [&:not(:last-child)]:pr-1 focus-within:relative focus-within:z-20",
+        day_button: "flex-1",
+      }}
+    />
+  );
+});
 
 const Reports = () => {
   const [startDate, setStartDate] = useState("");
@@ -421,17 +1129,22 @@ const Reports = () => {
   const [chartBackMonth, setChartBackMonth] = useState(null);
   const [topProducts, setTopProducts] = useState([]);
   const [topLoading, setTopLoading] = useState(true);
+  // Histograma de ventas por hora (0-23, hora MX) del período
+  const [hourly, setHourly] = useState([]);
 
-  // ─── FECHA INICIAL (últimos 7 días, modo semanal) ─────────
+  // ─── FECHA INICIAL (semana de calendario, modo semanal) ───
+  // Usa la misma getWeekRange del gráfico (lunes→domingo). Antes el rango
+  // inicial era "últimos 7 días corridos" (hoy−6), que al abrir la semana
+  // recién iniciada todavía incluía ventas de la semana pasada, mientras la
+  // gráfica ya mostraba la semana nueva: los KPIs no coincidían en la
+  // primera carga hasta la primera interacción (syncRangeWithChart).
   useEffect(() => {
-    const today = mxToday();
-    const [y, m, d] = today.split("-").map(Number);
-    const weekAgo = new Date(Date.UTC(y, m - 1, d - 6));
-    const from = `${weekAgo.getUTCFullYear()}-${String(weekAgo.getUTCMonth() + 1).padStart(2, "0")}-${String(weekAgo.getUTCDate()).padStart(2, "0")}`;
-    setStartDate(from);
-    setEndDate(today);
+    const now = new Date();
+    const { start, end } = getWeekRange(now);
+    setStartDate(start);
+    setEndDate(end);
     setChartMode("semanal");
-    setChartRefDate(new Date());
+    setChartRefDate(now);
   }, []);
 
   useEffect(() => {
@@ -469,7 +1182,9 @@ const Reports = () => {
     const prevExpenses = prevExpRes.success ? prevExpRes.totalExpenses || 0 : 0;
     const prevCount = prevSalesRes.success ? prevSalesRes.count || 0 : 0;
     const profit = salesTotal - expensesTotal;
-    const peak = peakHourOf(salesRes.success ? salesRes.sales : []);
+    const { best: peak, histogram: hourlyByHour } = peakHourOf(
+      salesRes.success ? salesRes.sales : []
+    );
 
     setSummary({
       salesTotal,
@@ -490,6 +1205,7 @@ const Reports = () => {
       prevExpenses,
       prevCount,
     });
+    setHourly(hourlyByHour);
     setLoading(false);
   }, [startDate, endDate]);
 
@@ -755,6 +1471,16 @@ const Reports = () => {
     syncRangeWithChart(parseDateStr(weekStart), "semanal");
   };
 
+  // Referencia estable para ChartsSection (React.memo): el handler vive en un
+  // ref para que navegar semanas no invalide el memo y re-renderice las 7
+  // gráficas en cada cambio de estado (patrón useLatest).
+  const handleWeekClickRef = useRef(handleWeekClick);
+  handleWeekClickRef.current = handleWeekClick;
+  const onWeekClick = useCallback(
+    (weekStart) => handleWeekClickRef.current(weekStart),
+    []
+  );
+
   const backToMonth = () => {
     const ref =
       chartBackMonth
@@ -781,81 +1507,34 @@ const Reports = () => {
     setSelectedDay(null);
   };
 
-  const handleDayClick = (day) => {
+  // Estable (useCallback): el memo de InspectionCalendar depende de esta
+  // referencia para saltarse los renders del resumen diario.
+  const handleDayClick = useCallback((day) => {
     const dateStr = day instanceof Date ? toDateStr(day) : String(day);
     setSelectedDay(dateStr);
-  };
+  }, []);
+
+  const handleCalendarSelect = useCallback(
+    (d) => {
+      if (d) handleDayClick(d);
+    },
+    [handleDayClick]
+  );
 
   // ─── CELDA DEL CALENDARIO CON IMPORTES S/E ────────────────
-  const CalendarDayButton = ({ day, modifiers, children, ...btnProps }) => {
-    const ds = day.isoDate;
-    const sTotal = calendarData.dailySales[ds]?.total || 0;
-    const eTotal = calendarData.dailyExpenses[ds] || 0;
-    const isSelected = !!modifiers.selected;
-    const isToday = !!modifiers.today;
-    const isOutside = !!day.outside;
-    return (
-      <button
-        {...btnProps}
-        className={cn(
-          "relative flex h-16 w-full flex-col items-center justify-center gap-[3px] rounded-lg p-1 transition-colors duration-150",
-          isSelected
-            ? "bg-primary text-primary-foreground shadow-sm"
-            : "hover:bg-accent/70",
-          !isSelected && isToday && "font-bold ring-1 ring-inset ring-success",
-          isOutside && "text-muted-foreground opacity-45",
-          btnProps.className
-        )}
-      >
-        <span
-          className={cn(
-            "text-[12px] leading-none tabular-nums",
-            isSelected
-              ? "font-bold text-primary-foreground"
-              : isToday
-                ? "font-extrabold text-success"
-                : "font-semibold text-foreground"
-          )}
-        >
-          {children}
-        </span>
-        <span className="flex flex-col items-center gap-[2px] leading-none">
-          {sTotal > 0 && (
-            <span
-              className={cn(
-                "text-[8.5px] font-bold tabular-nums",
-                isSelected ? "text-primary-foreground/90" : "text-success"
-              )}
-            >
-              +{fmtCompact(sTotal)}
-            </span>
-          )}
-          {eTotal > 0 && (
-            <span
-              className={cn(
-                "text-[8.5px] font-bold tabular-nums",
-                isSelected ? "text-primary-foreground/90" : "text-destructive"
-              )}
-            >
-              -{fmtCompact(eTotal)}
-            </span>
-          )}
-          {sTotal === 0 && eTotal === 0 && (
-            <span
-              className={cn(
-                "text-[8px]",
-                isSelected ? "text-primary-foreground/40" : "text-muted-foreground/35"
-              )}
-            >
-              —
-            </span>
-          )}
-        </span>
-      </button>
-    );
-  };
+  // Celda del calendario: wrapper con referencia estable (useCallback) que
+  // inyecta los datos del mes al componente externo CalendarDayButton.
+  const CalendarDay = useCallback(
+    (props) => (
+      <CalendarDayButton
+        {...props}
+        dailySales={calendarData.dailySales}
+        dailyExpenses={calendarData.dailyExpenses}
+      />
+    ),
+    [calendarData.dailySales, calendarData.dailyExpenses]
+  );
 
-  const selectedDayDate = selectedDay ? parseDateStr(selectedDay) : undefined;
   const dayProfit = dayKpi.salesTotal - dayKpi.expensesTotal;
 
   // ─── EXPORTACIÓN ───────────────────────────────────────────
@@ -902,6 +1581,7 @@ const Reports = () => {
   };
 
   const buildReportPDF = async () => {
+    const { jsPDF, interFontInline } = await loadPdfToolchain();
     const store = await window.api.invoke("get-setting", "store_name");
     const storeName = store || "MI TIENDA POS";
     const doc = new jsPDF();
@@ -1007,7 +1687,7 @@ const Reports = () => {
         body: summary.byMethod.map((m) => [
           methodLabels[m.payment_method] || m.payment_method,
           String(m.count),
-          `$${Number(m.total).toFixed(2)}`,
+          fmtMoney(m.total),
         ]),
         margin: { left: margin, right: margin },
         styles: tblBase,
@@ -1026,8 +1706,8 @@ const Reports = () => {
       startY: yy + 3,
       head: [["Tipo", "Cantidad", "Total"]],
       body: [
-        ["Compras", String(summary.compraCount), `$${summary.compra.toFixed(2)}`],
-        ["Retiros", String(summary.retiroCount), `$${summary.retiro.toFixed(2)}`],
+        ["Compras", String(summary.compraCount), fmtMoney(summary.compra)],
+        ["Retiros", String(summary.retiroCount), fmtMoney(summary.retiro)],
       ],
       margin: { left: margin, right: margin },
       styles: tblBase,
@@ -1036,7 +1716,7 @@ const Reports = () => {
       foot: [
         [
           { content: "TOTAL", colSpan: 2, styles: { fontStyle: "bold", halign: "right" } },
-          `$${summary.expensesTotal.toFixed(2)}`,
+          fmtMoney(summary.expensesTotal),
         ],
       ],
       footStyles: { fillColor: C.head, textColor: C.ink, fontStyle: "bold" },
@@ -1089,57 +1769,8 @@ const Reports = () => {
     await printDocument(doc);
   };
 
-  // ─── DATOS DERIVADOS PARA GRÁFICAS ─────────────────────────
-  const pieData = [...(summary.byMethod || [])]
-    .sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0))
-    .map((m, i) => ({
-      name: methodLabels[m.payment_method] || m.payment_method,
-      value: Number(m.total) || 0,
-      count: m.count,
-      fill: UI_PALETTE[i % UI_PALETTE.length],
-    }));
-
+  // Mejor producto (KPI "Más vendido" y resumen en lenguaje llano)
   const bestProduct = topProducts[0] || null;
-  const prodRows = topProducts.slice(0, 10);
-  const hasTrend = trendData.length > 0;
-
-  const totalUnits = topProducts.reduce((a, p) => a + (p.total_sold || 0), 0);
-
-  const productDonut = (() => {
-    if (totalUnits <= 0) return [];
-    const rows = topProducts.slice(0, 6).map((p, i) => ({
-      name: p.name,
-      value: p.total_sold || 0,
-      pct: ((p.total_sold || 0) / totalUnits) * 100,
-      fill: CHART_PALETTE[i % CHART_PALETTE.length],
-    }));
-    const rest = topProducts
-      .slice(6)
-      .reduce((a, p) => a + (p.total_sold || 0), 0);
-    if (rest > 0)
-      rows.push({
-        name: "Otros productos",
-        value: rest,
-        pct: (rest / totalUnits) * 100,
-        fill: CHART_PALETTE[6 % CHART_PALETTE.length],
-      });
-    return rows;
-  })();
-
-  const catData = (() => {
-    const map = {};
-    for (const p of topProducts) {
-      const key = p.category_name || "Sin categoría";
-      map[key] = (map[key] || 0) + (p.total_sold || 0);
-    }
-    return Object.entries(map)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, value], i) => ({
-        name: name.length > 16 ? `${name.slice(0, 15)}…` : name,
-        value,
-        fill: CHART_PALETTE[i % CHART_PALETTE.length],
-      }));
-  })();
 
   const dateRangePickerValue =
     startDate && endDate ? { from: startDate, to: endDate } : null;
@@ -1168,60 +1799,64 @@ const Reports = () => {
   return (
     <TooltipProvider delayDuration={150}>
       <div className="animate-enter p-1">
+        <h1 className="sr-only">Reportes</h1>
         {/* ─── CABECERA ─────────────────────────────────────── */}
-        <header className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground">
+        <PageHeader
+          description={
+            <>
               Rendimiento del período{" "}
               <span className="font-semibold tabular-nums text-foreground">
                 {startDate} → {endDate}
               </span>
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <DateRangePicker
-              value={dateRangePickerValue}
-              onApply={handleApplyRange}
-              placeholder="Seleccionar período"
-              className="h-9"
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-foreground"
-                  onClick={() => setCalendarOpen(true)}
-                >
-                  <CalendarDays className="h-4 w-4" />
-                  Calendario
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Inspección diaria por calendario</TooltipContent>
-            </Tooltip>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <Download className="h-4 w-4" />
-                  Exportar
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={exportCSV}>
-                  <FileSpreadsheet className="h-4 w-4" /> CSV
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={exportPDF}>
-                  <Download className="h-4 w-4" /> PDF
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={printReport}>
-                  <Printer className="h-4 w-4" /> Imprimir
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
+            </>
+          }
+          actions={
+            <>
+              <DateRangePicker
+                value={dateRangePickerValue}
+                onApply={handleApplyRange}
+                placeholder="Seleccionar período"
+                className="h-9"
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-foreground"
+                    onClick={() => setCalendarOpen(true)}
+                  >
+                    <CalendarDays className="h-4 w-4" />
+                    Calendario
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Inspección diaria por calendario</TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <Download className="h-4 w-4" />
+                    Exportar
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={exportCSV}>
+                    <FileSpreadsheet className="h-4 w-4" /> CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportPDF}>
+                    <Download className="h-4 w-4" /> PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={printReport}>
+                    <Printer className="h-4 w-4" /> Imprimir
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          }
+        />
 
         {/* ─── RESUMEN EN LENGUAJE CLARO ─────────────────────── */}
+        <h2 className="sr-only">Resumen del período</h2>
         <section className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3">
           <p className="text-sm leading-relaxed text-foreground">
             En este período vendiste{" "}
@@ -1243,6 +1878,7 @@ const Reports = () => {
         </section>
 
         {/* ─── KPIs ─────────────────────────────────────────── */}
+        <h2 className="sr-only">Indicadores clave</h2>
         <section className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard
             loading={loading}
@@ -1255,12 +1891,15 @@ const Reports = () => {
           />
           <MetricCard
             loading={loading}
-            icon={<ShoppingCart className="h-5 w-5" />}
+            icon={<Wallet className="h-5 w-5" />}
             accent={{ bg: "bg-primary/10", text: "text-primary" }}
-            label="Transacciones"
-            value={String(summary.salesCount)}
-            delta={pctOf(summary.salesCount, summary.prevCount)}
-            deltaMeta={`${summary.prevCount} → ${summary.salesCount} ventas`}
+            label="Utilidad neta"
+            value={fmtMoney(summary.profit)}
+            delta={pctOf(
+              summary.profit,
+              summary.prevSales - summary.prevExpenses
+            )}
+            deltaMeta={`${fmtMoney(summary.prevSales - summary.prevExpenses)} → ${fmtMoney(summary.profit)}`}
           />
           <MetricCard
             loading={loading}
@@ -1276,25 +1915,27 @@ const Reports = () => {
           />
           <MetricCard
             loading={loading}
-            icon={<Wallet className="h-5 w-5" />}
-            accent={{ bg: "bg-indigo-500/10", text: "text-indigo-500" }}
-            label="Utilidad neta"
-            value={fmtMoney(summary.profit)}
-            delta={pctOf(
-              summary.profit,
-              summary.prevSales - summary.prevExpenses
-            )}
-            deltaMeta={`${fmtMoney(summary.prevSales - summary.prevExpenses)} → ${fmtMoney(summary.profit)}`}
+            icon={<ShoppingCart className="h-5 w-5" />}
+            accent={{ bg: "bg-primary/10", text: "text-primary" }}
+            label="Transacciones"
+            value={String(summary.salesCount)}
+            delta={pctOf(summary.salesCount, summary.prevCount)}
+            deltaMeta={`${summary.prevCount} → ${summary.salesCount} ventas`}
           />
+        </section>
+
+        <section className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard
+            compact
             loading={loading}
             icon={<Percent className="h-5 w-5" />}
-            accent={{ bg: "bg-violet-500/10", text: "text-violet-500" }}
+            accent={{ bg: "bg-success/10", text: "text-success" }}
             label="Margen de ganancia"
             value={`${summary.profitMargin.toFixed(1)}%`}
             sub={`Utilidad sobre ${fmtMoney(summary.salesTotal)}`}
           />
           <MetricCard
+            compact
             loading={loading}
             icon={<ArrowDownToLine className="h-5 w-5" />}
             accent={{ bg: "bg-destructive/10", text: "text-destructive" }}
@@ -1305,9 +1946,10 @@ const Reports = () => {
             deltaMeta={`${fmtMoney(summary.prevExpenses)} → ${fmtMoney(summary.expensesTotal)} · ${summary.expensesCount} movs`}
           />
           <MetricCard
+            compact
             loading={loading}
             icon={<Clock className="h-5 w-5" />}
-            accent={{ bg: "bg-sky-500/10", text: "text-sky-500" }}
+            accent={{ bg: "bg-warning/10", text: "text-warning" }}
             label="Hora pico"
             value={
               summary.peakHour != null
@@ -1321,9 +1963,10 @@ const Reports = () => {
             }
           />
           <MetricCard
+            compact
             loading={topLoading}
             icon={<Crown className="h-5 w-5" />}
-            accent={{ bg: "bg-amber-500/10", text: "text-amber-500" }}
+            accent={{ bg: "bg-warning/10", text: "text-warning" }}
             label="Más vendido"
             value={bestProduct ? bestProduct.name : "—"}
             sub={
@@ -1332,7 +1975,6 @@ const Reports = () => {
                 : "Sin datos"
             }
           />
-
         </section>
 
         {/* ─── CONTROLES DE GRÁFICAS ────────────────────────── */}
@@ -1350,13 +1992,13 @@ const Reports = () => {
             </TabsList>
           </Tabs>
           <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon-sm" onClick={() => navigateChart(-1)}>
+            <Button variant="outline" size="icon-sm" onClick={() => navigateChart(-1)} aria-label="Periodo anterior">
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <span className="min-w-[150px] text-center text-xs font-semibold tabular-nums text-foreground">
               {formatChartTitle()}
             </span>
-            <Button variant="outline" size="icon-sm" onClick={() => navigateChart(1)}>
+            <Button variant="outline" size="icon-sm" onClick={() => navigateChart(1)} aria-label="Periodo siguiente">
               <ChevronRight className="h-4 w-4" />
             </Button>
             <Button variant="ghost" size="sm" className="ml-1 text-xs" onClick={goCurrent}>
@@ -1371,483 +2013,21 @@ const Reports = () => {
         </section>
 
         {/* ─── GRÁFICAS ─────────────────────────────────────── */}
-        <section className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {/* Tendencia */}
-          <Card className="min-w-0">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Tendencia de ventas</CardTitle>
-              <CardDescription className="text-xs">
-                {chartMode === "semanal" ? "Ventas por día de la semana" : "Ventas por semana del mes"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {chartLoading ? (
-                <div className="flex h-[240px] items-end gap-2 p-3">
-                  {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-                    <Skeleton
-                      key={i}
-                      className="flex-1 rounded-t-md"
-                      style={{ height: `${40 + ((i * 37) % 60)}%` }}
-                    />
-                  ))}
-                </div>
-              ) : hasTrend ? (
-                <div className="h-[240px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                      <defs>
-                        <linearGradient id="gradVentas" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={C.primary} stopOpacity={0.35} />
-                          <stop offset="100%" stopColor={C.primary} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis dataKey="label" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} />
-                      <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} width={46} />
-                      <ReTooltip content={ChartTooltip} />
-                      <Area type="monotone" dataKey="ventas" name="Ventas" stroke={C.primary} strokeWidth={2.5} fill="url(#gradVentas)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <EmptyState
-                  icon={<Receipt className="h-6 w-6" />}
-                  title="Sin datos para mostrar"
-                  description="No hay ventas registradas en este período"
-                />
-              )}
-            </CardContent>
-          </Card>
+        <h2 className="sr-only">Análisis del período</h2>
+        <ChartsSection
+          loading={loading}
+          chartLoading={chartLoading}
+          chartMode={chartMode}
+          summary={summary}
+          trendData={trendData}
+          hourly={hourly}
+          topProducts={topProducts}
+          prodChartMode={prodChartMode}
+          setProdChartMode={setProdChartMode}
+          topLoading={topLoading}
+          onWeekClick={onWeekClick}
+        />
 
-          {/* Distribución por método */}
-          <Card className="min-w-0">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Distribución por método de pago</CardTitle>
-              <CardDescription className="text-xs">
-                Desglose de ingresos del período
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {loading ? (
-                <div className="flex flex-col items-center gap-4 py-3">
-                  <Skeleton className="h-[180px] w-[180px] rounded-full" />
-                  <Skeleton className="h-4 w-40" />
-                </div>
-              ) : pieData.length > 0 ? (
-                <>
-                  <div className="relative h-[196px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={pieData}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius={64}
-                          outerRadius={86}
-                          paddingAngle={2}
-                          strokeWidth={2}
-                          stroke="hsl(var(--card))"
-                        >
-                          {pieData.map((p, i) => (
-                            <Cell key={i} fill={p.fill} />
-                          ))}
-                        </Pie>
-                        <ReTooltip content={ChartTooltip} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Total
-                      </p>
-                      <p className="text-base font-bold tabular-nums text-foreground">
-                        {fmtMoney(summary.salesTotal)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-1 grid gap-1.5">
-                    {pieData.map((p) => (
-                      <div
-                        key={p.name}
-                        className="flex items-center justify-between rounded-md border border-border/50 px-2.5 py-1.5 text-xs"
-                      >
-                        <span className="inline-flex items-center gap-2 font-semibold text-foreground">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
-                          {p.name}
-                        </span>
-                        <span className="flex items-center gap-3">
-                          <span className="tabular-nums text-muted-foreground">
-                            {p.count} ventas
-                          </span>
-                          <span className="font-bold tabular-nums">{fmtMoney(p.value)}</span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <EmptyState
-                  icon={<CreditCard className="h-6 w-6" />}
-                  title="Sin datos"
-                  description="No hay ventas registradas en este período"
-                />
-              )}
-            </CardContent>
-          </Card>
-
-
-          {/* Comparativa Ingresos vs Gastos vs Ganancia */}
-          <Card className="min-w-0">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Ingresos vs gastos vs ganancia</CardTitle>
-              <CardDescription className="text-xs">
-                Comparativa apilada del período · haz clic en una semana para profundizar
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {chartLoading ? (
-                <div className="flex h-[220px] items-end gap-2 p-3">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <Skeleton key={i} className="flex-1 rounded-t-md" style={{ height: `${50 + ((i * 29) % 50)}%` }} />
-                  ))}
-                </div>
-              ) : hasTrend ? (
-                <div className="h-[220px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis dataKey="label" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} />
-                      <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} width={46} />
-                      <ReTooltip content={ChartTooltip} />
-                      <Bar
-                        dataKey="ventas"
-                        name="Ingresos"
-                        fill={C.primary}
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={36}
-                        onClick={(d) => d?.weekStart && handleWeekClick(d.weekStart)}
-                        style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
-                      />
-                      <Bar
-                        dataKey="gastos"
-                        name="Gastos"
-                        fill={C.destructive}
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={36}
-                        onClick={(d) => d?.weekStart && handleWeekClick(d.weekStart)}
-                        style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
-                      />
-                      <Line type="monotone" dataKey="utilidad" name="Ganancia" stroke={C.warning} strokeWidth={2.5} dot={false} />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <EmptyState
-                  icon={<Wallet className="h-6 w-6" />}
-                  title="Sin datos para mostrar"
-                  description="No hay ventas registradas en este período"
-                />
-              )}
-              <div className="mt-2 flex flex-wrap items-center gap-3 border-t pt-2 text-[0.7rem] font-semibold text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: C.primary }} /> Ingresos
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: C.destructive }} /> Gastos
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-4 rounded" style={{ background: C.warning }} /> Ganancia
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Top productos */}
-          <Card className="min-w-0">
-            <CardHeader className="flex-row items-start justify-between pb-0">
-              <div>
-                <CardTitle className="text-sm">Productos más vendidos</CardTitle>
-                <CardDescription className="text-xs">
-                  Ranking histórico de unidades vendidas
-                </CardDescription>
-              </div>
-              <Tabs value={prodChartMode} onValueChange={setProdChartMode}>
-                <TabsList className="h-7">
-                  <TabsTrigger value="barras" className="px-2 text-[11px]">Barras</TabsTrigger>
-                  <TabsTrigger value="pastel" className="px-2 text-[11px]">Pastel</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {topLoading ? (
-                <div className="space-y-2 p-3">
-                  {[0, 1, 2, 3, 4, 5].map((i) => (
-                    <Skeleton key={i} className="h-7 w-full" />
-                  ))}
-                </div>
-              ) : prodRows.length > 0 && prodChartMode === "barras" ? (
-                <div className="h-[220px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={prodRows}
-                      layout="vertical"
-                      margin={{ top: 4, right: 28, bottom: 0, left: 8 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
-                      <XAxis type="number" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtUnits(v)} />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        width={128}
-                        fontSize={11}
-                        tick={{ fill: C.muted }}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={(v) =>
-                          v.length > 22 ? `${v.slice(0, 21)}…` : v
-                        }
-                      />
-                      <ReTooltip content={UnitTooltip} />
-                      <Bar dataKey="total_sold" name="Unidades" radius={[0, 4, 4, 0]} maxBarSize={18}>
-                        {prodRows.map((p, i) => (
-                          <Cell key={p.id} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : prodChartMode === "pastel" && productDonut.length > 0 ? (
-                <>
-                  <div className="relative h-[196px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={productDonut} dataKey="value" nameKey="name" innerRadius={64} outerRadius={86} paddingAngle={2} strokeWidth={2} stroke="hsl(var(--card))">
-                          {productDonut.map((p, i) => (
-                            <Cell key={i} fill={p.fill} />
-                          ))}
-                        </Pie>
-                        <ReTooltip content={UnitTooltip} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <p className="text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground">Unidades</p>
-                      <p className="text-base font-bold tabular-nums text-foreground">{totalUnits.toLocaleString("es-MX")}</p>
-                    </div>
-                  </div>
-                  <div className="mt-1 grid gap-1.5">
-                    {productDonut.map((p) => (
-                      <div key={p.name} className="flex items-center justify-between gap-2 rounded-md border border-border/50 px-2.5 py-1.5 text-xs">
-                        <span className="inline-flex min-w-0 items-center gap-2 font-semibold text-foreground">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
-                          <span className="truncate">{p.name}</span>
-                        </span>
-                        <span className="flex shrink-0 items-center gap-2.5">
-                          <span className="tabular-nums text-muted-foreground">{p.value.toLocaleString("es-MX")} uds</span>
-                          <span className="font-bold tabular-nums">{p.pct.toFixed(1)}%</span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <EmptyState icon={<ShoppingCart className="h-6 w-6" />} title="Sin productos" description="Aún no hay ventas registradas" />
-              )}
-            </CardContent>
-          </Card>
-          {/* Unidades vendidas por categoría */}
-          <Card className="min-w-0">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Unidades vendidas por categoría</CardTitle>
-              <CardDescription className="text-xs">
-                Suma de unidades de los productos más vendidos
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {topLoading ? (
-                <div className="flex h-[220px] items-end gap-2 p-3">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <Skeleton key={i} className="flex-1 rounded-t-md" style={{ height: `${45 + ((i * 31) % 55)}%` }} />
-                  ))}
-                </div>
-              ) : catData.length > 0 ? (
-                <div className="h-[220px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={catData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis
-                        dataKey="name"
-                        fontSize={11}
-                        tick={{ fill: C.muted }}
-                        tickLine={false}
-                        axisLine={false}
-                        interval={0}
-                        angle={catData.length > 4 ? -16 : 0}
-                        textAnchor={catData.length > 4 ? "end" : "middle"}
-                        height={catData.length > 4 ? 52 : 28}
-                      />
-                      <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} width={34} />
-                      <ReTooltip content={UnitTooltip} />
-                      <Bar dataKey="value" name="Unidades" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                        {catData.map((c, i) => (
-                          <Cell key={i} fill={c.fill} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <EmptyState
-                  icon={<ShoppingCart className="h-6 w-6" />}
-                  title="Sin categorías"
-                  description="Aún no hay ventas registradas"
-                />
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* ─── TABLAS DE DESGLOSE ────────────────────────────── */}
-        <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <Card className="min-w-0 overflow-hidden">
-            <CardHeader className="border-b bg-muted/20 pb-3">
-              <CardTitle className="text-sm">Detalle por método de pago</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="space-y-2 p-4">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-8 w-full" />
-                  ))}
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="px-4 text-[0.62rem] font-extrabold uppercase tracking-[0.1em]">
-                        Método
-                      </TableHead>
-                      <TableHead className="px-4 text-right text-[0.62rem] font-extrabold uppercase tracking-[0.1em]">
-                        Ventas
-                      </TableHead>
-                      <TableHead className="px-4 text-right text-[0.62rem] font-extrabold uppercase tracking-[0.1em]">
-                        Total
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pieData.length > 0 ? (
-                      pieData.map((m) => (
-                        <TableRow key={m.name} className="hover:bg-muted/30">
-                          <TableCell className="px-4 py-2.5">
-                            <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
-                              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: m.fill }} />
-                              {m.name}
-                            </span>
-                          </TableCell>
-                          <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
-                            {m.count}
-                          </TableCell>
-                          <TableCell className="px-4 py-2.5 text-right font-bold tabular-nums text-foreground">
-                            {fmtMoney(m.value)}
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={3} className="px-4 py-6 text-center text-sm text-muted-foreground">
-                          Sin ventas en el período
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {pieData.length > 0 && (
-                      <TableRow className="bg-muted/30 hover:bg-muted/30">
-                        <TableCell colSpan={2} className="px-4 py-3 text-right text-sm font-bold text-foreground">
-                          TOTAL
-                        </TableCell>
-                        <TableCell className="px-4 py-3 text-right text-sm font-bold text-success tabular-nums">
-                          {fmtMoney(summary.salesTotal)}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="min-w-0 overflow-hidden">
-            <CardHeader className="border-b bg-muted/20 pb-3">
-              <CardTitle className="text-sm">Gastos por tipo</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="space-y-2 p-4">
-                  {[0, 1].map((i) => (
-                    <Skeleton key={i} className="h-8 w-full" />
-                  ))}
-                </div>
-              ) : summary.expensesCount > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="px-4 text-[0.62rem] font-extrabold uppercase tracking-[0.1em]">
-                        Tipo
-                      </TableHead>
-                      <TableHead className="px-4 text-right text-[0.62rem] font-extrabold uppercase tracking-[0.1em]">
-                        Movimientos
-                      </TableHead>
-                      <TableHead className="px-4 text-right text-[0.62rem] font-extrabold uppercase tracking-[0.1em]">
-                        Total
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow className="hover:bg-muted/30">
-                      <TableCell className="px-4 py-2.5">
-                        <Badge variant="outline" className="border-destructive/20 bg-destructive/5 text-[0.7rem] font-bold uppercase text-destructive">
-                          Compras
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
-                        {summary.compraCount}
-                      </TableCell>
-                      <TableCell className="px-4 py-2.5 text-right font-bold tabular-nums text-destructive">
-                        -{fmtMoney(summary.compra)}
-                      </TableCell>
-                    </TableRow>
-                    <TableRow className="hover:bg-muted/30">
-                      <TableCell className="px-4 py-2.5">
-                        <Badge variant="outline" className="border-warning/25 bg-warning/10 text-[0.7rem] font-bold uppercase text-warning">
-                          Retiros
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
-                        {summary.retiroCount}
-                      </TableCell>
-                      <TableCell className="px-4 py-2.5 text-right font-bold tabular-nums text-destructive">
-                        -{fmtMoney(summary.retiro)}
-                      </TableCell>
-                    </TableRow>
-                    <TableRow className="bg-muted/30 hover:bg-muted/30">
-                      <TableCell colSpan={2} className="px-4 py-3 text-right text-sm font-bold text-foreground">
-                        TOTAL
-                      </TableCell>
-                      <TableCell className="px-4 py-3 text-right text-sm font-bold text-destructive tabular-nums">
-                        -{fmtMoney(summary.expensesTotal)}
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              ) : (
-                <div className="flex flex-col items-center gap-2 py-8 text-center">
-                  <Ban className="h-8 w-8 text-muted-foreground opacity-40" />
-                  <p className="text-sm text-muted-foreground">
-                    No hay gastos en este período
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
 
         {/* ─── CALENDARIO (SHEET FLOTANTE) ───────────────────── */}
         <Sheet
@@ -1871,7 +2051,7 @@ const Reports = () => {
             <div className="px-6 pb-6">
               {/* Navegación de mes */}
               <div className="sticky top-0 z-10 -mx-6 mt-4 flex items-center justify-between gap-2 border-b bg-background/95 px-6 py-3 backdrop-blur">
-                <Button variant="outline" size="icon-sm" onClick={prevMonth}>
+                <Button variant="outline" size="icon-sm" onClick={prevMonth} aria-label="Mes anterior">
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
                 <div className="flex flex-col items-center">
@@ -1883,7 +2063,7 @@ const Reports = () => {
                     Hoy
                   </Button>
                 </div>
-                <Button variant="outline" size="icon-sm" onClick={nextMonth}>
+                <Button variant="outline" size="icon-sm" onClick={nextMonth} aria-label="Mes siguiente">
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -1899,7 +2079,7 @@ const Reports = () => {
                   {/* Mini KPIs del mes */}
                   <div className="mt-4 grid grid-cols-3 gap-2">
                     <div className="rounded-xl border bg-card p-2.5">
-                      <p className="text-[0.55rem] font-bold uppercase tracking-wider text-success">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-success">
                         Ventas
                       </p>
                       <p className="truncate text-sm font-bold tabular-nums text-foreground">
@@ -1910,7 +2090,7 @@ const Reports = () => {
                       />
                     </div>
                     <div className="rounded-xl border bg-card p-2.5">
-                      <p className="text-[0.55rem] font-bold uppercase tracking-wider text-destructive">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-destructive">
                         Gastos
                       </p>
                       <p className="truncate text-sm font-bold tabular-nums text-foreground">
@@ -1922,13 +2102,13 @@ const Reports = () => {
                       />
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border bg-primary p-2.5 text-primary-foreground">
-                      <p className="text-[0.55rem] font-bold uppercase tracking-wider opacity-90">
+                      <p className="text-[11px] font-bold uppercase tracking-wider opacity-90">
                         Utilidad
                       </p>
                       <p className="truncate text-sm font-bold tabular-nums">
                         {fmtMoney(calendarData.profit)}
                       </p>
-                      <p className="truncate text-[0.6rem] opacity-80 tabular-nums">
+                      <p className="truncate text-[11px] opacity-80 tabular-nums">
                         {calendarData.salesCount} ventas · {calendarData.expensesCount} gastos
                       </p>
                     </div>
@@ -1937,13 +2117,13 @@ const Reports = () => {
                   {/* Leyenda */}
                   <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1.5">
-                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-success text-[8px] font-bold text-white">
+                      <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-success text-[11px] font-bold text-white">
                         +
                       </span>
                       Ingresos
                     </span>
                     <span className="inline-flex items-center gap-1.5">
-                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] bg-destructive text-[8px] font-bold text-white">
+                      <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-destructive text-[11px] font-bold text-white">
                         −
                       </span>
                       Gastos
@@ -1952,35 +2132,18 @@ const Reports = () => {
 
                   {/* Calendario */}
                   <div className="mt-2">
-                    <Calendar
-                      mode="single"
-                      selected={selectedDayDate}
-                      onSelect={(d) => {
-                        if (d) handleDayClick(d);
-                      }}
-                      month={calendarDate}
-                      onMonthChange={(m) => setCalendarDate(m)}
-                      components={{ DayButton: CalendarDayButton }}
-                      className="w-full"
-                      classNames={{
-                        months: "flex w-full",
-                        month: "w-full space-y-2",
-                        month_caption: "hidden",
-                        nav: "hidden",
-                        month_grid: "w-full border-collapse",
-                        weekdays: "mb-1 flex w-full",
-                        weekday:
-                          "w-full pb-1 text-center text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground",
-                        week: "flex w-full",
-                        day: "relative flex-1 flex items-stretch [&:not(:last-child)]:pr-1 focus-within:relative focus-within:z-20",
-                        day_button: "flex-1",
-                      }}
+                    <InspectionCalendar
+                      selectedDay={selectedDay}
+                      onSelect={handleCalendarSelect}
+                      calendarDate={calendarDate}
+                      onMonthChange={setCalendarDate}
+                      CalendarDay={CalendarDay}
                     />
                   </div>
 
                   {/* Resumen del día */}
                   {selectedDay && (
-                    <div className="animate-enter mt-4 rounded-xl border bg-card p-3.5">
+                    <div className="animate-panel-in mt-4 rounded-xl border bg-card p-3.5">
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
@@ -1997,7 +2160,7 @@ const Reports = () => {
                         </div>
                         <button
                           onClick={() => setSelectedDay(null)}
-                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                           aria-label="Cerrar resumen del día"
                         >
                           <X className="h-4 w-4" />
@@ -2012,29 +2175,29 @@ const Reports = () => {
                       ) : (
                         <div className="mt-3 grid grid-cols-3 gap-2">
                           <div className="rounded-lg bg-success/10 p-2.5">
-                            <p className="text-[0.55rem] font-bold uppercase tracking-wider text-success">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-success">
                               Ingresos
                             </p>
                             <p className="text-sm font-bold tabular-nums text-foreground">
                               {fmtMoney(dayKpi.salesTotal)}
                             </p>
-                            <p className="text-[0.6rem] tabular-nums text-muted-foreground">
+                            <p className="text-[11px] tabular-nums text-muted-foreground">
                               {dayKpi.salesCount} ventas
                             </p>
                           </div>
                           <div className="rounded-lg bg-destructive/10 p-2.5">
-                            <p className="text-[0.55rem] font-bold uppercase tracking-wider text-destructive">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-destructive">
                               Gastos
                             </p>
                             <p className="text-sm font-bold tabular-nums text-foreground">
                               {fmtMoney(dayKpi.expensesTotal)}
                             </p>
-                            <p className="text-[0.6rem] tabular-nums text-muted-foreground">
+                            <p className="text-[11px] tabular-nums text-muted-foreground">
                               {dayKpi.expensesCount} gastos
                             </p>
                           </div>
                           <div className="rounded-lg bg-primary/10 p-2.5">
-                            <p className="text-[0.55rem] font-bold uppercase tracking-wider text-primary">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
                               Utilidad
                             </p>
                             <p className="text-sm font-bold tabular-nums text-foreground">

@@ -41,7 +41,7 @@ function Field({ label, value, strong }) {
       <span className="text-xs text-muted-foreground">{label}</span>
       <span
         className={cn(
-          "text-[13px] tabular-nums",
+          "text-[14px] tabular-nums",
           strong ? "font-bold text-foreground" : "font-medium text-foreground",
         )}
       >
@@ -70,7 +70,7 @@ function StateTile({ icon: Icon, label, status, tone, onClick, title, dot = true
     >
       <span className="flex min-w-0 items-center gap-2">
         <Icon size={15} className="shrink-0 text-muted-foreground" />
-        <span className="truncate text-[13px] text-foreground">{label}</span>
+        <span className="truncate text-[14px] text-foreground">{label}</span>
       </span>
       <span
         className={cn(
@@ -141,16 +141,14 @@ const openRegister = () => {
           type="button"
           aria-label={
             isOpen
-              ? `Caja abierta, abierta a las ${formatMXTime(register.opened_at)}`
-              : "Caja cerrada"
+              ? `Caja abierta a las ${formatMXTime(register.opened_at)}. ${clock}`
+              : `Caja cerrada. ${clock}`
           }
           className={cn(
-            "flex h-8 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-left outline-none",
-            "border-border bg-card transition-colors duration-150",
-            "hover:bg-foreground/[0.04] focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1",
-            isOpen
-              ? "text-foreground"
-              : "border-dashed text-muted-foreground hover:text-foreground",
+            "flex h-full cursor-pointer items-center gap-2 px-3 text-left outline-none last:rounded-r-lg",
+            "transition-colors duration-150",
+            "hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+            isOpen ? "text-foreground" : "text-muted-foreground",
           )}
         >
           <span
@@ -159,26 +157,25 @@ const openRegister = () => {
               isOpen ? "bg-success" : "bg-muted-foreground/40",
             )}
           />
-          <span className="text-[13px] font-medium whitespace-nowrap">
+          <span className="text-[14px] font-medium whitespace-nowrap">
             {isOpen ? "Caja abierta" : "Caja cerrada"}
           </span>
 
-          <span className="h-4 w-px bg-border" />
+          {/* Estado del servidor y la báscula, siempre a la vista */}
+          <span className="h-4 w-px shrink-0 bg-border" />
           <span
             className="flex shrink-0 items-center gap-1.5"
             title={`Servidor: ${serverRunning ? "activo" : "caído"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`}
           >
+            <Wifi
+              size={14}
+              aria-label={serverRunning ? "Servidor activo" : "Servidor caído"}
+              className={serverRunning ? "text-success" : "text-destructive"}
+            />
             <span
-              title={serverRunning ? "Servidor activo" : "Servidor caído"}
-              className="inline-flex items-center"
-            >
-              <Wifi
-                size={14}
-                className={serverRunning ? "text-success" : "text-destructive"}
-              />
-            </span>
-            <span
-              title={scaleConnected ? "Báscula conectada" : "Báscula desconectada"}
+              title={
+                scaleConnected ? "Báscula conectada" : "Báscula desconectada"
+              }
               className={cn(
                 "size-1.5 shrink-0 rounded-full",
                 scaleConnected ? "bg-success" : "bg-muted-foreground/40",
@@ -186,12 +183,8 @@ const openRegister = () => {
             />
           </span>
 
-          <span className="h-4 w-px bg-border" />
-          <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-            {dateLabel}
-          </span>
-          <span className="h-4 w-px bg-border" />
-          <span className="text-[13px] font-semibold whitespace-nowrap tabular-nums">
+          <span className="h-4 w-px shrink-0 bg-border" />
+          <span className="text-[14px] font-semibold whitespace-nowrap tabular-nums">
             {clock}
           </span>
           <ChevronDown
@@ -210,8 +203,8 @@ const openRegister = () => {
                 <Landmark size={13} />
                 Caja actual
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                #{register.id}
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                {dateLabel} · #{register.id}
               </span>
             </div>
             <Divider />
@@ -245,8 +238,17 @@ const openRegister = () => {
           </>
         ) : (
           <>
+            <div className="flex items-center justify-between gap-2 px-3 pt-2.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
+                <Landmark size={13} />
+                Caja
+              </span>
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                {dateLabel}
+              </span>
+            </div>
             <div className="px-3 py-2.5">
-              <p className="text-[13px] font-semibold text-foreground">
+              <p className="text-[14px] font-semibold text-foreground">
                 No hay ninguna caja abierta
               </p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -269,7 +271,7 @@ const openRegister = () => {
         <div className="p-1.5">
           {!serverRunning && (
             <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
-              <p className="text-[13px] font-semibold text-destructive">
+              <p className="text-[14px] font-semibold text-destructive">
                 Servidor móvil detenido
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">

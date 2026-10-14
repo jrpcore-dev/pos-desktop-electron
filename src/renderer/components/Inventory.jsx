@@ -92,6 +92,10 @@ import { useCashier } from "../contexts/CashierContext";
 import { mxToday, formatMXTime } from "../utils/dateUtils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { getStockStatus } from "./ui/stock-status";
+import { promoInfo } from "../utils/cartMath";
+
+import PageHeader from "./PageHeader";
+import { fmtMoney } from "../utils/format";
 
 const ROW_HEIGHT = 52;
 const BUFFER_ROWS = 3;
@@ -270,10 +274,9 @@ const ProductRow = React.memo(
     onDelete,
   }) => {
     const stockStatus = getStockStatus(product.stock, product.min_stock);
-    const finalPrice = calcDiscountedPrice(
-      product.price,
-      product.discount_percent,
-    );
+    const promo = promoInfo(product, 1);
+    const finalPrice = promo.unit;
+    const hasPromo = promo.applied || product.discount_percent > 0;
     const lowStock = product.stock <= (product.min_stock || 5);
     const doubleLow = product.stock <= (product.min_stock || 5) * 2;
     const hasDayRef = (product.startOfDay || 0) > 0;
@@ -364,14 +367,14 @@ const ProductRow = React.memo(
           </div>
         </STableCell>
         <STableCell className="px-4 text-right">
-          {product.discount_percent > 0 ? (
+          {hasPromo ? (
             <div>
               <span className="block text-xs text-muted-foreground line-through">
-                ${product.price.toFixed(2)}
+                {fmtMoney(product.price)}
               </span>
               <span className="flex items-center justify-end gap-1">
                 <span className="text-sm font-bold text-red-600 dark:text-red-400">
-                  ${finalPrice.toFixed(2)}
+                  {fmtMoney(finalPrice)}
                 </span>
                 <PriceMetaIcons product={product} />
               </span>
@@ -379,7 +382,7 @@ const ProductRow = React.memo(
           ) : (
             <span className="inline-flex items-center justify-end gap-1">
               <span className="text-sm font-semibold">
-                ${boxPriceDisplay(product).toFixed(2)}
+                {fmtMoney(boxPriceDisplay(product))}
               </span>
               <PriceMetaIcons product={product} />
             </span>
@@ -1101,28 +1104,33 @@ const Inventory = () => {
 
   return (
     <div className="p-1">
-      <div className="mb-4 flex items-center justify-end gap-2">
-        <SButton
-          variant="outline"
-          size="sm"
-          onClick={exportInventoryCSV}
-        >
-          <Download className="mr-1.5 h-4 w-4" />
-          Exportar
-        </SButton>
-        <SButton size="sm" onClick={() => setIsModalOpen(true)}>
-          <PlusCircle className="mr-1.5 h-4 w-4" />
-          Nuevo Producto
-          <KbdGroup className="ml-1">
-            <Kbd className="h-[18px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-1.5 font-sans text-[12px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
-              Ctrl
-            </Kbd>
-            <Kbd className="h-[18px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-1.5 font-sans text-[12px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
-              N
-            </Kbd>
-          </KbdGroup>
-        </SButton>
-      </div>
+      <PageHeader
+        description="Catálogo con precios, existencias y márgenes"
+        actions={
+          <>
+            <SButton
+              variant="outline"
+              size="sm"
+              onClick={exportInventoryCSV}
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Exportar
+            </SButton>
+            <SButton size="sm" onClick={() => setIsModalOpen(true)}>
+              <PlusCircle className="mr-1.5 h-4 w-4" />
+              Nuevo Producto
+              <KbdGroup className="ml-1">
+                <Kbd className="h-[18px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-1.5 font-sans text-[12px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
+                  Ctrl
+                </Kbd>
+                <Kbd className="h-[18px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-1.5 font-sans text-[12px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
+                  N
+                </Kbd>
+              </KbdGroup>
+            </SButton>
+          </>
+        }
+      />
 
       {loading && !hasLoadedOnce ? (
         <CardSkeleton count={3} />
@@ -1540,10 +1548,12 @@ const Inventory = () => {
               {selectedProduct.discount_percent > 0 && (
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
                   <span className="text-2xl font-extrabold leading-none text-red-600 dark:text-red-400">
-                    ${calcDiscountedPrice(
-                      selectedProduct.price,
-                      selectedProduct.discount_percent,
-                    ).toFixed(2)}
+                    {fmtMoney(
+                      calcDiscountedPrice(
+                        selectedProduct.price,
+                        selectedProduct.discount_percent,
+                      ),
+                    )}
                   </span>
                   <span className="shrink-0 inline-flex items-center gap-1 rounded-md bg-red-500/15 px-2.5 py-1 text-xs font-bold text-red-600 dark:text-red-400">
                     <Percent size={12} />
@@ -1564,31 +1574,32 @@ const Inventory = () => {
                     selectedProduct.stock >= selectedProduct.box_qty ? (
                       <>
                         <p className="text-3xl font-extrabold leading-none text-primary">
-                          ${(selectedProduct.box_price || 0).toFixed(2)}
+                          {fmtMoney(selectedProduct.box_price)}
                         </p>
                         <p className="mt-1.5 text-[0.75rem] text-muted-foreground">
-                          Pieza: $
-                          {(
+                          Pieza:{" "}
+                          {fmtMoney(
                             selectedProduct.sale_unit === "boxpack"
                               ? selectedProduct.pack_price || 0
-                              : selectedProduct.price || 0
-                          ).toFixed(2)}
+                              : selectedProduct.price || 0,
+                          )}
                         </p>
                       </>
                     ) : (
                       <>
                         <p className="text-3xl font-extrabold leading-none text-primary">
-                          $
-                          {selectedProduct.discount_percent > 0
-                            ? calcDiscountedPrice(
-                                selectedProduct.price,
-                                selectedProduct.discount_percent,
-                              ).toFixed(2)
-                            : selectedProduct.price.toFixed(2)}
+                          {fmtMoney(
+                            selectedProduct.discount_percent > 0
+                              ? calcDiscountedPrice(
+                                  selectedProduct.price,
+                                  selectedProduct.discount_percent,
+                                )
+                              : selectedProduct.price,
+                          )}
                         </p>
                         {selectedProduct.discount_percent > 0 && (
                           <p className="mt-1.5 text-[0.8rem] text-muted-foreground line-through">
-                            ${selectedProduct.price.toFixed(2)}
+                            {fmtMoney(selectedProduct.price)}
                           </p>
                         )}
                       </>
@@ -1601,16 +1612,16 @@ const Inventory = () => {
                     Precio Costo
                   </span>
                   <p className="mt-3 text-3xl font-extrabold leading-none">
-                    ${(selectedProduct.cost_price || 0).toFixed(2)}
+                    {fmtMoney(selectedProduct.cost_price)}
                   </p>
                   {isContainerUnit(selectedProduct.sale_unit) &&
                     selectedProduct.box_qty > 0 && (
                       <p className="mt-1.5 text-[0.78rem] text-muted-foreground">
-                        Pieza: $
-                        {(
+                        Pieza:{" "}
+                        {fmtMoney(
                           (selectedProduct.cost_price || 0) /
-                          selectedProduct.box_qty
-                        ).toFixed(2)}
+                            selectedProduct.box_qty,
+                        )}
                       </p>
                     )}
                 </div>
@@ -1661,12 +1672,11 @@ const Inventory = () => {
                           Paquete
                         </span>
                         <span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-sm font-extrabold text-cyan-600 dark:text-cyan-400">
-                          $
-                          {(
+                          {fmtMoney(
                             selectedProduct.sale_unit === "boxpack"
                               ? selectedProduct.price || 0
-                              : selectedProduct.pack_price || 0
-                          ).toFixed(2)}
+                              : selectedProduct.pack_price || 0,
+                          )}
                         </span>
                         <span className="text-[0.8rem] text-muted-foreground">
                           ({selectedProduct.pack_qty} pzas/paquete)
@@ -1731,7 +1741,7 @@ const Inventory = () => {
                                     : "bg-purple-500/10 text-purple-600 dark:text-purple-400",
                                 )}
                               >
-                                ${t.price.toFixed(2)}
+                                {fmtMoney(t.price)}
                                 {t.type === "mayoreo" ? "/pza" : ""}
                               </span>
                             </div>
@@ -2073,10 +2083,10 @@ const Inventory = () => {
                       Costo total de esta entrada
                     </span>
                     <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400">
-                      ${(() => {
+                      {(() => {
                         const aQty = addPiezas;
                         const c = parseFloat(stockCost) || 0;
-                        return (
+                        return fmtMoney(
                           c > 0
                             ? c
                             : isContainerUnit(selectedProduct.sale_unit) &&
@@ -2084,8 +2094,8 @@ const Inventory = () => {
                               ? ((selectedProduct.cost_price || 0) /
                                   selectedProduct.box_qty) *
                                 aQty
-                              : (selectedProduct.cost_price || 0) * aQty
-                        ).toFixed(2);
+                              : (selectedProduct.cost_price || 0) * aQty,
+                        );
                       })()}
                     </span>
                   </div>
@@ -2195,9 +2205,8 @@ const Inventory = () => {
                         Actual
                       </p>
                       <p className="text-lg font-extrabold text-muted-foreground line-through">
-                        ${stockCostConfirm.oldCost.toFixed(2)}
-                      </p>
-                    </div>
+                        {fmtMoney(stockCostConfirm.oldCost)}
+                      </p>                    </div>
                     <ArrowRight
                       className={stockCostConfirm.direction === "subio" ? "text-red-500" : "text-emerald-500"}
                     />
@@ -2212,7 +2221,7 @@ const Inventory = () => {
                             : "text-xl font-extrabold text-emerald-600"
                         }
                       >
-                        ${stockCostConfirm.newCost.toFixed(2)}
+                        {fmtMoney(stockCostConfirm.newCost)}
                       </p>
                     </div>
                   </div>

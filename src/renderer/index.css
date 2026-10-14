@@ -1,61 +1,37 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* ─── Tipografía local (autoalojada, sin CDN) ─────────────────────
+   Instrument Sans: UI, textos y cifras (con `tabular-nums` para que
+   los números de dinero alineen sin cambiar de familia).
+   Es una fuente variable: un único archivo cubre el rango 400–700. ─── */
 @font-face {
-  font-family: "Inter";
-  src: url("./assets/fonts/inter-400.woff2") format("woff2");
-  font-weight: 400;
+  font-family: "Instrument Sans";
+  src: url("./assets/fonts/instrument-sans-var.woff2") format("woff2");
+  font-weight: 400 700;
   font-style: normal;
   font-display: swap;
 }
 
-@font-face {
-  font-family: "Inter";
-  src: url("./assets/fonts/inter-500.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("./assets/fonts/inter-600.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("./assets/fonts/inter-700.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("./assets/fonts/inter-800.woff2") format("woff2");
-  font-weight: 800;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("./assets/fonts/inter-900.woff2") format("woff2");
-  font-weight: 900;
-  font-style: normal;
-  font-display: swap;
-}
+/* Nota: `tabular-nums` es la marca del repo para importes y cantidades
+   (totales, KPIs, efectivo en caja, diálogos de cantidad). Sólo aplica
+   la alineación numérica: la familia se mantiene Instrument Sans. */
 
 
 /* ─── Tailwind v4 theme: shadcn tokens (paleta azul/slate del sistema) ─── */
 @theme inline {
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
+
+  /* Escala de texto: +1px sobre los defaults de Tailwind (Instrument Sans
+     rinde ópticamente más chico que Inter). Sólo cambia el tamaño: los
+     line-height siguen siendo las ratios por defecto. */
+  --text-xs: 0.8125rem; /* 13px */
+  --text-sm: 0.9375rem; /* 15px */
+  --text-base: 1.0625rem; /* 17px */
+  --text-lg: 1.1875rem; /* 19px */
 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -115,6 +91,12 @@
 }
 
 :root {
+  /* Alto de la cromática superior de la app: titlebar (main.js) + navbar
+     sticky. Las pantallas que necesiten calcular su propio alto disponible
+     usan esta variable en vez de un número mágico, así el checkout no se
+     rompe si cambia el navbar. */
+  --app-chrome-h: 56px;
+
   --background: 210 40% 98%;
   --foreground: 222 47% 11%;
 
@@ -139,11 +121,15 @@
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
 
-  --success: 160 84% 39%;
+  /* Emerald profundo: pasa 4.5:1 con texto blanco Y como texto sobre blanco
+     (los dos usos de --success en la app). Antes era 39% (2.6:1, fallaba). */
+  --success: 160 84% 30%;
   --success-foreground: 0 0% 100%;
 
   --warning: 38 92% 50%;
-  --warning-foreground: 0 0% 100%;
+  /* Tinta oscura: texto sobre bg-warning sólido (naranja/ámbar claro pasa
+     8.5:1; el blanco daba 2.1:1). No se usaba en ningún otro componente. */
+  --warning-foreground: 222 47% 11%;
 
   --info: 199 89% 48%;
   --info-foreground: 0 0% 100%;
@@ -153,7 +139,8 @@
   --field: 0 0% 100%;
   --ring: 222 47% 11%;
 
-  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  --font-display: "Instrument Sans", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
 
   --brand: 215.43 60% 34.31%;
@@ -203,10 +190,13 @@
   --destructive-foreground: 0 0% 98%;
 
   --success: 160 70% 45%;
-  --success-foreground: 0 0% 98%;
+  /* Foreground tinta oscura: en tema oscuro el verde --success (45%) es
+     brillante para que `text-success` conserve 7:1 sobre el fondo; así el
+     texto sobre bg-success pasa 8:1 en vez de los 2.3:1 del blanco. */
+  --success-foreground: 222 47% 10%;
 
   --warning: 45 93% 47%;
-  --warning-foreground: 0 0% 98%;
+  --warning-foreground: 226 44% 7%;
 
   --info: 200 93% 52%;
   --info-foreground: 0 0% 98%;
@@ -216,7 +206,8 @@
   --field: 226 45% 4%;
   --ring: 218 55% 58%;
 
-  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  --font-display: "Instrument Sans", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
 
   --brand: 215.43 60% 34.31%;
@@ -280,8 +271,8 @@ html { height: 100%; }
 }
 
 body {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
+  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
   margin: 0;
   padding: 0;
   height: 100%;
@@ -342,6 +333,40 @@ body {
 .animate-enter {
   animation: enterTransition 180ms ease-out forwards;
   will-change: opacity, transform;
+}
+/* Panel de resumen del día: entrada más corta y sin will-change (dentro del
+   Sheet con backdrop-blur, la capa GPU extra costaba fotogramas en equipo lento). */
+.animate-panel-in {
+  animation: enterTransition 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* ─── Login compacto en pantallas bajas ───
+   Si la ventana mide ≤ 820px de alto se aprietan solo paddings y
+   márgenes para que el login quepa sin scroll; los tamaños de los
+   tiles de cajero y del nombre de tienda no cambian. */
+@media (max-height: 820px) {
+  .login-shell { padding-top: 1rem; padding-bottom: 1rem; }
+  .login-brand { margin-bottom: 0.75rem; }
+  .login-logo { height: 3rem; width: 3rem; }
+  .login-card { padding: 1.25rem; }
+  .login-card > h2 { margin-bottom: 0.75rem; }
+  .login-zone { margin-top: 1rem; min-height: 284px; }
+  .login-pin { padding: 1.25rem; }
+  .login-footer { margin-top: 0.75rem; }
+}
+
+/* ─── Entrada escalonada de los items del sidebar (sólo GPU) ───
+   Se reproduce al colapsar/expandir: el contenedor cambia de key
+   y los items vuelven a montarse con un delay progresivo. ─── */
+@keyframes nav-item-in {
+  from { opacity: 0; transform: translate3d(-6px, 0, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.nav-item-in {
+  animation: nav-item-in 170ms ease-out backwards;
+  will-change: opacity, transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-item-in { animation: none !important; }
 }
 
 /* ─── Micro-animaciones del carrito (SÓLO GPU: transform3d + opacity) ─── */
@@ -554,10 +579,10 @@ body {
   display: none;
 }
 
-/* ─── Toasts (sonner v2): fuente Inter + renderizado ─── */
+/* ─── Toasts (sonner v2): fuente de la UI + renderizado ─── */
 [data-sonner-toaster] {
   font-family:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", sans-serif !important;
   font-synthesis: none;
   text-rendering: optimizeLegibility;

@@ -72,7 +72,7 @@ const QtyDialog = ({ open, onClose, value, onChange, onConfirm }) => {
             step="1"
             value={value}
             onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
-            className="h-14 rounded-xl bg-field pl-10 pr-3 text-center text-3xl font-bold tabular-nums"
+            className="h-12 rounded-xl bg-field pl-10 pr-3 text-center text-3xl font-bold tabular-nums"
           />
         </div>
 
@@ -88,7 +88,7 @@ const QtyDialog = ({ open, onClose, value, onChange, onConfirm }) => {
           <Button
             type="button"
             variant="outline"
-            className="flex-1"
+            className="h-11 flex-1"
             onClick={onClose}
           >
             Cancelar
@@ -97,7 +97,7 @@ const QtyDialog = ({ open, onClose, value, onChange, onConfirm }) => {
             type="button"
             disabled={!valid || confirming}
             onClick={onConfirm}
-            className="flex-1"
+            className="h-11 flex-1"
           >
             Listo
           </Button>

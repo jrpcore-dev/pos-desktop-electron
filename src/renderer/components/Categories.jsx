@@ -33,6 +33,8 @@ import {
 import { usePagination } from "../lib/usePagination";
 import PaginationBar from "./PaginationBar";
 
+import PageHeader from "./PageHeader";
+
 const CAT_COLORS = [
   "hsl(var(--category-1))",
   "hsl(var(--sky))",
@@ -229,17 +231,15 @@ const filtered = useMemo(
   return (
     <TooltipProvider delayDuration={200}>
     <div className="p-1">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Gestiona las categorías de productos
-          </p>
-        </div>
-        <Button onClick={() => handleOpen()}>
-          <Plus className="h-4 w-4" />
-          Nueva Categoría
-        </Button>
-      </div>
+      <PageHeader
+        description="Gestiona las categorías de productos"
+        actions={
+          <Button onClick={() => handleOpen()}>
+            <Plus className="h-4 w-4" />
+            Nueva Categoría
+          </Button>
+        }
+      />
 
       <div className="relative mb-5 max-w-sm">
         <Search

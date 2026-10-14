@@ -33,6 +33,8 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 
+import PageHeader from "./PageHeader";
+
 const makeCashierSchema = (isCreate) =>
   z.object({
     name: z.string().min(1, "El nombre es requerido"),
@@ -216,17 +218,15 @@ const Cashiers = () => {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="p-1">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Gestiona los usuarios del sistema
-          </p>
-        </div>
-        <Button onClick={() => handleOpen()}>
-          <Plus className="h-4 w-4" />
-          Nuevo Cajero
-        </Button>
-      </div>
+      <PageHeader
+        description="Gestiona los usuarios del sistema"
+        actions={
+          <Button onClick={() => handleOpen()}>
+            <Plus className="h-4 w-4" />
+            Nuevo Cajero
+          </Button>
+        }
+      />
 
       <div className="relative mb-5 max-w-sm">
         <Search

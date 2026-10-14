@@ -15,9 +15,8 @@ import { Kbd } from "./ui/kbd";
 import { Skeleton } from "./ui/skeleton";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { cn } from "@/lib/utils";
-
-const calcFinalPrice = (price, discount) =>
-  price * (1 - (discount || 0) / 100);
+import { fmtMoney } from "@/utils/format";
+import { promoInfo } from "../utils/cartMath";
 
 const F_KEYS = [
   ["F1", "Ayuda"],
@@ -174,18 +173,28 @@ const SearchSection =
                               </span>
                             </span>
                             <span className="shrink-0 text-right">
-                              <span className="block text-[0.9rem] font-bold text-success tabular-nums">
-                                $
-                                {calcFinalPrice(
-                                  product.price,
-                                  product.discount_percent,
-                                ).toFixed(2)}
-                              </span>
-                              {product.discount_percent > 0 && (
-                                <span className="block text-[0.65rem] font-semibold text-destructive">
-                                  -{product.discount_percent}%
-                                </span>
-                              )}
+                              {(() => {
+                                const promo = promoInfo(product, 1);
+                                const finalPrice = promo.unit;
+                                const hasPromo = promo.applied || product.discount_percent > 0;
+                                return (
+                                  <>
+                                    {hasPromo && (
+                                      <span className="block text-[0.7rem] line-through text-muted-foreground">
+                                        {fmtMoney(product.price)}
+                                      </span>
+                                    )}
+                                    <span className="block text-[0.9rem] font-bold text-foreground tabular-nums">
+                                      {fmtMoney(finalPrice)}
+                                    </span>
+                                    {product.discount_percent > 0 && !promo.applied && (
+                                      <span className="block text-[0.65rem] font-semibold text-destructive">
+                                        -{product.discount_percent}%
+                                      </span>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </span>
                           </button>
                         </HoverCardTrigger>
@@ -218,12 +227,22 @@ const SearchSection =
                                 </span>
                               )}
                               <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
-                                <span className="rounded-md bg-success/10 px-2 py-0.5 text-[0.95rem] font-bold tabular-nums text-success">
-                                  $
-                                  {calcFinalPrice(
-                                    product.price,
-                                    product.discount_percent,
-                                  ).toFixed(2)}
+                                <span className="rounded-md bg-muted px-2 py-0.5 text-[0.95rem] font-bold tabular-nums text-foreground">
+                                  {(() => {
+                                    const promo = promoInfo(product, 1);
+                                    const finalPrice = promo.unit;
+                                    const hasPromo = promo.applied || product.discount_percent > 0;
+                                    return (
+                                      <>
+                                        {hasPromo && (
+                                          <span className="line-through text-muted-foreground mr-1">
+                                            {fmtMoney(product.price)}
+                                          </span>
+                                        )}
+                                        {fmtMoney(finalPrice)}
+                                      </>
+                                    );
+                                  })()}
                                 </span>
                                 <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                                   <span

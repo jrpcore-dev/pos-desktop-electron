@@ -285,14 +285,14 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
               <Button
                 type="button"
                 variant="outline"
-                className="h-12 flex-1"
+                className="h-11 flex-1"
                 onClick={() => setShowCreate(false)}
               >
                 Cancelar
               </Button>
               <Button
                 type="button"
-                className="h-12 flex-1 bg-success text-white hover:bg-success/90"
+                className="h-11 flex-1 bg-success text-white hover:bg-success/90"
                 disabled={!newName.trim() || saving}
                 onClick={handleQuickCreate}
               >

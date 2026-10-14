@@ -133,16 +133,16 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <OperatorIcon
-                          id={t.operatorKey}
+                          id={t.operatorLogo || t.operatorKey}
                           name={t.operatorName}
                           size="sm"
-                          className="max-h-5 max-w-8"
+                          className="w-10"
                         />
                         <div className="min-w-0">
-                          <p className="truncate text-[13px] font-semibold text-foreground">
+                          <p className="truncate text-xs font-semibold text-foreground">
                             {t.operatorName}
                           </p>
-                          <p className="truncate text-[10px] text-muted-foreground">
+                          <p className="truncate text-[11px] text-muted-foreground">
                             {t.productName}
                             {t.inputValue ? ` · ${maskInput(t.inputValue)}` : ""}
                           </p>
@@ -154,7 +154,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
                       {t.folio}
                     </TableCell>
 
-                    <TableCell className="text-right text-[13px] font-semibold tabular-nums text-foreground">
+                    <TableCell className="text-right text-xs font-semibold tabular-nums text-foreground">
                       {money(t.quote?.totalCents)}
                     </TableCell>
 
@@ -170,6 +170,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
                           disabled={busyFolio === t.folio}
                           onClick={() => onRetry?.(t)}
                           title="Reintentar con el mismo folio"
+                          aria-label={`Reintentar folio ${t.folio}`}
                         >
                           {busyFolio === t.folio ? (
                             <Spinner size={13} />
@@ -198,7 +199,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
 
 const Stat = ({ label, value, tone }) => (
   <div className="rounded-lg border border-border bg-card px-3 py-2">
-    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
       {label}
     </p>
     <p

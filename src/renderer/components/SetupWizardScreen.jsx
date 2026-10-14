@@ -14,9 +14,9 @@ import { Progress } from "./ui/progress";
 import { cn } from "@/lib/utils";
 import CancelButton from "./CancelButton";
 
-const PIN_LENGTH = 3;
-const PIN_MIN = 3;
-const PIN_VISIBLE_MIN = 3;
+const PIN_LENGTH = 6;
+const PIN_MIN = 4;
+const PIN_VISIBLE_MIN = 4;
 
 const CURRENCIES = [
   { code: "MXN", label: "Peso mexicano", symbol: "$" },
@@ -75,10 +75,11 @@ const Field = ({ label, required, error, children }) => (
   </div>
 );
 
-const PinBoxes = ({ value, onValueChange, show, error, groupLabel }) => {
+const PinBoxes = ({ value, onValueChange, show, error, groupLabel, firstCellRef }) => {
   const cellRefs = useRef([]);
   const prevLenRef = useRef(value.length);
   const visibleCount = Math.max(PIN_VISIBLE_MIN, Math.min(PIN_LENGTH, value.length));
+  const complete = value.length >= PIN_MIN && value.length <= PIN_LENGTH && !error;
 
   useEffect(() => {
     const len = value.length;
@@ -133,6 +134,7 @@ const PinBoxes = ({ value, onValueChange, show, error, groupLabel }) => {
             key={i}
             ref={(el) => {
               cellRefs.current[i] = el;
+              if (i === 0 && firstCellRef) firstCellRef.current = el;
             }}
             type={show ? "text" : "password"}
             inputMode="numeric"
@@ -146,13 +148,19 @@ const PinBoxes = ({ value, onValueChange, show, error, groupLabel }) => {
             onPaste={handlePaste}
             aria-label={`${groupLabel}, dígito ${i + 1}`}
             className={cn(
-              "h-16 w-12 rounded-lg border-2 border-border bg-field text-center text-2xl font-bold text-foreground shadow-sm outline-none transition-transform duration-150 will-change-transform",
-              "focus:scale-[1.06] focus:border-primary focus:ring-1 focus:ring-primary",
-              error && "border-destructive"
+              "h-16 w-16 rounded-lg border border-border bg-field text-center text-2xl font-bold text-foreground shadow-sm outline-none transition-all duration-150 will-change-transform",
+              "focus:scale-[1.06] focus:border-primary focus:ring-4 focus:ring-primary/15",
+              error && "border-destructive focus:border-destructive focus:ring-destructive/15"
             )}
           />
         ))}
       </div>
+      {complete && !error && (
+        <p className="mt-3 inline-flex animate-in fade-in items-center gap-1.5 text-xs font-semibold text-success">
+          <CheckCircle2 size={14} />
+          Completo
+        </p>
+      )}
       {error && (
         <p className="mt-3 animate-in fade-in text-xs font-medium text-destructive">{error}</p>
       )}
@@ -180,6 +188,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
   const [isExiting, setIsExiting] = useState(false);
 
   const storeNameRef = useRef(null);
+  const firstPinRef = useRef(null);
   const loadTimersRef = useRef([]);
 
   const clearLoadTimers = () => {
@@ -195,10 +204,10 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
     cn(
       "absolute inset-0 transition-[transform,opacity] duration-300 ease-out will-change-transform",
       idx === activeIndex
-        ? "z-10 translate-x-0 opacity-100"
+        ? "z-10 translate-x-0 scale-100 opacity-100"
         : idx < activeIndex
-          ? "z-0 -translate-x-8 opacity-0 pointer-events-none"
-          : "z-0 translate-x-8 opacity-0 pointer-events-none"
+          ? "z-0 -translate-x-10 scale-[0.97] opacity-0 pointer-events-none"
+          : "z-0 translate-x-10 scale-[0.97] opacity-0 pointer-events-none"
     );
 
   const stepState = (idx) =>
@@ -227,6 +236,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
     if (!open) return;
     const t = window.setTimeout(() => {
       if (activeStep === 0) storeNameRef.current?.focus();
+      else if (activeStep === 1) firstPinRef.current?.focus();
     }, 240);
     return () => window.clearTimeout(t);
   }, [open, activeStep]);
@@ -246,9 +256,9 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
       const pin = formData.adminPin;
       const confirm = formData.confirmPin;
       if (!pin) nextErrors.adminPin = "Ingresa tu NIP";
-      else if (pin.length !== PIN_LENGTH) nextErrors.adminPin = `El NIP debe tener ${PIN_LENGTH} dígitos`;
+      else if (pin.length < PIN_MIN || pin.length > PIN_LENGTH) nextErrors.adminPin = `El NIP debe tener de ${PIN_MIN} a ${PIN_LENGTH} dígitos`;
       else if (!/^\d+$/.test(pin)) nextErrors.adminPin = "Solo números permitidos";
-      if (new RegExp(`^\\d{${PIN_LENGTH}}$`).test(pin)) {
+      if (new RegExp(`^\\d{${PIN_MIN},${PIN_LENGTH}}$`).test(pin)) {
         if (!confirm) nextErrors.confirmPin = "Confirma tu NIP";
         else if (confirm !== pin) nextErrors.confirmPin = "Los NIP no coinciden";
       }
@@ -292,8 +302,8 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
       setActiveStep(0);
       return;
     }
-    if (!new RegExp(`^\\d{${PIN_LENGTH}}$`).test(formData.adminPin)) {
-      setErrors({ adminPin: `El NIP debe tener ${PIN_LENGTH} dígitos` });
+    if (!new RegExp(`^\\d{${PIN_MIN},${PIN_LENGTH}}$`).test(formData.adminPin)) {
+      setErrors({ adminPin: `El NIP debe tener de ${PIN_MIN} a ${PIN_LENGTH} dígitos` });
       setActiveStep(1);
       return;
     }
@@ -374,10 +384,14 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
           isExiting && "opacity-0"
         )}
         className={cn(
-          "setup-wizard-dialog !flex h-screen w-full !max-w-none items-stretch !gap-0 !rounded-none !border-0 !bg-transparent !p-0 !shadow-none overflow-hidden transition-opacity duration-300 ease-out",
-          !isPreviewMode && "[&>button]:hidden",
+          "setup-wizard-dialog !flex h-screen w-full !max-w-none items-stretch !gap-0 !rounded-none !border-0 !p-0 !shadow-none overflow-hidden transition-opacity duration-300 ease-out",
+          // El ✕ nativo de Radix queda en top-4/right-4, exactamente bajo los
+          // controles de ventana de Windows (minimizar/cerrar): se oculta para
+          // no estorbar. Se cierra con Cancelar (paso 0), Escape o clic fuera.
+          "[&>button]:hidden",
           isExiting && "opacity-0 pointer-events-none"
         )}
+        style={{ background: "linear-gradient(135deg, hsl(222 47% 14%), hsl(218 55% 32%))" }}
         onPointerDownOutside={preventOutside}
         onEscapeKeyDown={preventOutside}
       >
@@ -386,46 +400,54 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
           Asistente de configuración del sistema de ventas
         </DialogDescription>
 
-        {/* ============ PANEL IZQUIERDO: SHOWCASE VENDIA ============ */}
-        <aside className="relative flex w-[420px] shrink-0 flex-col justify-between overflow-hidden bg-gradient-to-b from-slate-950 to-slate-900 px-10 py-10 text-white">
-          <div className="pointer-events-none absolute -top-24 -right-20 h-80 w-80 rounded-full bg-primary/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-sky-500/10 blur-3xl" />
+        {/* Fondo de marca full-bleed + trama de puntos (la cara del Login) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-60"
+          style={{
+            backgroundImage: "radial-gradient(hsl(0 0% 100% / 0.10) 1px, transparent 1px)",
+            backgroundSize: "22px 22px",
+          }}
+        />
 
-          <header className="relative text-center">
-            <p className="text-2xl font-extrabold uppercase leading-none tracking-[5px] text-white text-display">
+        {/* ============ PANEL IZQUIERDO: SHOWCASE VENDIA ============ */}
+        <aside className="relative flex w-[360px] shrink-0 flex-col justify-between px-8 py-10 text-white xl:w-[420px] xl:px-10">
+
+          <header className="relative flex flex-col items-center text-center">
+            <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-xl bg-white/10 p-2 ring-1 ring-white/20 backdrop-blur">
+              <Store size={30} className="text-white" />
+            </div>
+            <p className="text-3xl font-bold uppercase leading-none tracking-[0.2em] text-white text-display">
               VENDIA
             </p>
-            <p className="mt-2 text-[11px] font-medium uppercase tracking-[2px] text-white/50">
+            <p className="mt-2.5 text-[11px] font-medium uppercase tracking-[2px] text-white/60">
               Sistema de Punto de Venta
             </p>
           </header>
 
           <div className="relative -my-4 flex flex-1 items-center justify-center">
-            <div
-              key={activeStep}
-              className="animate-in fade-in zoom-in-95 duration-500 ease-out flex flex-col items-center gap-4 text-center"
-            >
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-sky-300">
+            <div key={activeStep} className="flex flex-col items-center gap-4 text-center">
+              <span className="animate-in fade-in slide-in-from-bottom-1 fill-mode-both duration-500 delay-75 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-sky-300">
                 <AccentIcon size={12} />
                 {showcase[activeStep].label}
               </span>
-              <h2 className="text-2xl font-extrabold tracking-tight text-white">
+              <h2 className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 delay-150 text-2xl font-bold tracking-tight text-white">
                 {showcase[activeStep].title}
               </h2>
-              <p className="max-w-[300px] text-sm leading-relaxed text-white/55">
+              <p className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 delay-200 max-w-[300px] text-sm leading-relaxed text-white/55">
                 {showcase[activeStep].phrase}
               </p>
             </div>
           </div>
 
-          <footer className="relative text-center text-[10px] font-semibold uppercase tracking-[2px] text-white/30">
-            POWERED BY JRP CORE v1.0
+          <footer className="relative text-center text-[11px] font-semibold uppercase tracking-[2px] text-white/50">
+            POWERED BY JRP CORE v2.0
           </footer>
         </aside>
 
-        {/* ============ PANEL DERECHO: FORMULARIO ============ */}
-        <main className="flex min-w-0 flex-1 flex-col bg-background">
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-14 py-12">
+        {/* ============ PANEL DERECHO: FORMULARIO (vidrio sobre marca) ============ */}
+        <main className="relative m-4 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background/[0.94] shadow-[0_24px_60px_-15px_hsl(222_47%_11%_/_0.45)] ring-1 ring-white/15 backdrop-blur-xl">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-10 sm:px-10 xl:px-14 xl:py-12">
             {errors.submit && (
               <Alert variant="destructive" className="mb-4 animate-in fade-in">
                 <AlertDescription className="font-semibold">{errors.submit}</AlertDescription>
@@ -437,7 +459,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                 <div className="relative">
                   <div className="pointer-events-none absolute -inset-5 rounded-full bg-primary/15 blur-2xl" />
                   {loaderPhase !== "done" ? (
-                    <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-black/20">
+                    <div className="relative flex h-16 w-16 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
                       <Settings size={28} className="animate-setup-gear" />
                     </div>
                   ) : (
@@ -448,7 +470,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                 </div>
 
                 <div key={loaderPhase} className="animate-in fade-in">
-                  <h3 className="text-xl font-extrabold tracking-tight text-foreground">
+                  <h3 className="text-xl font-bold tracking-tight text-foreground">
                     {loaderPhase === "starting" && "Inicializando VENDIA..."}
                     {loaderPhase === "configuring" && "Configurando Sistema..."}
                     {loaderPhase === "done" && "¡Todo Listo!"}
@@ -466,26 +488,37 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                   className="h-1.5"
                 />
 
-                <p className="mt-2 text-[10px] font-semibold uppercase tracking-[2px] text-muted-foreground/60">
+                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[2px] text-muted-foreground">
                   POWERED BY JRP CORE
                 </p>
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {steps.map((label, i) => {
                     const state = stepState(i);
                     return (
                       <Fragment key={label}>
                         <span
                           className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide transition-colors duration-200",
-                            state === "done" && "bg-success/15 text-success",
-                            state === "active" && "bg-primary text-primary-foreground shadow-sm",
-                            state === "todo" && "bg-muted text-muted-foreground"
+                            "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors duration-200",
+                            state === "done" && "border-success/30 bg-success/10 text-success",
+                            state === "active" && "border-primary/40 bg-primary/10 text-foreground shadow-sm",
+                            state === "todo" && "border-border bg-muted/50 text-muted-foreground"
                           )}
                         >
-                          {i + 1}. {label}
+                          <span
+                            key={state}
+                            className={cn(
+                              "flex h-5 w-5 shrink-0 animate-in fade-in zoom-in-95 items-center justify-center rounded-full text-[11px] font-bold leading-none",
+                              state === "done" && "bg-success text-white",
+                              state === "active" && "bg-primary text-primary-foreground",
+                              state === "todo" && "bg-muted-foreground/20 text-muted-foreground"
+                            )}
+                          >
+                            {state === "done" ? <CheckCircle2 size={12} /> : i + 1}
+                          </span>
+                          {label}
                         </span>
                         {i < steps.length - 1 && <span className="h-px w-5 bg-border" />}
                       </Fragment>
@@ -493,14 +526,38 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                   })}
                 </div>
 
-                <h2 className="mt-4 text-[24px] font-extrabold tracking-tight text-foreground">
-                  {stepMeta[activeStep].title}
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">{stepMeta[activeStep].subtitle}</p>
+                <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-primary/10">
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                    style={{ width: `${((activeStep + 1) / 3) * 100}%` }}
+                  />
+                </div>
 
-                <div className="relative mt-8 min-h-[420px] overflow-hidden">
+                <div className="mt-4 flex items-center gap-3">
+                  <div
+                    key={`step-icon-${activeStep}`}
+                    className="animate-in fade-in zoom-in-95 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+                  >
+                    <AccentIcon size={20} />
+                  </div>
+                  <p
+                    key={`step-text-${activeStep}`}
+                    className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 min-w-0 max-w-[460px] rounded-xl border border-border/70 bg-muted/40 px-4 py-2 text-[13px] leading-snug text-muted-foreground"
+                  >
+                    {stepMeta[activeStep].subtitle}
+                  </p>
+                  <span
+                    key={`step-num-${activeStep}`}
+                    aria-hidden="true"
+                    className="ml-auto shrink-0 select-none animate-in fade-in duration-500 text-[52px] font-bold leading-none tracking-tight text-primary/[0.10]"
+                  >
+                    0{activeStep + 1}
+                  </span>
+                </div>
+
+                <div className="relative mt-8 min-h-[420px] overflow-hidden rounded-xl border border-white/10 bg-white/[0.45] dark:bg-white/[0.05]">
                   <div className={panelClassName(0)}>
-                    <div className="space-y-4" onKeyDown={handlePanelEnter}>
+                    <div className="space-y-4 p-6 xl:p-7" onKeyDown={handlePanelEnter}>
                       <Field label="Nombre de la Tienda" required error={errors.storeName}>
                         <InputGroup
                           className={cn(
@@ -570,7 +627,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                   </div>
 
                   <div className={panelClassName(1)}>
-                    <div className="flex min-h-0 flex-col items-center overflow-y-auto px-1 py-2 text-center" onKeyDown={handlePanelEnter}>
+                    <div className="flex min-h-0 flex-col items-center overflow-y-auto p-6 text-center xl:p-7" onKeyDown={handlePanelEnter}>
                       <div className="m-auto w-full max-w-md">
                         <div className="mb-4 flex items-center justify-center gap-2">
                           <Lock size={16} className="text-muted-foreground" />
@@ -584,6 +641,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                           show={showPin}
                           error={errors.adminPin}
                           groupLabel="NIP de administrador"
+                          firstCellRef={firstPinRef}
                         />
 
                         <Separator className="mx-auto my-6 w-44" />
@@ -618,7 +676,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                   </div>
 
                   <div className={panelClassName(2)}>
-                    <div onKeyDown={handlePanelEnter}>
+                    <div className="p-6 xl:p-7" onKeyDown={handlePanelEnter}>
                       <Field label="Moneda principal" required>
                         <InputGroup>
                           <Coins size={18} data-icon="inline-start" className="text-muted-foreground" />
@@ -685,7 +743,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
           </div>
 
           {!loading && (
-            <footer className="flex shrink-0 items-center justify-between border-t border-border bg-background px-8 py-5">
+            <footer className="flex shrink-0 items-center justify-between border-t border-border/70 px-8 py-5 sm:px-10 xl:px-14">
               <div className="flex min-w-0 flex-1 justify-start">
                 {activeStep === 0 ? (
                   onClose && !isSubmitting && (
@@ -698,6 +756,13 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose })
                   </Button>
                 )}
               </div>
+              <p className="hidden select-none items-center gap-1.5 text-[11px] text-muted-foreground lg:flex">
+                Pulsa{" "}
+                <kbd className="rounded border bg-muted px-1.5 py-0.5 font-sans text-[11px] font-semibold text-foreground">
+                  Enter
+                </kbd>{" "}
+                para continuar
+              </p>
               <div className="flex min-w-0 flex-1 justify-end">
                 {activeStep < 2 ? (
                   <Button

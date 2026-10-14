@@ -74,9 +74,9 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 > paridad; y en HTTP la identidad del cajero sale del token, no del payload.
 
 ### Entrega 2d — `customer_id` en `sales`
-- [ ] `ALTER sales ADD customer_id`
-- [ ] Wiring en payload de `record-sale`
-- [ ] Regresión sin/con cliente
+- [x] `ALTER sales ADD customer_id`
+- [x] Wiring en payload de `record-sale`
+- [x] Regresión sin/con cliente
 
 ---
 
@@ -86,7 +86,7 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 - [ ] 3b `ReauthModal` (solo bloquea escrituras al Host) + carrito persistido
 - [ ] 3c Discovery cliente (UDP + IP manual) + UI de primer arranque (rol, buscar, código)
 - [ ] 3d Descarga inicial con progreso real (staging + swap, reanudar/reiniciar, resync 24 h)
-- [ ] 3e host-busy + `runBatched`/`yieldToLoop` + Worker para imports/snapshot
+- [ ] 3e host-busy + `runBatched`/`yieldToLoop` · **Worker thread DIFERIDO**: no hace falta para la primera prueba con 2 PCs (decisión de la línea); `runBatched` basta para los imports. Revísalo si un import llega a congelar la app.
 - [ ] 3f Réplica incremental en tiempo real: SSE delta, tombstones, `updated_at`, `change_log`, evento `db-changed`, `useDbChanges` (sin reescribir pantallas)
 - [ ] 3f `db-changed` agregado al allowlist de preload
 

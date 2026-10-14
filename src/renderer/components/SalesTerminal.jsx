@@ -30,7 +30,7 @@ import ManualProductDialog from "./ManualProductDialog";
 import CustomerSearchDialog from "./CustomerSearchDialog";
 import { useMultiCart } from "./cart/useMultiCart";
 import { Button as ShadButton } from "./ui/button";
-import { Kbd, KbdGroup } from "./ui/kbd";
+import { Kbd } from "./ui/kbd";
 import { Spinner } from "./ui/spinner";
 import {
   ResizablePanelGroup,
@@ -73,6 +73,12 @@ const roundCash = (amount) => {
 };
 
 const noRound = (amount) => amount;
+
+// Estilo reutilizable para las teclas de atajo (barra de contexto + botón
+// Cobrar). Piso de 11px, sombra apagada para que la tecla se lea como hint,
+// no como un botón con elevación.
+const HINT_KBD_CLS =
+  "h-auto rounded border-border px-1.5 py-0.5 text-[11px] font-semibold tracking-wide text-muted-foreground shadow-none";
 
 const parseQtyPrefix = (str) => {
   const m = /^(\d+)\*(.+)$/.exec(str);
@@ -252,7 +258,11 @@ const processSaleRef = useRef(null);
           : "Sin método";
   const itemCount = `${cart.length} ${cart.length === 1 ? "producto" : "productos"}`;
 
-  const totalAccentClass = "bg-muted/40 border-border";
+  // Acento de la caja TOTAL: wash primary tenue + borde tintado para que el
+  // monto se lea como el "héroe" de la pantalla sin ruido (1px, sin sombra).
+  // El fondo calmado y el borde fino la separan de Subtotal/Descuentos, que
+  // son filas de texto sin caja.
+  const totalAccentClass = "bg-primary/[0.05] border-primary/30";
   const totalValueClass = "text-foreground";
 
   const [removingKeys, setRemovingKeys] = useState(() => new Set());
@@ -311,19 +321,43 @@ const processSaleRef = useRef(null);
         }
         setPrinting(true);
         try {
-          const text = generateReceiptHTML(method);
+          const paperWidthMm = await window.api.invoke(
+            "get-setting",
+            "paper_width_mm",
+          );
+          const text = generateReceiptHTML(method, paperWidthMm);
           const printResult = await window.api.invoke("print-receipt", text);
-          if (printResult.success && (method === "card" || method === "transfer")) {
-            const setting = await window.api.invoke("get-setting", "print_two_tickets");
-            if (setting === "true") {
-              await window.api.invoke("print-receipt", generateReceiptHTML(method));
+          if (printResult?.success) {
+            // Si la impresora configurada no existía en este equipo, el main
+            // cayó a la predeterminada del sistema: avisar al cajero.
+            if (printResult.fellBack) {
+              showNotification(
+                `La impresora configurada no está disponible; se imprimió en «${printResult.printer}».`,
+                "warning",
+              );
             }
-          }
-          if (!printResult.success) {
-            console.error("[PRINT]", printResult.error);
+            if (method === "card" || method === "transfer") {
+              const setting = await window.api.invoke(
+                "get-setting",
+                "print_two_tickets",
+              );
+              if (setting === "true") {
+                await window.api.invoke(
+                  "print-receipt",
+                  generateReceiptHTML(method, paperWidthMm),
+                );
+              }
+            }
+          } else {
+            console.error("[PRINT]", printResult?.error);
+            showNotification(
+              printResult?.error || "No se pudo imprimir el ticket",
+              "error",
+            );
           }
         } catch (e) {
           console.error("[PRINT]", e);
+          showNotification("No se pudo imprimir el ticket", "error");
         }
         setPrinting(false);
       } catch (e) {
@@ -1331,7 +1365,7 @@ if (e.key === "Tab" && !isEditable) {
     refocusBarcode();
   };
 
-  const generateReceiptHTML = (method) => {
+  const generateReceiptHTML = (method, paperWidthMm) => {
     const effSubtotal = method === "cash" ? roundCash(subtotal) : subtotal;
     const effTotal = method === "cash" ? roundCash(total) : total;
     const showDiscounts = cart.some(
@@ -1398,6 +1432,7 @@ if (e.key === "Tab" && !isEditable) {
             ? "TRANSFERENCIA"
             : "EFECTIVO",
       isCash: method === "cash",
+      paperWidthMm: paperWidthMm ?? 58,
       received: parseFloat(cashAmount) || 0,
       change: change || 0,
     });
@@ -1446,44 +1481,74 @@ if (e.key === "Tab" && !isEditable) {
         onResizeEnd={handleCartResize}
         className="flex flex-col shrink-0 overflow-hidden rounded-lg border border-border bg-card shadow-md"
       >
-        <div
-          className={cn(
-            "flex items-center justify-between border-b border-border px-4 pb-1.5",
-            hasCart && "pt-4",
-          )}
-        >
-          <div
-            className={cn(
-              "flex items-center gap-1 font-bold text-base",
-              focusZone === "cart" ? "text-primary" : "text-foreground",
-            )}
-          >
-            <ShoppingCart size={20} className={focusZone === "cart" ? "text-primary" : "text-foreground"} />
-            Productos ({cart.length})
-            {focusZone === "cart" && (
-              <span className="ml-0.5 inline-flex items-center gap-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-foreground">
-                <KbdGroup>
-                  <Kbd className="h-5 px-1 text-[9px]">↑↓</Kbd>
-                </KbdGroup>
-                <span className="opacity-60">navegar</span>
-                <KbdGroup>
-                  <Kbd className="h-5 px-1 text-[9px]">←</Kbd>
-                  <Kbd className="h-5 px-1 text-[9px]">→</Kbd>
-                </KbdGroup>
-                <span className="opacity-60">cantidad</span>
-              </span>
-            )}
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span
+              className={cn(
+                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                focusZone === "cart"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-primary/10 text-primary",
+              )}
+            >
+              <ShoppingCart size={18} />
+            </span>
+            <span
+              className={cn(
+                "truncate font-bold text-base",
+                focusZone === "cart" ? "text-primary" : "text-foreground",
+              )}
+            >
+              Carrito
+            </span>
+            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold tabular-nums text-primary">
+              {cart.length}
+            </span>
           </div>
           <ShadButton
             variant="ghost"
             size="icon-sm"
             aria-label="Vaciar carrito"
             onClick={() => setCart([])}
-            className="h-9 w-9 text-destructive hover:text-destructive"
+            className="h-9 w-9 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
           >
             <Trash2 size={18} />
           </ShadButton>
         </div>
+
+        {/* Barra de contexto única: concentra los atajos de la zona activa
+            (carrito o pago) en un solo lugar, sin apretar el título. */}
+        {(focusZone === "cart" || focusZone === "payment") && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-muted/40 px-4 py-1.5 text-[11px] font-semibold text-muted-foreground">
+            {focusZone === "cart" ? (
+              <>
+                <span className="inline-flex items-center gap-1">
+                  <Kbd className={HINT_KBD_CLS}>↑↓</Kbd> navegar
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Kbd className={HINT_KBD_CLS}>←</Kbd>
+                  <Kbd className={HINT_KBD_CLS}>→</Kbd> cantidad
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-1">
+                  <Kbd className={HINT_KBD_CLS}>←</Kbd>
+                  <Kbd className={HINT_KBD_CLS}>→</Kbd> método
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Kbd className={HINT_KBD_CLS}>↑↓</Kbd> carrito
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Kbd className={HINT_KBD_CLS}>Tab</Kbd> buscador
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Kbd className={HINT_KBD_CLS}>Enter</Kbd> finalizar
+                </span>
+              </>
+            )}
+          </div>
+        )}
 
 <div className="min-h-0 flex-1 overflow-auto p-1.5">
           {cart.length === 0 ? (
@@ -1523,8 +1588,6 @@ if (e.key === "Tab" && !isEditable) {
           )}
         </div>
 
-        <div className="h-px bg-border" />
-
         <div className="border-t border-border bg-muted/30 p-3">
           <div className="mb-2.5">
             {customer ? (
@@ -1532,7 +1595,7 @@ if (e.key === "Tab" && !isEditable) {
                 <span className="min-w-0 truncate text-sm font-semibold text-foreground">
                   {customer.name}
                   {customer.tier_name && (
-                    <span className="ml-2 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary">
+                    <span className="ml-2 rounded bg-primary/20 px-1.5 py-0.5 text-[11px] font-bold uppercase text-primary">
                       {customer.tier_name}
                     </span>
                   )}
@@ -1580,7 +1643,10 @@ if (e.key === "Tab" && !isEditable) {
             <div className="my-1 border-t border-dashed border-border" />
             <div
               className={cn(
-                "flex items-end justify-between gap-3 rounded-xl border px-4 py-2 transition-shadow hover:shadow-sm",
+                // Sin hover:shadow — el acento (totalAccentClass) es estático
+                // (bg-muted/40), así que un efecto hover de elevación sería
+                // un detalle fantasma sin cambio de estado real.
+                "flex items-end justify-between gap-3 rounded-xl border px-4 py-2",
                 totalAccentClass,
               )}
             >
@@ -1588,14 +1654,14 @@ if (e.key === "Tab" && !isEditable) {
                 <span className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
                   Total
                 </span>
-                <span className="text-[0.68rem] font-medium text-muted-foreground">
+                <span className="text-[11px] font-medium text-muted-foreground">
                   {itemCount} · {paymentLabel}
                 </span>
               </div>
               <span
                 key={displayTotal}
                 className={cn(
-                  "cart-total-pop inline-block text-3xl font-black leading-none tabular-nums",
+                  "cart-total-pop inline-block text-3xl font-bold leading-none tabular-nums",
                   totalValueClass,
                 )}
               >
@@ -1604,6 +1670,10 @@ if (e.key === "Tab" && !isEditable) {
             </div>
           </div>
 
+          {/* Cajón de cobro: divider deliberado que separa el resumen (recibo)
+              de la zona donde se ejecuta el pago, para que el botón verde sea
+              el punto focal y no uno más en la bandeja. */}
+          <div className="my-2 border-t border-border/70" />
           {/* Métodos de pago */}
           <div
             className={cn(
@@ -1680,24 +1750,6 @@ if (e.key === "Tab" && !isEditable) {
             </button>
           </div>
 
-          {focusZone === "payment" && (
-            <div className="mb-0.5 flex items-center justify-center gap-1.5 text-[10px] font-semibold text-foreground">
-              <KbdGroup>
-                <Kbd className="h-5 px-1 text-[9px]">←</Kbd>
-                <Kbd className="h-5 px-1 text-[9px]">→</Kbd>
-              </KbdGroup>
-              <span className="opacity-60">cambiar método</span>
-              <KbdGroup>
-                <Kbd className="h-5 px-1 text-[9px]">↑↓</Kbd>
-              </KbdGroup>
-              <span className="opacity-60">carrito</span>
-              <Kbd className="h-5 px-1 text-[9px]">Tab</Kbd>
-              <span className="opacity-60">buscador</span>
-              <Kbd className="h-5 px-1 text-[9px]">Enter</Kbd>
-              <span className="opacity-60">finalizar</span>
-            </div>
-          )}
-
           <div className="flex flex-col gap-2">
             <ShadButton
               type="button"
@@ -1707,17 +1759,24 @@ if (e.key === "Tab" && !isEditable) {
                 if (paymentMethod === "cash") setCashDialogOpen(true);
                 else processSale(paymentMethod);
               }}
-              className="w-full min-h-[58px] px-4 py-4 text-xl font-black uppercase tracking-wide bg-success text-white hover:bg-success/90 hover:shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+              className="w-full min-h-[58px] px-4 py-4 text-xl font-bold uppercase tracking-wide bg-success text-success-foreground hover:bg-success/90 hover:shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
             >
-              {printing ? (
-                <Spinner size={20} />
-              ) : (
-                <Banknote size={22} />
-              )}
+              {/* Slots laterales de ancho igual (w-10) → el "Cobrar" del centro
+                  queda ópticamente alineado, no desplazado por un ícono pequeño
+                  y un Kbd ancho asimétricos. */}
+              <span className="flex w-10 shrink-0 items-center justify-start">
+                {printing ? (
+                  <Spinner size={20} />
+                ) : (
+                  <Banknote size={22} />
+                )}
+              </span>
               <span className="flex-1 text-center">
                 {printing ? "Cobrando..." : "Cobrar"}
               </span>
-              <Kbd className="h-5 px-1 text-[10px]">Enter</Kbd>
+              <span className="flex w-10 shrink-0 items-center justify-end">
+                <Kbd className={HINT_KBD_CLS}>Enter</Kbd>
+              </span>
             </ShadButton>
           </div>
         </div>

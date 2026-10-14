@@ -52,11 +52,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./ui/tooltip";
+import { fmtMoney } from "../utils/format";
 
 const PAGE_SIZES = [25, 50, 100];
-
-const money = (v) =>
-  (v || 0).toLocaleString("es-MX", { style: "currency", currency: "MXN" });
 
 /* ─── Subcomponentes memoizados (patrón Inventory.jsx) ───
    El estado vive en `Catalog` (búsqueda, página, categoría). Cada keystroke
@@ -232,7 +230,7 @@ const CatalogRow = memo(function CatalogRow({
       </TableCell>
       <TableCell className="px-4 text-right">
         <span className="text-xs tabular-nums text-muted-foreground">
-          {money(product.cost_price)}
+          {fmtMoney(product.cost_price)}
         </span>
       </TableCell>
       <TableCell className="px-4 text-center">

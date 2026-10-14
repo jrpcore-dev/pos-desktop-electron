@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Store, Box, Package, CircleDashed } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 import {
   Dialog,
   DialogContent,
@@ -104,8 +105,7 @@ const BoxChoiceDialog = ({
     }
   };
 
-  const priceLabel = (v) =>
-    typeof v === "number" ? `$${v.toFixed(2)}` : "--";
+  const priceLabel = (v) => (typeof v === "number" ? fmtMoney(v) : "--");
 
   return (
     <Dialog
@@ -132,16 +132,16 @@ const BoxChoiceDialog = ({
               <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
                 {boxQty > 0 && (
                   <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary tabular-nums">
-                    {containerNoun}: ${boxPrice?.toFixed(2)}
+                    {containerNoun}: {fmtMoney(boxPrice)}
                   </span>
                 )}
                 {saleUnit === "boxpack" && packQty > 0 && (
                   <span className="rounded-full bg-secondary/20 px-2.5 py-0.5 text-xs font-semibold text-secondary-foreground tabular-nums">
-                    Paquete: ${packPrice?.toFixed(2)}
+                    Paquete: {fmtMoney(packPrice)}
                   </span>
                 )}
                 <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground tabular-nums">
-                  Pieza: ${piecePrice?.toFixed(2)}
+                  Pieza: {fmtMoney(piecePrice)}
                 </span>
               </div>
             </div>

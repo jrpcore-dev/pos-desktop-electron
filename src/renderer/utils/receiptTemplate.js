@@ -10,6 +10,31 @@ const esc = (s) =>
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
+// Anchos de papel soportados (mm). El valor vivo viene de la setting
+// `paper_width_mm` (Configuración → Impresora); sin ella se usa 58 mm.
+export const PAPER_WIDTHS_MM = [48, 58, 80];
+
+export const normalizePaperWidth = (value) => {
+  const width = Number(value);
+  return PAPER_WIDTHS_MM.includes(width) ? width : 58;
+};
+
+// Contenido útil del ticket: el rollo deja 10 mm de margen total
+// (5 por lado), igual que el diseño original de 58 mm → 48 mm.
+export const receiptContentMm = (paperWidthMm) =>
+  Math.max(normalizePaperWidth(paperWidthMm) - 10, 20);
+
+// CSS del documento: `@page` debe coincidir con el ancho real del rollo.
+export function receiptDocCss(paperWidthMm) {
+  const width = normalizePaperWidth(paperWidthMm);
+  const content = receiptContentMm(width);
+  return `
+      @page{size:${width}mm auto;margin:0}
+      *{box-sizing:border-box}
+      body{font-family:'Courier New',monospace;font-size:11px;margin:0 auto;padding:2px 2px;width:${content}mm;max-width:${content}mm;background:white;color:black;overflow-wrap:break-word}
+      .sep{border-top:1px dashed #333;margin:5px 0}`;
+}
+
 export function buildReceiptHTML(model) {
   const {
     store = {},
@@ -27,6 +52,7 @@ export function buildReceiptHTML(model) {
     isCash = false,
     received = 0,
     change = 0,
+    paperWidthMm = 58,
   } = model || {};
 
   const lines = [];
@@ -36,7 +62,7 @@ export function buildReceiptHTML(model) {
   );
   if (store.logo) {
     lines.push(
-      `<div style="text-align:center;margin:2px 0 0"><img src="${store.logo}" style="max-height:75px;max-width:48mm;width:auto;height:auto;display:inline-block"/></div>`,
+      `<div style="text-align:center;margin:2px 0 0"><img src="${store.logo}" style="max-height:75px;max-width:${receiptContentMm(paperWidthMm)}mm;width:auto;height:auto;display:inline-block"/></div>`,
     );
   }
   lines.push(
@@ -118,10 +144,6 @@ export function buildReceiptHTML(model) {
   );
   lines.push(`<div style="height:20px"></div>`);
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-      @page{size:58mm auto;margin:0}
-      *{box-sizing:border-box}
-      body{font-family:'Courier New',monospace;font-size:11px;margin:0 auto;padding:2px 2px;width:48mm;max-width:48mm;background:white;color:black;overflow-wrap:break-word}
-      .sep{border-top:1px dashed #333;margin:5px 0}
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${receiptDocCss(paperWidthMm)}
     </style></head><body>${lines.join("")}</body></html>`;
 }

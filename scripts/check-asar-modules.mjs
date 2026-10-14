@@ -52,6 +52,11 @@ const MODULES = [
   ["src/main/discovery.js", "discovery.js"],
   ["src/main/pins.js", "pins.js"],
   ["src/main/vendesaldo.js", "vendesaldo.js"],
+  // 3g · la caja habla con el Host por estos cuatro.
+  ["src/main/rpc-context.js", "rpc-context.js"],
+  ["src/main/ipc-registry.js", "ipc-registry.js"],
+  ["src/main/rpc-channels.js", "rpc-channels.js"],
+  ["src/main/box-rpc-client.js", "box-rpc-client.js"],
   ["src/db/database.js", "db/database.js"],
 ];
 

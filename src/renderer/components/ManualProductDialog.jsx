@@ -104,7 +104,7 @@ const ManualProductDialog = ({
           <Button
             type="button"
             variant="outline"
-            className="flex-1"
+            className="h-11 flex-1"
             onClick={onClose}
           >
             Cancelar
@@ -112,7 +112,7 @@ const ManualProductDialog = ({
           <Button
             type="button"
             variant="outline"
-            className="flex-1 border-success bg-success/5 text-success hover:bg-success/10 hover:text-success"
+            className="h-11 flex-1 border-success bg-success/5 text-success hover:bg-success/10 hover:text-success"
             disabled={!valid || confirming}
             onClick={onConfirm}
           >

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Percent, CheckCircle2, Undo2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -83,7 +84,7 @@ const DiscountDialog = ({
               <p className="text-lg font-bold text-foreground">{item.name}</p>
               <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
                 <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground tabular-nums">
-                  ${item.price.toFixed(2)} / pieza
+                  {fmtMoney(item.price)} / pieza
                 </span>
                 <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
                   x{item.quantity}
@@ -102,7 +103,7 @@ const DiscountDialog = ({
                 placeholder="0.00"
                 value={value}
                 onChange={handleChange}
-                className="h-14 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
+                className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
               />
             </div>
 
@@ -116,12 +117,12 @@ const DiscountDialog = ({
             >
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>Subtotal</span>
-                <span className="tabular-nums">${subtotal.toFixed(2)}</span>
+                <span className="tabular-nums">{fmtMoney(subtotal)}</span>
               </div>
               {discount > 0 && (
                 <div className="flex items-center justify-between text-sm text-destructive">
                   <span>Descuento</span>
-                  <span className="tabular-nums">-${discount.toFixed(2)}</span>
+                  <span className="tabular-nums">-{fmtMoney(discount)}</span>
                 </div>
               )}
               <div className="mt-1 border-t border-border/60 pt-2">
@@ -129,8 +130,8 @@ const DiscountDialog = ({
                   <span className="text-xs font-medium text-muted-foreground">
                     Precio final
                   </span>
-                  <span className="text-2xl font-extrabold text-success tabular-nums">
-                    ${final.toFixed(2)}
+                  <span className="text-2xl font-extrabold text-foreground tabular-nums">
+                    {fmtMoney(final)}
                   </span>
                 </div>
               </div>
@@ -143,7 +144,7 @@ const DiscountDialog = ({
             <Button
               type="button"
               variant="outline"
-              className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              className="h-11 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
               onClick={onClear}
             >
               <Undo2 size={16} />
@@ -154,14 +155,14 @@ const DiscountDialog = ({
             <Button
               type="button"
               variant="outline"
-              className="flex-1"
+              className="h-11 flex-1"
               onClick={onClose}
             >
               Cancelar
             </Button>
             <Button
               type="button"
-              className="flex-1 bg-success text-white hover:bg-success/90"
+              className="h-11 flex-1 bg-success text-white hover:bg-success/90"
               disabled={!valid || confirming}
               onClick={onApply}
             >

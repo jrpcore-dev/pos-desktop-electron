@@ -8,11 +8,13 @@ import {
   Loader2,
   Printer,
   ReceiptText,
+  RefreshCw,
   Save,
   SlidersHorizontal,
   Smartphone,
   Store,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,10 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ToastProvider";
 import { cn } from "@/lib/utils";
+
+import PageHeader from "./PageHeader";
+import { fmtNumber } from "../utils/format";
+import { buildReceiptHTML } from "../utils/receiptTemplate";
 
 const trimWhitespace = (canvas) => {
   const { width, height } = canvas;
@@ -150,12 +156,6 @@ const PREVIEW_ITEMS = [
   { name: "Pan Blanco Bimbo", qty: 1, price: 38.0 },
 ];
 
-const fmt = (n) =>
-  n.toLocaleString("es-MX", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
 const ROUNDING_MODES = [
   { value: "0.10", label: "Cada $0.10", example: "$10.23 → $10.20" },
   { value: "0.20", label: "Cada $0.20", example: "$10.15 → $10.20" },
@@ -165,7 +165,9 @@ const ROUNDING_MODES = [
 
 const SELECT_TRIGGER = "h-10 w-full";
 
-const STORE_PRINTER = "GHIA-GTP582";
+// "" = impresora predeterminada del sistema. Ningún modelo se hardcodea:
+// la selección vive en la setting `printer_name`.
+const PAPER_WIDTH_OPTIONS = [48, 58, 80];
 
 const PRINTER_STATUS = {
   0: "Disponible",
@@ -201,6 +203,128 @@ function FieldRow({ label, description, children, wide, disabled }) {
         {children}
       </div>
     </div>
+  );
+}
+
+/** Mapeo de status del spooler (PrinterInfo.status) a tono semántico del
+ *  design system — misma lógica que StockStatus/SystemStatus (dot + texto). */
+const PRINTER_STATUS_TONE = {
+  0: "ok", // Disponible
+  1: "warn", // Ocupada
+  2: "err", // Con error
+  3: "warn", // Advertencia
+  4: "muted", // Desconocida
+};
+
+/** Disponibilidad de la impresora: dot + etiqueta coloreada por tono
+ *  (patrón idéntico a StockStatus para mantener el lenguaje del app). */
+function PrinterStatusPill({ status }) {
+  if (!status) return null;
+  const tone = PRINTER_STATUS_TONE[status.code] ?? "muted";
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      <span
+        aria-hidden
+        className={cn(
+          "h-1.5 w-1.5 shrink-0 rounded-full",
+          tone === "ok" && "bg-success",
+          tone === "warn" && "bg-warning",
+          tone === "err" && "bg-destructive",
+          tone === "muted" && "bg-muted-foreground/40",
+        )}
+      />
+      <span
+        className={cn(
+          "whitespace-nowrap text-[11px] font-medium",
+          tone === "ok" && "text-success",
+          tone === "warn" && "text-warning",
+          tone === "err" && "text-destructive",
+          tone === "muted" && "text-muted-foreground",
+        )}
+      >
+        {status.label}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Opción de impresora como card seleccionable (role="radio" dentro de un
+ * radiogroup). Semántica de tres estados, sin duplicar señales:
+ *  - Selección (pendiente de guardar) → radio + borde primary + tinte.
+ *  - "En uso" (guardada en settings, la que realmente imprime) → badge success.
+ *  - Disponibilidad → PrinterStatusPill en la segunda línea.
+ * Mismo lenguaje visual que los métodos de pago del carrito.
+ */
+function PrinterOption({
+  selected,
+  onSelect,
+  title,
+  description,
+  status,
+  isDefault,
+  isActive,
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        "group flex w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors duration-150",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+        selected
+          ? "border-primary bg-primary/10 ring-1 ring-inset ring-primary/20"
+          : "border-border bg-card hover:border-primary/40 hover:bg-primary/[0.04]",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150",
+          selected
+            ? "border-primary"
+            : "border-muted-foreground/40 group-hover:border-primary/50",
+        )}
+      >
+        <span
+          className={cn(
+            "h-2 w-2 rounded-full transition-colors duration-150",
+            selected ? "bg-primary" : "bg-transparent",
+          )}
+        />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="truncate text-sm font-semibold text-foreground">
+            {title}
+          </span>
+          {isActive && (
+            <Badge className="shrink-0 gap-1 border-transparent bg-success px-1.5 py-0 text-[10px] font-semibold text-success-foreground hover:bg-success">
+              <Check className="h-2.5 w-2.5" />
+              En uso
+            </Badge>
+          )}
+          {isDefault && (
+            <Badge
+              variant="outline"
+              className="shrink-0 px-1.5 py-0 text-[10px] font-semibold"
+            >
+              Predeterminada
+            </Badge>
+          )}
+        </span>
+        <span className="mt-1 flex items-center gap-2">
+          {description && description !== title && (
+            <span className="min-w-0 truncate text-xs text-muted-foreground">
+              {description}
+            </span>
+          )}
+          <PrinterStatusPill status={status} />
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -290,6 +414,17 @@ function ConfigurationScreen() {
   const [detectedPrinters, setDetectedPrinters] = useState([]);
   const [loadingPrinters, setLoadingPrinters] = useState(true);
 
+  // Selección de impresora: "" = predeterminada del sistema. Se persiste en
+  // la setting `printer_name`; ningún modelo viene hardcodeado.
+  // `activePrinterName` = la guardada en settings (badge "En uso");
+  // `printerName` = la elegida en la UI, que puede diferir hasta guardar.
+  const [printerName, setPrinterName] = useState("");
+  const [activePrinterName, setActivePrinterName] = useState("");
+  const [paperWidth, setPaperWidth] = useState("58");
+  const [activePaperWidth, setActivePaperWidth] = useState("58");
+  const [savingPrinter, setSavingPrinter] = useState(false);
+  const [testingPrint, setTestingPrint] = useState(false);
+
   useEffect(() => {
     const loadPrinters = async () => {
       try {
@@ -304,6 +439,104 @@ function ConfigurationScreen() {
     };
     loadPrinters();
   }, []);
+
+  useEffect(() => {
+    const loadPrinterSettings = async () => {
+      try {
+        const s = await window.api.invoke("get-all-settings");
+        const name =
+          typeof s.printer_name === "string" ? s.printer_name : "";
+        const width = s.paper_width_mm ?? "58";
+        setPrinterName(name);
+        setActivePrinterName(name);
+        setPaperWidth(width);
+        setActivePaperWidth(width);
+      } catch (err) {
+        console.error("Error loading printer settings:", err);
+      }
+    };
+    loadPrinterSettings();
+  }, []);
+
+  const reloadPrinters = async () => {
+    setLoadingPrinters(true);
+    try {
+      const printers = await window.api.invoke("get-printers");
+      setDetectedPrinters(Array.isArray(printers) ? printers : []);
+    } catch (err) {
+      console.error("Error loading printers:", err);
+      setDetectedPrinters([]);
+    } finally {
+      setLoadingPrinters(false);
+    }
+  };
+
+  const handleSavePrinter = async () => {
+    setSavingPrinter(true);
+    try {
+      const results = await Promise.all([
+        window.api.invoke("save-setting", "printer_name", printerName),
+        window.api.invoke("save-setting", "paper_width_mm", paperWidth),
+      ]);
+      const failed = results.find((r) => r && r.success === false);
+      if (failed) throw new Error(failed.error);
+      setActivePrinterName(printerName);
+      setActivePaperWidth(paperWidth);
+      notify("Configuración de impresora guardada correctamente.", "success");
+      reloadPrinters();
+    } catch (err) {
+      console.error("Error saving printer settings:", err);
+      notify("Error al guardar la configuración de impresora.", "error");
+    } finally {
+      setSavingPrinter(false);
+    }
+  };
+
+  const handleTestPrint = async () => {
+    setTestingPrint(true);
+    try {
+      // Imprime con la selección ACTUAL de la UI (aunque no esté guardada):
+      // print-receipt acepta overrides que el main sanitiza antes de usar.
+      const html = buildReceiptHTML({
+        store: { name: storeName || "Vendia" },
+        headerNote: "Prueba de impresión",
+        ticketNum: "PRUEBA",
+        items: [
+          {
+            name: "Artículo de prueba",
+            qtyDisplay: 1,
+            unit: "pza",
+            unitPrice: 10,
+            lineTotal: 10,
+          },
+        ],
+        subtotal: 10,
+        total: 10,
+        methodLabel: "EFECTIVO",
+        footerNote: `${printerName || "Impresora predeterminada"} · ${paperWidth} mm`,
+        paperWidthMm: paperWidth,
+      });
+      const res = await window.api.invoke("print-receipt", html, {
+        printerName,
+        paperWidthMm: Number(paperWidth),
+      });
+      if (res && res.success) {
+        notify(
+          res.fellBack
+            ? `Impreso en «${res.printer}»: la seleccionada no está disponible.`
+            : `Ticket de prueba enviado a «${res.printer}».`,
+          res.fellBack ? "info" : "success",
+        );
+      } else {
+        notify((res && res.error) || "No se pudo imprimir la prueba.", "error");
+      }
+    } catch (err) {
+      console.error("Error printing test:", err);
+      notify("No se pudo imprimir la prueba.", "error");
+    } finally {
+      setTestingPrint(false);
+    }
+  };
 
   const handleLogoChange = (e) => {
     const file = e.target.files?.[0];
@@ -867,9 +1100,9 @@ function ConfigurationScreen() {
                 <p className="font-bold">{item.name}</p>
                 <div className="flex justify-between">
                   <span>
-                    {item.qty} pza x ${fmt(item.price)}
+                    {item.qty} pza x ${fmtNumber(item.price)}
                   </span>
-                  <span>${fmt(item.qty * item.price)}</span>
+                  <span>${fmtNumber(item.qty * item.price)}</span>
                 </div>
                 <div className="my-1 border-b border-dotted border-black/30" />
               </div>
@@ -877,12 +1110,12 @@ function ConfigurationScreen() {
             <div className="my-2 border-t border-dashed border-black/40" />
             <div className="flex justify-between">
               <span>Subtotal:</span>
-              <span>${fmt(previewSubtotal)}</span>
+              <span>${fmtNumber(previewSubtotal)}</span>
             </div>
             <div className="my-2 border-t border-dashed border-black/40" />
             <div className="flex justify-between py-0.5 text-[15px] font-bold">
               <span>TOTAL:</span>
-              <span>${fmt(previewSubtotal)}</span>
+              <span>${fmtNumber(previewSubtotal)}</span>
             </div>
             <div className="my-2 border-t border-dashed border-black/40" />
             <div className="flex justify-between">
@@ -1213,119 +1446,216 @@ function ConfigurationScreen() {
     </>
   );
 
-  const renderPrinterTab = () => (
-    <>
-      <section className="divide-y divide-border/40">
-        <FieldRow
-          label="Impresora de tickets"
-          description="Nombre de impresora configurado en el sistema (spooler de Windows)."
-        >
-          <Input value={STORE_PRINTER} disabled readOnly />
-        </FieldRow>
-        <FieldRow
-          label="Ancho de papel"
-          description="Ancho del rollo térmico que usa el sistema para imprimir."
-        >
-          <Input value="58 mm" disabled readOnly />
-        </FieldRow>
-        <FieldRow
-          label="Impresoras detectadas"
-          description="Dispositivos disponibles en este equipo."
-        >
-          {loadingPrinters ? (
-            <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Buscando impresoras...
-            </div>
-          ) : detectedPrinters.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No se detectaron impresoras en este equipo.
-            </p>
-          ) : (
-            <ul className="w-full space-y-2">
-              {detectedPrinters.map((p) => {
-                const inUse = p.name === STORE_PRINTER;
-                const statusLabel = PRINTER_STATUS[p.status] || "Desconocida";
-                const dotClass = inUse
-                  ? "bg-emerald-500"
-                  : p.status === 2
-                    ? "bg-destructive"
-                    : p.status === 1 || p.status === 3
-                      ? "bg-warning"
-                      : "bg-muted-foreground/40";
-                return (
-                  <li
+  const renderPrinterTab = () => {
+    const selectedMissing =
+      printerName !== "" &&
+      !detectedPrinters.some((p) => p.name === printerName);
+    const defaultPrinter = detectedPrinters.find((p) => p.isDefault);
+    const hasUnsavedChanges =
+      printerName !== activePrinterName || paperWidth !== activePaperWidth;
+    return (
+      <>
+        <section className="divide-y divide-border/40">
+          <FieldRow
+            wide
+            label="Impresora de tickets"
+            description="Selecciona la impresora del spooler de Windows. Si la configurada no está disponible en el equipo, se usa la predeterminada del sistema."
+          >
+            {loadingPrinters ? (
+              <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Buscando impresoras...
+              </div>
+            ) : detectedPrinters.length === 0 ? (
+              <div className="flex w-full flex-col items-start gap-3 rounded-lg border border-dashed border-border p-4">
+                <p className="text-sm text-muted-foreground">
+                  No se detectaron impresoras en este equipo.
+                </p>
+                <Button variant="outline" size="sm" onClick={reloadPrinters}>
+                  <RefreshCw className="h-4 w-4" />
+                  Volver a buscar
+                </Button>
+              </div>
+            ) : (
+              <div
+                role="radiogroup"
+                aria-label="Impresora de tickets"
+                className="flex w-full flex-col gap-2"
+              >
+                <PrinterOption
+                  selected={printerName === ""}
+                  onSelect={() => setPrinterName("")}
+                  title="Predeterminada del sistema"
+                  description={
+                    defaultPrinter
+                      ? `Windows usará: ${defaultPrinter.displayName}`
+                      : "Windows elegirá la impresora en cada impresión."
+                  }
+                  isActive={activePrinterName === ""}
+                />
+                {detectedPrinters.map((p) => (
+                  <PrinterOption
                     key={p.name}
-                    className="flex items-start gap-2.5 text-sm text-foreground"
-                  >
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 shrink-0 rounded-full",
-                        dotClass
-                      )}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">
-                        {p.displayName || p.name}
-                      </p>
-                      {p.description && (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {p.description}
-                        </p>
-                      )}
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {statusLabel}
-                    </span>
-                    {inUse && (
-                      <Badge variant="outline" className="shrink-0 text-[10px]">
-                        En uso
-                      </Badge>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </FieldRow>
-      </section>
-    </>
-  );
+                    selected={printerName === p.name}
+                    onSelect={() => setPrinterName(p.name)}
+                    title={p.displayName || p.name}
+                    description={p.description}
+                    status={{
+                      code: p.status,
+                      label: PRINTER_STATUS[p.status] || "Desconocida",
+                    }}
+                    isDefault={p.isDefault}
+                    isActive={p.name === activePrinterName}
+                  />
+                ))}
+              </div>
+            )}
+            {selectedMissing && (
+              <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-snug text-warning">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  «{printerName}» no está disponible en este equipo: al
+                  imprimir se usará la predeterminada del sistema.
+                </span>
+              </p>
+            )}
+          </FieldRow>
+          <FieldRow
+            label="Ancho de papel"
+            description="Ancho del rollo térmico que usa el sistema para imprimir."
+          >
+            <div
+              role="group"
+              aria-label="Ancho de papel"
+              className="flex w-full gap-1 rounded-lg border border-border bg-background p-1"
+            >
+              {PAPER_WIDTH_OPTIONS.map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  aria-pressed={paperWidth === String(w)}
+                  onClick={() => setPaperWidth(String(w))}
+                  className={cn(
+                    "h-9 flex-1 cursor-pointer rounded-md border text-sm font-bold tabular-nums transition-colors duration-150",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                    paperWidth === String(w)
+                      ? "border-primary bg-primary/10 text-primary shadow-sm"
+                      : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  {w} mm
+                </button>
+              ))}
+            </div>
+          </FieldRow>
+          <FieldRow
+            label="Acciones"
+            description="Guarda la selección o imprime un ticket de prueba con los ajustes actuales."
+          >
+            <div className="flex w-full flex-col items-end gap-2">
+              {hasUnsavedChanges && (
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-warning">
+                  <span
+                    aria-hidden
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning"
+                  />
+                  Cambios sin guardar — la impresora en uso no cambiará hasta
+                  que guardes.
+                </span>
+              )}
+              <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={reloadPrinters}
+                  disabled={loadingPrinters}
+                >
+                  {loadingPrinters ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Recargar
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleTestPrint}
+                  disabled={testingPrint}
+                >
+                  {testingPrint ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Printer className="h-4 w-4" />
+                  )}
+                  Imprimir prueba
+                </Button>
+                <Button onClick={handleSavePrinter} disabled={savingPrinter}>
+                  {savingPrinter ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  Guardar
+                </Button>
+              </div>
+            </div>
+          </FieldRow>
+        </section>
+      </>
+    );
+  };
 
   return (
     <div className="mx-auto w-full max-w-7xl">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div />
-        <Button variant="outline" onClick={() => navigate("/")}>
-          <ArrowLeft className="h-4 w-4" />
-          Volver a Ventas
-        </Button>
-      </div>
+      <PageHeader
+        className="xl:mb-6"
+        description="Ajusta la tienda, el ticket, la impresión y los dispositivos móviles"
+        actions={
+          <Button variant="outline" onClick={() => navigate("/")}>
+            <ArrowLeft className="h-4 w-4" />
+            Volver a Ventas
+          </Button>
+        }
+      />
 
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
         <aside className="w-full shrink-0 lg:sticky lg:top-20 lg:w-80">
-          <nav className="rounded-2xl border bg-card px-2.5 py-3 shadow-sm">
-            <div className="space-y-2">
+          <nav className="flex flex-col rounded-xl border border-border bg-card px-2 py-2.5">
+            <span className="flex items-center gap-2 px-3 pt-2 pb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+              Ajustes
+              <span aria-hidden className="h-px min-w-3 flex-1 bg-border" />
+            </span>
+            <div className="flex flex-col gap-0.5">
               {TABS.map(({ id, label, icon: TabIcon }) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setActiveTab(id)}
+                  aria-current={activeTab === id ? "true" : undefined}
                   className={cn(
-                    "group flex w-full items-center gap-3.5 rounded-xl px-4 py-3.5 text-left text-sm transition-colors",
+                    "group relative flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition-all duration-150 outline-none",
+                    "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                     activeTab === id
-                      ? "bg-primary/10 font-medium text-primary ring-1 ring-inset ring-primary/30"
-                      : "font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      ? "bg-gradient-to-r from-primary/18 via-primary/[0.07] to-transparent font-semibold text-foreground"
+                      : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
                   )}
                 >
-                  <TabIcon
+                  <span
+                    aria-hidden
                     className={cn(
-                      "h-[18px] w-[18px] shrink-0",
-                      activeTab === id
-                        ? "text-primary"
-                        : "text-muted-foreground group-hover:text-foreground"
+                      "absolute left-0 top-1/2 h-7 w-[2px] -translate-y-1/2 rounded-r-full transition-all duration-200",
+                      activeTab === id ? "bg-primary opacity-100" : "opacity-0",
                     )}
                   />
+                  <span
+                    className={cn(
+                      "inline-flex shrink-0 items-center justify-center transition-transform duration-150 group-hover:translate-x-0.5 [&>svg]:h-[18px] [&>svg]:w-[18px]",
+                      activeTab === id
+                        ? "text-primary"
+                        : "text-muted-foreground group-hover:text-foreground",
+                    )}
+                  >
+                    <TabIcon />
+                  </span>
                   <span className="truncate">{label}</span>
                 </button>
               ))}

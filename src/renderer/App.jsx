@@ -115,11 +115,15 @@ const AppInner = () => {
 
   // Sincroniza con el titleBarOverlay del proceso principal (color del navbar)
   // en el arranque y en cada cambio de tema, sin reiniciar la app.
+  // En las pantallas de marca (Login y SetupWizard) el fondo es un gradiente
+  // full-bleed, así que el overlay se tiñe con el modo "brand" para que los
+  // controles nativos se fundan con la marca en vez de verse un bloque sólido.
+  const onBrandScreen = !loggedIn || showSetup;
   useEffect(() => {
     try {
-      window.api?.setTitlebarTheme(mode);
+      window.api?.setTitlebarTheme(onBrandScreen ? "brand" : mode);
     } catch {}
-  }, [mode]);
+  }, [mode, onBrandScreen]);
 
   useEffect(() => {
     const checkFirstTime = async () => {
@@ -142,6 +146,21 @@ const AppInner = () => {
       window.removeEventListener("ctrl-n", handleCtrlN);
     };
   }, []);
+
+  // Atajo para ver el asistente de configuración cuando se quiera
+  // (Ctrl+Shift+W). Abre en modo preview: no guarda ajustes ni crea
+  // cajeros, y se cierra con su botón/Cancelar.
+  useEffect(() => {
+    const openWizardPreview = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "w" && !showSetup) {
+        e.preventDefault();
+        setSetupPreview(true);
+        setShowSetup(true);
+      }
+    };
+    window.addEventListener("keydown", openWizardPreview);
+    return () => window.removeEventListener("keydown", openWizardPreview);
+  }, [showSetup]);
 
   const handleSetupComplete = async (setupData) => {
     setShowSetup(false);

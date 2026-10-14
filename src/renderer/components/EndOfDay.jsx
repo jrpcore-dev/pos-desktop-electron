@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { fmtMoney, fmtMoneyAbs, fmtMoneySigned } from "@/utils/format";
 
 import {
   Alert,
@@ -163,7 +164,8 @@ const TurnoRow = memo(function TurnoRow({
               : "text-destructive",
         )}
       >
-        {isSale ? "+" : "-"}${Math.abs(item.amount).toFixed(2)}
+        {isSale ? "+" : "-"}
+        {fmtMoneyAbs(item.amount)}
       </TableCell>
 
       {canManageRegister && (
@@ -448,9 +450,8 @@ const EndOfDay = () => {
       setRegisterMessage({
         type: "success",
         text:
-          `Caja cerrada. Esperado: $${Number(result.expectedClose || 0).toFixed(
-            2,
-          )}, ` + `Diferencia: $${Number(result.difference || 0).toFixed(2)}`,
+          `Caja cerrada. Esperado: ${fmtMoney(result.expectedClose)}, ` +
+          `Diferencia: ${fmtMoney(result.difference)}`,
       });
     } else {
       setRegisterMessage({
@@ -503,7 +504,7 @@ const EndOfDay = () => {
         setRegisterMessage({
           type: "success",
           text:
-            `Retiro de $${amount.toFixed(2)} registrado: ` +
+            `Retiro de ${fmtMoney(amount)} registrado: ` +
             withdrawReason.trim(),
         });
       } else {
@@ -612,7 +613,7 @@ const EndOfDay = () => {
           setSaleDetailData(null);
         }
 
-        const refundText = `$${Number(result.refundAmount || 0).toFixed(2)}`;
+        const refundText = fmtMoneyAbs(result.refundAmount);
         const cancelledQty = result.cancelledQty;
         const qtyText = isWeightItem
           ? fmtKg(cancelledQty)
@@ -759,11 +760,11 @@ const EndOfDay = () => {
     doc.setFont(undefined, "normal");
     doc.setTextColor(...C.body);
     doc.text("Ventas Totales", bandLeft + 4, bandY + 17);
-    doc.text(`$${totalSales.toFixed(2)}`, bandRight - 4, bandY + 17, {
+    doc.text(fmtMoney(totalSales), bandRight - 4, bandY + 17, {
       align: "right",
     });
     doc.text("Total Gastos", bandLeft + 4, bandY + 23.5);
-    doc.text(`-$${totalExpenses.toFixed(2)}`, bandRight - 4, bandY + 23.5, {
+    doc.text(`-${fmtMoneyAbs(totalExpenses)}`, bandRight - 4, bandY + 23.5, {
       align: "right",
     });
 
@@ -778,7 +779,7 @@ const EndOfDay = () => {
     doc.setTextColor(...C.brand);
     doc.setFontSize(17);
     doc.text(
-      `$${(totalSales - totalExpenses).toFixed(2)}`,
+      fmtMoney(totalSales - totalExpenses),
       bandRight - 8,
       gainBaseline + 0.5,
       { align: "right" },
@@ -789,17 +790,17 @@ const EndOfDay = () => {
       doc.setTextColor(...C.muted);
       doc.text("Apertura de caja", bandLeft + 4, bandY + 44.5);
       doc.text(
-        `$${Number(register.opening_balance || 0).toFixed(2)}`,
+        fmtMoney(register.opening_balance),
         bandRight - 4,
         bandY + 44.5,
         { align: "right" },
       );
       doc.text("Efectivo en caja", bandLeft + 4, bandY + 50.5);
-      doc.text(`$${cashInRegister.toFixed(2)}`, bandRight - 4, bandY + 50.5, {
+      doc.text(fmtMoney(cashInRegister), bandRight - 4, bandY + 50.5, {
         align: "right",
       });
       doc.text("Cierre esperado", bandLeft + 4, bandY + 56.5);
-      doc.text(`$${expectedClose.toFixed(2)}`, bandRight - 4, bandY + 56.5, {
+      doc.text(fmtMoney(expectedClose), bandRight - 4, bandY + 56.5, {
         align: "right",
       });
     }
@@ -822,12 +823,11 @@ const EndOfDay = () => {
           : sale.payment_method === "card"
             ? "Tarjeta"
             : "Transferencia",
-        `$${Number(sale.total).toFixed(2)}`,
+        fmtMoney(sale.total),
       ]);
 
     doc.autoTable({
       head: [["#", "Hora", "Método", "Total"]],
-
       body: saleRows,
 
       startY: yy + 4,
@@ -873,7 +873,7 @@ const EndOfDay = () => {
               halign: "right",
             },
           },
-          `$${totalSales.toFixed(2)}`,
+          fmtMoney(totalSales),
         ],
       ],
     });
@@ -893,7 +893,7 @@ const EndOfDay = () => {
         index + 1,
         formatMXTime(expense.created_at),
         expense.reason,
-        `$${Number(expense.amount).toFixed(2)}`,
+        fmtMoney(expense.amount),
       ]);
 
       doc.autoTable({
@@ -944,7 +944,7 @@ const EndOfDay = () => {
                 halign: "right",
               },
             },
-            `$${totalExpenses.toFixed(2)}`,
+            fmtMoney(totalExpenses),
           ],
         ],
       });
@@ -961,9 +961,9 @@ const EndOfDay = () => {
     yy += 6;
 
     [
-      ["Efectivo", `$${totalCash.toFixed(2)}`],
-      ["Tarjeta", `$${totalCard.toFixed(2)}`],
-      ["Transferencia", `$${totalTransfer.toFixed(2)}`],
+      ["Efectivo", fmtMoney(totalCash)],
+      ["Tarjeta", fmtMoney(totalCard)],
+      ["Transferencia", fmtMoney(totalTransfer)],
     ].forEach(([label, value]) => {
       doc.setFont(undefined, "normal");
       doc.setTextColor(...C.body);
@@ -1277,9 +1277,9 @@ const EndOfDay = () => {
         icon: TriangleAlert,
         title: "Sin apertura de caja",
         subtitle: prevRegister
-          ? `El corte anterior se cerró con $${Number(
-              prevRegister.declared_close || 0,
-            ).toFixed(2)}. Abre una caja para comenzar a vender.`
+          ? `El corte anterior se cerró con ${fmtMoney(
+              prevRegister.declared_close,
+            )}. Abre una caja para comenzar a vender.`
           : "Abre una caja para comenzar a vender.",
       }
     : isOpen
@@ -1300,9 +1300,9 @@ const EndOfDay = () => {
           icon: Lock,
           title: "Caja cerrada",
           subtitle: prevRegister
-            ? `El corte anterior se cerró con $${Number(
-                prevRegister.declared_close || 0,
-              ).toFixed(2)}. Abre una caja para comenzar a registrar ventas.`
+            ? `El corte anterior se cerró con ${fmtMoney(
+                prevRegister.declared_close,
+              )}. Abre una caja para comenzar a registrar ventas.`
             : "Abre una caja para comenzar a registrar ventas.",
         };
 
@@ -1382,7 +1382,7 @@ const EndOfDay = () => {
   const summaryCards = [
     {
       label: "Ventas totales",
-      value: `$${totalSales.toFixed(2)}`,
+      value: fmtMoney(totalSales),
       icon: Banknote,
       color: "#059669",
       bg: "rgba(16,185,129,.12)",
@@ -1396,7 +1396,7 @@ const EndOfDay = () => {
     },
     {
       label: "Efectivo en caja",
-      value: isOpen ? `$${cashInRegister.toFixed(2)}` : "$0.00",
+      value: isOpen ? fmtMoney(cashInRegister) : "$0.00",
       icon: Landmark,
       color: "#d97706",
       bg: "rgba(217,119,6,.12)",
@@ -1795,7 +1795,7 @@ const EndOfDay = () => {
                       </span>
 
                       <span className="text-sm font-extrabold text-primary tabular-nums">
-                        ${totalSales.toFixed(2)}
+                        {fmtMoney(totalSales)}
                       </span>
                     </div>
 
@@ -1832,7 +1832,7 @@ const EndOfDay = () => {
                           </span>
 
                           <span className="text-sm font-bold tabular-nums">
-                            ${item.value.toFixed(2)}
+                            {fmtMoney(item.value)}
                           </span>
                         </div>
                       );
@@ -1850,12 +1850,12 @@ const EndOfDay = () => {
                     {[
                       [
                         "Apertura",
-                        `$${Number(register.opening_balance || 0).toFixed(2)}`,
+                        fmtMoney(register.opening_balance),
                       ],
-                      ["Ventas en efectivo", `+$${totalCash.toFixed(2)}`],
+                      ["Ventas en efectivo", `+${fmtMoneyAbs(totalCash)}`],
                       [
                         "Gastos",
-                        `-$${Number(register.expenses || 0).toFixed(2)}`,
+                        `-${fmtMoneyAbs(register.expenses)}`,
                       ],
                     ].map(([label, value]) => (
                       <div
@@ -1878,7 +1878,7 @@ const EndOfDay = () => {
                       </span>
 
                       <span className="text-base font-extrabold text-teal-600 tabular-nums dark:text-teal-400">
-                        ${expectedClose.toFixed(2)}
+                        {fmtMoney(expectedClose)}
                       </span>
                     </div>
                   </div>
@@ -2072,13 +2072,12 @@ const EndOfDay = () => {
                 </span>
 
                 <span className="text-sm font-bold tabular-nums">
-                  $
-                  {(
+                  {fmtMoney(
                     Number(register?.opening_balance || 0) +
-                    totalCash -
-                    Number(register?.expenses || 0) -
-                    (parseFloat(expenses) || 0)
-                  ).toFixed(2)}
+                      totalCash -
+                      Number(register?.expenses || 0) -
+                      (parseFloat(expenses) || 0),
+                  )}
                 </span>
               </div>
 
@@ -2095,7 +2094,7 @@ const EndOfDay = () => {
                 </span>
 
                 <span className="text-sm font-bold tabular-nums">
-                  ${(parseFloat(declaredClose) || 0).toFixed(2)}
+                  {fmtMoney(parseFloat(declaredClose) || 0)}
                 </span>
               </div>
 
@@ -2129,7 +2128,7 @@ const EndOfDay = () => {
                     : openCloseDifference < 0
                       ? "−"
                       : ""}
-                  ${Math.abs(openCloseDifference).toFixed(2)}
+                  {fmtMoneyAbs(openCloseDifference)}
                 </span>
               </div>
             </div>
@@ -2239,7 +2238,7 @@ const EndOfDay = () => {
               <p className="text-sm text-muted-foreground">
                 Disponible en caja:{" "}
                 <b className="text-foreground tabular-nums">
-                  ${cashInRegister.toFixed(2)}
+                  {fmtMoney(cashInRegister)}
                 </b>
               </p>
             </div>
@@ -2348,7 +2347,7 @@ const EndOfDay = () => {
                       <TableCell>{method}</TableCell>
 
                       <TableCell className="text-right font-bold tabular-nums">
-                        ${Number(sale.total || 0).toFixed(2)}
+                        {fmtMoney(sale.total)}
                       </TableCell>
 
                       <TableCell className="text-center">
@@ -2474,8 +2473,7 @@ const EndOfDay = () => {
                   </p>
 
                   <p className="text-sm font-semibold tabular-nums text-muted-foreground">
-                    ×{singleSaleItem.activeQty} · $
-                    {singleSaleItem.subtotal.toFixed(2)}
+                    ×{singleSaleItem.activeQty} · {fmtMoney(singleSaleItem.subtotal)}
                   </p>
                 </div>
 
@@ -2542,7 +2540,7 @@ const EndOfDay = () => {
                               </TableCell>
 
                               <TableCell className="text-right font-semibold tabular-nums">
-                                ${activeSubtotal.toFixed(2)}
+                                {fmtMoney(activeSubtotal)}
                               </TableCell>
 
                               {canManageRegister && (
@@ -2595,8 +2593,8 @@ const EndOfDay = () => {
 
                         <p className="text-sm font-semibold text-muted-foreground">
                           {isW
-                            ? `${fmtKg(cancelItemData.itemQty)} kg disponible(s) · $${cancelItemData.itemPrice.toFixed(2)}/kg`
-                            : `${cancelItemData.itemQty} unidad(es) disponible(s) · $${cancelItemData.itemPrice.toFixed(2)} c/u`}
+                            ? `${fmtKg(cancelItemData.itemQty)} kg disponible(s) · ${fmtMoney(cancelItemData.itemPrice)}/kg`
+                            : `${cancelItemData.itemQty} unidad(es) disponible(s) · ${fmtMoney(cancelItemData.itemPrice)} c/u`}
                           {cancelItemData.itemDiscount > 0 &&
                             ` · desc. ${cancelItemData.itemDiscount}%`}
                         </p>
@@ -2787,7 +2785,7 @@ const EndOfDay = () => {
                             </span>
 
                             <span className="font-bold tabular-nums text-destructive">
-                              −${refund.toFixed(2)}
+                              −{fmtMoney(refund)}
                             </span>
                           </div>
 
@@ -2810,7 +2808,7 @@ const EndOfDay = () => {
                             </span>
 
                             <span className="font-extrabold tabular-nums">
-                              ${newTotal.toFixed(2)}
+                              {fmtMoney(newTotal)}
                             </span>
                           </div>
                         </div>
@@ -2861,7 +2859,7 @@ const EndOfDay = () => {
                     "text-success",
                   )}
                 >
-                  Total: ${Number(saleDetailSale.total || 0).toFixed(2)}
+                  Total: {fmtMoney(saleDetailSale.total)}
                 </p>
               </>
             )}
@@ -2936,7 +2934,7 @@ const EndOfDay = () => {
                 "{cancelExpenseData.reason}"
               </strong>
             )}{" "}
-            por ${Number(cancelExpenseData?.amount || 0).toFixed(2)} de la
+            por {fmtMoney(cancelExpenseData?.amount)} de la
             caja. Esta acción no se puede deshacer.
           </DialogDescription>
 

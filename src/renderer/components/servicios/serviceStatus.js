@@ -17,36 +17,31 @@ export const SERVICE_STATUS = {
     label: "Procesando",
     badgeVariant: "warning",
     /** clases del círculo grande del panel de resultado */
-    artRing: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-    badgeText: "text-amber-700 dark:text-amber-400",
+    artRing: "bg-warning/15 text-warning",
   },
   applied: {
     key: "applied",
     label: "Aplicada",
     badgeVariant: "success",
-    artRing: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-    badgeText: "text-emerald-700 dark:text-emerald-400",
+    artRing: "bg-success/15 text-success",
   },
   failed: {
     key: "failed",
     label: "Fallida",
     badgeVariant: "destructive",
     artRing: "bg-destructive/15 text-destructive",
-    badgeText: "text-destructive",
   },
   unknown: {
     key: "unknown",
     label: "Por verificar",
     badgeVariant: "secondary",
     artRing: "bg-muted text-muted-foreground",
-    badgeText: "text-muted-foreground",
   },
   reversed: {
     key: "reversed",
     label: "Revertida",
     badgeVariant: "outline",
     artRing: "bg-muted text-muted-foreground",
-    badgeText: "text-muted-foreground",
   },
 };
 
@@ -64,7 +59,6 @@ export const getStatus = (key) =>
     label: key || "Desconocido",
     badgeVariant: "secondary",
     artRing: "bg-muted text-muted-foreground",
-    badgeText: "text-muted-foreground",
   };
 
 /** Estados que todavía pueden cambiar o que exigen atención del cajero. */

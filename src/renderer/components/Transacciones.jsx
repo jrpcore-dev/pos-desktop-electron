@@ -30,6 +30,8 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
+import { fmtMoney, fmtMoneyAbs } from "../utils/format";
+import { receiptDocCss } from "../utils/receiptTemplate";
 import { Badge } from "./ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -60,6 +62,8 @@ import { cn } from "@/lib/utils";
 
 applyPlugin(jsPDF);
 
+import PageHeader from "./PageHeader";
+
 const PAGE_SIZE = 20;
 
 const methodMeta = {
@@ -74,11 +78,6 @@ const methodNames = {
   transfer: "Transferencia",
 };
 
-const fmtMoney = (n) =>
-  "$" + Number(n || 0).toLocaleString("es-MX", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 const sortRows = (rows, key, dir) => {
   if (!key || !rows) return rows;
@@ -191,24 +190,24 @@ const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => 
         ? (it.name || it.product_name || "Producto").substring(0, 22) + ".."
         : it.name || it.product_name || "Producto";
       lines.push(`<div style="font-weight:bold;font-size:12px">${name}</div>`);
-      lines.push(`<div style="display:flex;justify-content:space-between;font-size:10px"><span>${qty} x $${price.toFixed(2)}</span><span>$${(qty * price).toFixed(2)}</span></div>`);
+      lines.push(`<div style="display:flex;justify-content:space-between;font-size:10px"><span>${qty} x ${fmtMoney(price)}</span><span>${fmtMoney(qty * price)}</span></div>`);
       lines.push(`<div style="border-bottom:1px dotted #ccc;margin:3px 0"></div>`);
     });
     lines.push(`<div class="sep"></div>`);
-    lines.push(`<div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px"><span>TOTAL:</span><span>$${Number(saleDetail.total || 0).toFixed(2)}</span></div>`);
+    lines.push(`<div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px"><span>TOTAL:</span><span>${fmtMoney(saleDetail.total)}</span></div>`);
     lines.push(`<div class="sep"></div>`);
     lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Metodo:</span><span><strong>${methodNames[saleDetail.payment_method] || saleDetail.payment_method}</strong></span></div>`);
     if ((saleDetail.discount_total ?? 0) > 0) {
-      lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Descuento:</span><span>-$${Number(saleDetail.discount_total).toFixed(2)}</span></div>`);
+      lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Descuento:</span><span>-${fmtMoneyAbs(saleDetail.discount_total)}</span></div>`);
     }
     lines.push(`<div class="sep"></div>`);
     lines.push(`<div style="text-align:center;font-weight:bold;font-size:13px">¡GRACIAS POR SU COMPRA!</div>`);
     lines.push(`<div style="height:20px"></div>`);
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-      @page{size:58mm auto;margin:0}
-      *{box-sizing:border-box}
-      body{font-family:'Courier New',monospace;font-size:11px;margin:0 auto;padding:2px 2px;width:48mm;max-width:48mm;background:white;color:black;overflow-wrap:break-word}
-      .sep{border-top:1px dashed #333;margin:5px 0}
+    const paperWidthMm = await window.api.invoke(
+      "get-setting",
+      "paper_width_mm",
+    );
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${receiptDocCss(paperWidthMm)}
     </style></head><body>${lines.join("")}</body></html>`;
     const res = await window.api.invoke("print-receipt", html);
     if (res && !res.success) setError(res.error || "No se pudo imprimir el ticket");
@@ -309,8 +308,8 @@ const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count
   let yy = 52;
   const colR = pageW / 4;
   const cols = [
-    { x: margin + colR / 2, label: "Total Ventas", value: `$${total.toFixed(2)}` },
-    { x: margin + colR * 1.5, label: "Egresos", value: `$${totalExpenses.toFixed(2)}` },
+    { x: margin + colR / 2, label: "Total Ventas", value: fmtMoney(total) },
+    { x: margin + colR * 1.5, label: "Egresos", value: fmtMoney(totalExpenses) },
     { x: margin + colR * 2.5, label: "Ventas", value: String(count) },
     { x: margin + colR * 3.5, label: "Canceladas", value: String(canceledSales.length) },
   ];
@@ -356,7 +355,7 @@ const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count
       `#${s.id}`,
       formatMXDateTime(s.created_at),
       methodNames[s.payment_method] || s.payment_method || "",
-      `$${s.total.toFixed(2)}`,
+      fmtMoney(s.total),
     ]);
   let nextY = buildTable(
     "VENTAS DEL PERÍODO",
@@ -364,7 +363,7 @@ const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count
     saleData,
     yy,
     saleData.length > 0
-      ? [[{ content: `TOTAL: $${total.toFixed(2)}`, colSpan: 4, styles: { halign: "center" } }]]
+      ? [[{ content: `TOTAL: ${fmtMoney(total)}`, colSpan: 4, styles: { halign: "center" } }]]
       : undefined,
     { 3: { halign: "right" } },
   );
@@ -375,7 +374,7 @@ const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count
       formatMXDateTime(e.created_at),
       e.reason || "",
       expenseType(e),
-      `-$${Number(e.amount || 0).toFixed(2)}`,
+      `-${fmtMoneyAbs(e.amount)}`,
     ]);
   nextY = buildTable(
     "EGRESOS DEL PERÍODO",
@@ -383,7 +382,7 @@ const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count
     expData,
     nextY,
     expData.length > 0
-      ? [[{ content: `TOTAL EGRESOS: $${totalExpenses.toFixed(2)}`, colSpan: 4, styles: { halign: "center" } }]]
+      ? [[{ content: `TOTAL EGRESOS: ${fmtMoney(totalExpenses)}`, colSpan: 4, styles: { halign: "center" } }]]
       : undefined,
     { 3: { halign: "right" } },
   );
@@ -644,32 +643,31 @@ const Transacciones = () => {
 
   return (
     <div className="p-1">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-sm text-muted-foreground">Historial de ventas y egresos</p>
-        </div>
-        {!loading && (sales.length > 0 || expenses.length > 0) && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <FileDown className="h-4 w-4" />
-                Exportar
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => exportCSV(sales, expenses, dateRange)}>
-                <FileSpreadsheet className="h-4 w-4" /> CSV
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => exportPDF(sales, expenses, total, totalExpenses, count, canceledSales, dateRange, rangeLabel)}>
-                <FileDown className="h-4 w-4" /> PDF
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => printReport(sales, expenses, total, totalExpenses, count, canceledSales, rangeLabel)}>
-                <Printer className="h-4 w-4" /> Imprimir
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
+      <PageHeader
+        description="Historial de ventas y egresos"
+        actions={
+          !loading && (sales.length > 0 || expenses.length > 0) ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <FileDown className="h-4 w-4" />
+                  Exportar
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => exportCSV(sales, expenses, dateRange)}>
+                  <FileSpreadsheet className="h-4 w-4" /> CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportPDF(sales, expenses, total, totalExpenses, count, canceledSales, dateRange, rangeLabel)}>
+                  <FileDown className="h-4 w-4" /> PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => printReport(sales, expenses, total, totalExpenses, count, canceledSales, rangeLabel)}>
+                  <Printer className="h-4 w-4" /> Imprimir
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+      />
 
       {!loading && error && (
         <div className="mb-4 flex w-full items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">

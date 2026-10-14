@@ -55,6 +55,9 @@ import {
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
 
+import PageHeader from "./PageHeader";
+import { fmtMoney } from "../utils/format";
+
 const PAGE_SIZE = 10;
 
 const CustomerForm = ({ value, onChange }) => (
@@ -164,7 +167,7 @@ const ProductPicker = ({ onPick, onClose }) => {
               {p.name}
             </span>
             <span className="shrink-0 text-sm font-bold tabular-nums text-success">
-              ${Number(p.price || 0).toFixed(2)}
+              {fmtMoney(p.price)}
             </span>
           </button>
         ))}
@@ -403,17 +406,15 @@ const Customers = () => {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="p-1">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Gestiona tus clientes, niveles y precios especiales
-          </p>
-        </div>
-        <Button onClick={openCreate} className="shrink-0">
-          <PlusCircle className="h-4 w-4" />
-          Nuevo Cliente
-        </Button>
-      </div>
+      <PageHeader
+        description="Gestiona tus clientes, niveles y precios especiales"
+        actions={
+          <Button onClick={openCreate} className="shrink-0">
+            <PlusCircle className="h-4 w-4" />
+            Nuevo Cliente
+          </Button>
+        }
+      />
 
       <div className="relative mb-5 max-w-sm">
         <Search
@@ -683,7 +684,7 @@ const Customers = () => {
                       </span>
                       <span className="flex shrink-0 items-center gap-2">
                         <span className="text-sm font-bold tabular-nums text-success">
-                          ${Number(e.price).toFixed(2)}
+                          {fmtMoney(e.price)}
                         </span>
                         <button
                           type="button"

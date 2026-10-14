@@ -21,54 +21,58 @@ const ServiceResult = ({ tx, onRetry, onDone, onReconcile, onPrint, busy }) => {
   }, [tx.status, tx.folio, onReconcile]);
 
   return (
-    <div className="flex flex-col items-center gap-3 p-3 text-center">
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex flex-col items-center gap-3 p-3 text-center"
+    >
       <ServiceResultArt status={tx.status} ringClassName={status.artRing} />
 
       <div>
-        <p className="text-sm font-bold text-foreground">{title(tx.status)}</p>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
+        <p className="text-base font-bold text-foreground">{title(tx.status)}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
           {subtitle(tx.status)}
         </p>
       </div>
 
       <div className="w-full rounded-lg border border-border">
-        <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
+        <div className="flex items-center gap-2 border-b border-border px-2.5 py-2.5">
           <OperatorIcon
-            id={tx.operatorKey}
+            id={tx.operatorLogo || tx.operatorKey}
             name={tx.operatorName}
             size="sm"
-            className="max-h-5 max-w-8"
+            className="w-10"
           />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold text-foreground">
+            <p className="truncate text-sm font-semibold text-foreground">
               {tx.operatorName}
             </p>
             {needsInput && (
-              <p className="truncate text-[10px] tabular-nums text-muted-foreground">
+              <p className="truncate text-xs tabular-nums text-muted-foreground">
                 {maskInput(tx.inputValue)}
               </p>
             )}
           </div>
-          <span className="text-[13px] font-bold tabular-nums text-foreground">
+          <span className="text-sm font-bold tabular-nums text-foreground">
             {money(tx.quote.totalCents)}
           </span>
         </div>
 
-        <div className="flex items-center justify-between px-2.5 py-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="flex items-center justify-between px-2.5 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Folio
           </span>
-          <span className="text-[11px] font-semibold tabular-nums text-foreground">
+          <span className="text-xs font-semibold tabular-nums text-foreground">
             {tx.folio}
           </span>
         </div>
 
         {tx.providerRef && (
-          <div className="flex items-center justify-between px-2.5 pb-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="flex items-center justify-between px-2.5 pb-2.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Referencia
             </span>
-            <span className="text-[11px] font-semibold tabular-nums text-foreground">
+            <span className="text-xs font-semibold tabular-nums text-foreground">
               {tx.providerRef}
             </span>
           </div>
@@ -76,24 +80,24 @@ const ServiceResult = ({ tx, onRetry, onDone, onReconcile, onPrint, busy }) => {
       </div>
 
       {tx.message && (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           {tx.message}
         </p>
       )}
 
-      <div className="mt-auto flex w-full flex-col gap-1.5">
+      <div className="mt-auto flex w-full flex-col gap-2">
         {tx.status === "applied" && (
           <>
             <Button
               size="lg"
               onClick={onDone}
-              className="h-9 w-full gap-1.5 bg-success text-[13px] font-bold text-white hover:bg-success/90"
+              className="h-11 w-full gap-1.5 bg-success text-sm font-bold text-success-foreground hover:bg-success/90"
             >
-              <CircleCheck size={15} />
+              <CircleCheck size={16} />
               Cobrar otro
             </Button>
-            <Button variant="outline" onClick={() => onPrint?.(tx)} className="h-9 w-full gap-1.5 text-[13px]">
-              <Printer size={14} />
+            <Button variant="outline" onClick={() => onPrint?.(tx)} className="h-11 w-full gap-1.5 text-sm">
+              <Printer size={15} />
               Imprimir ticket
             </Button>
           </>
@@ -104,26 +108,26 @@ const ServiceResult = ({ tx, onRetry, onDone, onReconcile, onPrint, busy }) => {
             size="lg"
             onClick={() => onRetry(tx)}
             disabled={busy}
-            className="h-9 w-full gap-1.5 text-[13px]"
+            className="h-11 w-full gap-1.5 text-sm"
           >
             {busy ? (
-              <Spinner size={14} />
+              <Spinner size={15} />
             ) : (
-              <RefreshCw size={14} />
+              <RefreshCw size={15} />
             )}
             Reintentar
           </Button>
         )}
 
         {tx.status === "pending" && (
-          <div className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
-            <Loader2 size={14} className="animate-spin" />
+          <div className="flex items-center justify-center gap-2 py-1 text-sm text-muted-foreground">
+            <Loader2 size={15} className="animate-spin" />
             Consultando al operador
           </div>
         )}
 
         {(tx.status === "failed" || tx.status === "reversed") && (
-          <Button variant="outline" onClick={onDone} className="h-9 w-full text-[13px]">
+          <Button variant="outline" onClick={onDone} className="h-11 w-full text-sm">
             Volver
           </Button>
         )}

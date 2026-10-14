@@ -81,5 +81,13 @@
   },
   "engines": {
     "npm": ">=10.0.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "core-js@3.49.0": true,
+    "electron@37.2.0": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.28.1": true,
+    "usb@1.9.2": true
   }
 }

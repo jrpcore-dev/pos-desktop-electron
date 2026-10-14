@@ -367,12 +367,17 @@ const createTray = () => {
 const TITLEBAR_COLORS = {
   light: { color: "#f8fafc", symbolColor: "#0f1729" },
   dark: { color: "#0a0e1a", symbolColor: "#f8fafc" },
+  // Modo marca: para Login/SetupWizard (fondo full-bleed con gradiente
+  // hsl(222 47% 14%) -> hsl(218 55% 32%)). Este color aproxima la esquina
+  // superior derecha del gradiente para que los controles nativos se
+  // fundan con la marca en vez de verse un rectángulo blanco/negro.
+  brand: { color: "#1c3259", symbolColor: "#f8fafc" },
 };
-const TITLEBAR_HEIGHT = 48;
+const TITLEBAR_HEIGHT = 56; // Alineado con la altura del navbar (h-14)
 
 ipcMain.on("set-titlebar-theme", (event, mode) => {
   if (!mainWin || mainWin.isDestroyed()) return;
-  const colors = TITLEBAR_COLORS[mode === "dark" ? "dark" : "light"];
+  const colors = TITLEBAR_COLORS[mode] ?? TITLEBAR_COLORS.light;
   mainWin.setTitleBarOverlay({ ...colors, height: TITLEBAR_HEIGHT });
 });
 
@@ -1352,7 +1357,11 @@ ipcMain.handle("get-top-products", async () => {
     return db
       .prepare(
         `
-      SELECT p.*, c.name as category_name, COALESCE(SUM(si.quantity),0) as total_sold
+      SELECT p.*, c.name as category_name,
+        -- s.id es NULL cuando la venta fue cancelada (el JOIN la excluye):
+        -- sin este CASE, SUM(si.quantity) contaba también las unidades de
+        -- ventas canceladas, a diferencia del resto del sistema que las filtra.
+        COALESCE(SUM(CASE WHEN s.id IS NOT NULL THEN si.quantity ELSE 0 END),0) as total_sold
       FROM products p
       LEFT JOIN sale_items si ON p.id = si.product_id
       LEFT JOIN sales s ON si.sale_id = s.id AND (s.status IS NULL OR s.status != 'cancelado')
@@ -2513,6 +2522,21 @@ ipcMain.handle("save-setting", async (event, key, value) => {
       return {
         success: false,
         error: "El rol del dispositivo sólo se cambia desde el asistente de vinculación.",
+      };
+    }
+    // Frontera de validación: la config de impresión se sanitiza aquí —
+    // el nombre viaja al spooler de Windows y el ancho alimenta el CSS
+    // del ticket y el pageSize del trabajo de impresión.
+    if (key === "printer_name") {
+      const name = String(value ?? "");
+      if (name.length > 128 || /[\r\n\0]/.test(name)) {
+        return { success: false, error: "Nombre de impresora inválido." };
+      }
+    }
+    if (key === "paper_width_mm" && ![48, 58, 80].includes(Number(value))) {
+      return {
+        success: false,
+        error: "Ancho de papel no soportado (48, 58 u 80 mm).",
       };
     }
     db.prepare(
@@ -5448,11 +5472,61 @@ ipcMain.handle("is-scale-connected", async () => {
 // ─── IMPRESION DE TICKETS (WINDOWS SPOOLER + POS58 DRIVER) ───────
 const { BrowserWindow: BW } = require("electron");
 
+// Configuración de impresión SIN nombres hardcodeados: todo se lee de la
+// tabla `settings` (Configuración → Impresora). Si `printer_name` falta o
+// la impresora no existe en el equipo, se cae a la predeterminada de Windows.
+const PAPER_WIDTHS_MM = [48, 58, 80];
+
+function readSettingValue(key, fallback = null) {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+    return row && row.value != null ? row.value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getPrinterConfig() {
+  const rawName = readSettingValue("printer_name", "");
+  const printerName =
+    typeof rawName === "string" &&
+    rawName.trim().length > 0 &&
+    rawName.trim().length <= 128
+      ? rawName.trim()
+      : "";
+  const width = Number(readSettingValue("paper_width_mm", "58"));
+  return {
+    printerName,
+    paperWidthMm: PAPER_WIDTHS_MM.includes(width) ? width : 58,
+  };
+}
+
+// getFocusedWindow() devolvía null cuando ninguna ventana tenía foco y la
+// lista salía vacía; se usa la ventana principal como respaldo.
+async function listSystemPrinters() {
+  const win = BW.getFocusedWindow() ?? BW.getAllWindows()[0];
+  return (await win?.webContents.getPrintersAsync?.()) ?? [];
+}
+
+// Resolución de la impresora destino: nombre configurado → predeterminada
+// del sistema → primera disponible. `fellBack` avisa que se desvió de lo
+// configurado para que el renderer pueda mostrar el aviso al usuario.
+function resolvePrinterTarget(printers, configuredName) {
+  if (configuredName) {
+    const exact = printers.find((p) => p.name === configuredName);
+    if (exact) return { name: exact.name, fellBack: false };
+    console.warn(
+      `[PRINT] «${configuredName}» no está disponible; se usa la predeterminada.`,
+    );
+  }
+  const fallback = printers.find((p) => p.isDefault) || printers[0];
+  if (!fallback) return { name: null, fellBack: false };
+  return { name: fallback.name, fellBack: Boolean(configuredName) };
+}
+
 ipcMain.handle("get-printers", async () => {
   try {
-    const { BrowserWindow: BW } = require("electron");
-    const window = BW.getFocusedWindow();
-    const printers = (await window?.webContents.getPrintersAsync?.()) ?? [];
+    const printers = await listSystemPrinters();
     return printers.map((p) => ({
       name: p.name,
       displayName: p.displayName || p.name,
@@ -5466,19 +5540,41 @@ ipcMain.handle("get-printers", async () => {
   }
 });
 
-// GHIA-GTP582 = 203 dpi (8 dots/mm). Forzar el raster a esa densidad evita
-// que Chromium renderice a ~96 dpi y el driver lo escale (texto borroso).
+// 203 dpi (8 dots/mm) es la densidad de la térmica POS de 58 mm. Forzar el
+// raster evita que Chromium renderice a ~96 dpi y el driver lo escale.
 const RECEIPT_DPI = 203;
 
-ipcMain.handle("print-receipt", async (event, htmlContent) => {
+ipcMain.handle("print-receipt", async (event, htmlContent, overrides) => {
   let printWin = null;
   try {
-    // Verifica el nombre EXACTO de la impresora antes de imprimir
-    const printers =
-      (await BW.getFocusedWindow()?.webContents.getPrintersAsync?.()) ?? [];
+    const config = getPrinterConfig();
+    // `overrides` solo lo usa "Imprimir prueba" de Configuración para
+    // reflejar ajustes aún no guardados; ambos campos se sanitizan aquí.
+    const ovPrinter =
+      typeof overrides?.printerName === "string" &&
+      overrides.printerName.trim().length <= 128
+        ? overrides.printerName.trim()
+        : null;
+    const ovWidth = Number(overrides?.paperWidthMm);
+    const printerName = ovPrinter !== null ? ovPrinter : config.printerName;
+    const paperWidthMm = PAPER_WIDTHS_MM.includes(ovWidth)
+      ? ovWidth
+      : config.paperWidthMm;
+
+    const printers = await listSystemPrinters();
+    const target = resolvePrinterTarget(printers, printerName);
+    if (!target.name) {
+      return {
+        success: false,
+        code: "NO_PRINTER",
+        error: "No se detectaron impresoras en este equipo.",
+      };
+    }
     console.log(
       "[PRINT] Impresoras detectadas:",
       printers.map((p) => p.name),
+      "→ destino:",
+      target.name,
     );
 
     printWin = new BW({
@@ -5502,9 +5598,9 @@ ipcMain.handle("print-receipt", async (event, htmlContent) => {
           silent: true,
           printBackground: true,
           color: false,
-          deviceName: "GHIA-GTP582",
+          deviceName: target.name,
           margins: { marginType: "none" },
-          pageSize: { width: 58000, height: 200000 },
+          pageSize: { width: paperWidthMm * 1000, height: 200000 },
           dpi: { horizontal: RECEIPT_DPI, vertical: RECEIPT_DPI },
           scaleFactor: 1,
         },
@@ -5536,10 +5632,14 @@ ipcMain.handle("print-receipt", async (event, htmlContent) => {
     }
 
     console.log("[PRINT] Completado OK");
-    return { success: true };
+    return {
+      success: true,
+      printer: target.name,
+      fellBack: target.fellBack,
+    };
   } catch (error) {
     console.error("[PRINT ERROR]", error.message);
-    return { success: false, error: error.message };
+    return { success: false, code: "PRINT_ERROR", error: error.message };
   } finally {
     if (printWin && !printWin.isDestroyed()) {
       printWin.destroy();
@@ -5549,9 +5649,9 @@ ipcMain.handle("print-receipt", async (event, htmlContent) => {
 
 // ─── APERTURA DE CAJON (CASH DRAWER) — worker persistente ─────
 // Se mantiene un solo powershell.exe vivo que compila el Add-Type una vez
-// y queda escuchando por stdin: "OPEN" -> abre el cajón. Las aperturas
-// posteriores tardan milisegundos en vez de ~2-3s (arranque + compilación).
-const DRAWER_PRINTER = "GHIA-GTP582";
+// y queda escuchando por stdin: "OPEN <impresora>" -> abre el cajón. El
+// nombre de la impresora viaja en cada comando, así el worker sigue siendo
+// válido aunque cambie la selección en Configuración → Impresora.
 let drawerWorker = null;
 let drawerWorkerWaiters = [];
 let drawerWorkerReadyHandlers = [];
@@ -5610,9 +5710,10 @@ public class Drawer {
 while ($true) {
     $line = [Console]::In.ReadLine()
     if ($null -eq $line) { break }
-    if ($line -eq "OPEN") {
+    if ($line.StartsWith("OPEN")) {
+        $pname = $line.Substring(4).Trim()
         try {
-            [Drawer]::Open("${DRAWER_PRINTER}")
+            [Drawer]::Open($pname)
             [Console]::Out.WriteLine("OK")
         } catch {
             [Console]::Out.WriteLine("ERR " + $_.Exception.Message)
@@ -5720,7 +5821,22 @@ function destroyDrawerWorker() {
   } catch {}
 }
 
-ipcMain.handle("open-cash-drawer", () => {
+ipcMain.handle("open-cash-drawer", async () => {
+  // Misma resolución que print-receipt: configurada → predeterminada del
+  // sistema → primera disponible. El nombre viaja al worker por stdin.
+  let target;
+  try {
+    const { printerName } = getPrinterConfig();
+    target = resolvePrinterTarget(await listSystemPrinters(), printerName);
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+  if (!target.name) {
+    return {
+      success: false,
+      error: "No se detectaron impresoras en este equipo",
+    };
+  }
   const task = drawerChain.then(
     () =>
       new Promise((resolve) => {
@@ -5743,7 +5859,7 @@ ipcMain.handle("open-cash-drawer", () => {
             resolve(result);
           });
           try {
-            proc.stdin.write("OPEN\n");
+            proc.stdin.write(`OPEN ${target.name}\n`);
           } catch (e) {
             clearTimeout(timeout);
             resolve({ success: false, error: e.message });

@@ -2,6 +2,7 @@ import React from "react";
 
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
+import { fmtMoney, fmtMoneyAbs } from "@/utils/format";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import {
   canManualDiscount,
@@ -21,19 +22,20 @@ import {
 } from "lucide-react";
 
 const badgeBase =
-  "inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 h-[18px] text-[0.65rem] font-bold whitespace-nowrap [contain-intrinsic-size:auto_18px]";
+  "inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 h-[18px] text-[0.7rem] font-bold whitespace-nowrap [contain-intrinsic-size:auto_18px]";
 
 const unitBadgeLabel = (item) => {
-  if (item.isWeightItem) return { label: "kg", cls: "bg-primary/15 text-primary" };
+  if (item.isWeightItem)
+    return { label: "kg", cls: "bg-primary text-primary-foreground" };
   if (item.isBoxItem)
     return {
       label: unitLabels(item.sale_unit)?.badge || "caja",
-      cls: "bg-success/10 text-success",
+      cls: "bg-success text-success-foreground",
     };
   if (item.isPackItem)
-    return { label: "paquete", cls: "bg-warning/10 text-warning" };
+    return { label: "paquete", cls: "bg-warning text-warning-foreground" };
   if (item.sale_unit && isContainerUnit(item.sale_unit))
-    return { label: "pieza", cls: "bg-muted text-muted-foreground" };
+    return { label: "pieza", cls: "bg-secondary text-secondary-foreground" };
   return null;
 };
 
@@ -73,14 +75,15 @@ const CartItem = React.memo(
     const secondaryBadges = [];
     if (item.discount_percent > 0)
       secondaryBadges.push(`-${item.discount_percent}%`);
-    if (item.discount > 0) secondaryBadges.push(`-$${item.discount.toFixed(2)}`);
+    if (item.discount > 0)
+      secondaryBadges.push(`-${fmtMoneyAbs(item.discount)}`);
     if (promo)
       secondaryBadges.push(
         promo.type === "mayoreo"
           ? `Mayoreo ${promo.qty}+`
           : promo.type === "fijo"
-            ? `Fijo $${promo.price.toFixed(2)}`
-            : `Oferta ${promo.qty}×$${promo.price.toFixed(2)}`,
+            ? `Fijo ${fmtMoney(promo.price)}`
+            : `Oferta ${promo.qty}×${fmtMoney(promo.price)}`,
       );
 
     const unitSuffix = item.isWeightItem
@@ -104,7 +107,7 @@ const CartItem = React.memo(
         {/* Línea 1: nombre (truncate) + badge unificado + precio unitario discreto + acciones */}
         <div className="flex items-center gap-1">
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            <span className="truncate font-semibold text-[0.95rem] leading-5 text-foreground">
+            <span className="truncate font-semibold text-[15px] leading-5 text-foreground">
               {item.name}
             </span>
             {unitBadge && (
@@ -129,11 +132,11 @@ const CartItem = React.memo(
           <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
             {item.discount_percent > 0 || item.discount > 0 || promo ? (
               <>
-                <span className="line-through">${item.price.toFixed(2)}</span>{" "}
-                ${fp.toFixed(2)}
+                <span className="line-through">{fmtMoney(item.price)}</span>{" "}
+                {fmtMoney(fp)}
               </>
             ) : (
-              `$${item.price.toFixed(2)}`
+              fmtMoney(item.price)
             )}{" "}
             {unitSuffix}
           </span>
@@ -146,7 +149,7 @@ const CartItem = React.memo(
               aria-label="Descuento del producto"
               onClick={() => onDiscount(item)}
               className={cn(
-                "h-7 w-7 shrink-0 [&_svg]:!size-[16px]",
+                "h-9 w-9 shrink-0 [&_svg]:!size-[16px]",
                 item.discount > 0
                   ? "bg-destructive/10 text-destructive"
                   : "text-muted-foreground hover:text-foreground",
@@ -156,21 +159,26 @@ const CartItem = React.memo(
             </Button>
           )}
 
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Eliminar producto"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(item);
-            }}
-            className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 [&_svg]:!size-[16px]"
-          >
-            <Trash2 size={16} />
-          </Button>
+          {/* Trash de fila 1: se oculta en qty<=1 porque el stepper ya muestra
+              su propio botón de eliminar (minus→trash), evitando dos papeletas
+              redundantes a ~30px de distancia. */}
+          {item.quantity > 1 && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Eliminar producto"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(item);
+              }}
+              className="h-9 w-9 shrink-0 text-destructive hover:bg-destructive/10 [&_svg]:!size-[16px]"
+            >
+              <Trash2 size={16} />
+            </Button>
+          )}
         </div>
 
-        {/* Línea 2: stepper de cantidad (38px touch/kiosco) + total de línea protagonista */}
+        {/* Línea 2: stepper de cantidad (h-9 en escala) + total de línea protagonista */}
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1">
             {item.quantity <= 1 ? (
@@ -182,7 +190,7 @@ const CartItem = React.memo(
                   e.stopPropagation();
                   onRemove(item);
                 }}
-                className="h-[38px] w-[38px] rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
+                className="h-9 w-9 rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
               >
                 <Trash2 size={18} />
               </Button>
@@ -192,7 +200,7 @@ const CartItem = React.memo(
                 size="icon"
                 aria-label="Disminuir cantidad"
                 onClick={() => onQuantityChange(item, -1)}
-                className="h-[38px] w-[38px] rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
+                className="h-9 w-9 rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
               >
                 <Minus size={18} />
               </Button>
@@ -200,7 +208,7 @@ const CartItem = React.memo(
             <span
               key={item.quantity}
               className={cn(
-                "cart-qty-pop inline-block text-center font-bold text-[1.05rem] tabular-nums",
+                "cart-qty-pop inline-block text-center font-bold text-[17px] tabular-nums",
                 qtyMinWidth,
               )}
             >
@@ -211,14 +219,14 @@ const CartItem = React.memo(
               size="icon"
               aria-label="Aumentar cantidad"
               onClick={() => onQuantityChange(item, 1)}
-              className="h-[38px] w-[38px] rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
+              className="h-9 w-9 rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
             >
               <Plus size={18} />
             </Button>
           </div>
 
-          <span className="text-lg font-extrabold tabular-nums text-success">
-            ${roundValue(lineTotal(item, item.quantity)).toFixed(2)}
+          <span className="text-lg font-bold tabular-nums text-foreground">
+            {fmtMoney(roundValue(lineTotal(item, item.quantity)))}
           </span>
         </div>
       </div>

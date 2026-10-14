@@ -97,11 +97,8 @@ import { Spinner } from "./ui/spinner";
 import { cn } from "@/lib/utils";
 applyPlugin(jsPDF);
 
-const fmtMX = (n) =>
-  Number(n || 0).toLocaleString("es-MX", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+import PageHeader from "./PageHeader";
+import { fmtNumber, fmtMoney } from "../utils/format";
 
 const MOV_PER_PAGE = 25;
 const PROD_PER_PAGE = 25;
@@ -230,7 +227,7 @@ const RegisterRow = memo(function RegisterRow({
         </div>
       </ShTableCell>
       <ShTableCell className="px-4 py-3 text-right text-sm font-semibold tabular-nums text-foreground">
-        ${fmtMX(cr.opening_balance)}
+        ${fmtNumber(cr.opening_balance)}
       </ShTableCell>
       <ShTableCell className="px-4 py-3">{badge}</ShTableCell>
       <ShTableCell className="px-4 py-3 text-center">
@@ -652,12 +649,12 @@ const RegisterHistory = () => {
       startY: 45,
       head: [["Resumen Financiero", "Monto"]],
       body: [
-        ["Apertura", `$${fmtMX(r.opening_balance)}`],
-        ["Efectivo", `$${fmtMX(r.cash_sales)}`],
-        ["Tarjeta", `$${fmtMX(r.card_sales)}`],
-        ["Transferencia", `$${fmtMX(r.transfer_sales)}`],
-        ["Gastos", `-$${fmtMX(detail.totalExpenses)}`],
-        ["Neto", `$${fmtMX(detail.totalSales - (detail.totalExpenses || 0))}`],
+        ["Apertura", `$${fmtNumber(r.opening_balance)}`],
+        ["Efectivo", `$${fmtNumber(r.cash_sales)}`],
+        ["Tarjeta", `$${fmtNumber(r.card_sales)}`],
+        ["Transferencia", `$${fmtNumber(r.transfer_sales)}`],
+        ["Gastos", `-$${fmtNumber(detail.totalExpenses)}`],
+        ["Neto", `$${fmtNumber(detail.totalSales - (detail.totalExpenses || 0))}`],
       ],
       styles: tblBase,
       headStyles: tblHead,
@@ -673,7 +670,7 @@ const RegisterHistory = () => {
       const adjText = postCloseDeltas
         .map(
           (m) =>
-            `${m.label} ${m.delta > 0 ? "+" : "-"}$${fmtMX(Math.abs(m.delta))}`,
+            `${m.label} ${m.delta > 0 ? "+" : "-"}$${fmtNumber(Math.abs(m.delta))}`,
         )
         .join("   ");
       doc.text(
@@ -710,7 +707,7 @@ const RegisterHistory = () => {
         t.id,
         t.type,
         t.method,
-        `${t.amount >= 0 ? "+" : "-"}$${fmtMX(Math.abs(t.amount))}`,
+        `${t.amount >= 0 ? "+" : "-"}$${fmtNumber(Math.abs(t.amount))}`,
       ]),
       styles: tblBase,
       headStyles: tblHead,
@@ -724,8 +721,8 @@ const RegisterHistory = () => {
       body: prods.map((p) => [
         p.product_name || "Producto",
         String(p.quantity),
-        `$${fmtMX(p.quantity ? p.gross / p.quantity : 0)}`,
-        `$${fmtMX(p.subtotal)}`,
+        `$${fmtNumber(p.quantity ? p.gross / p.quantity : 0)}`,
+        `$${fmtNumber(p.subtotal)}`,
       ]),
       styles: tblBase,
       headStyles: tblHead,
@@ -737,9 +734,9 @@ const RegisterHistory = () => {
       startY: doc.lastAutoTable.finalY + 8,
       head: [["Verificación", "Valor"]],
       body: [
-        ["Cierre Esperado", `$${fmtMX(r.expected_close)}`],
-        ["Declarado", `$${fmtMX(r.declared_close)}`],
-        ["Diferencia", `$${fmtMX(r.difference)}`],
+        ["Cierre Esperado", `$${fmtNumber(r.expected_close)}`],
+        ["Declarado", `$${fmtNumber(r.declared_close)}`],
+        ["Diferencia", `$${fmtNumber(r.difference)}`],
       ],
       styles: tblBase,
       headStyles: tblHead,
@@ -841,11 +838,9 @@ const RegisterHistory = () => {
 
   return (
     <div className="p-1">
-      <div className="mb-3">
-        <p className="text-sm text-muted-foreground">
-          Consulta, filtra y reimprime cortes por fecha, caja o cajero
-        </p>
-      </div>
+      <PageHeader
+        description="Consulta, filtra y reimprime cortes por fecha, caja o cajero"
+      />
 
       {error && (
         <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -1118,17 +1113,17 @@ const RegisterHistory = () => {
                   {[
                     {
                       label: "Ventas",
-                      value: `$${fmtMX(detail.totalSales)}`,
+                      value: `$${fmtNumber(detail.totalSales)}`,
                       tone: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
                     },
                     {
                       label: "Neto",
-                      value: `$${fmtMX(detail.totalSales - (detail.totalExpenses || 0))}`,
+                      value: `$${fmtNumber(detail.totalSales - (detail.totalExpenses || 0))}`,
                       tone: "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10",
                     },
                     {
                       label: "Diferencia",
-                      value: `$${fmtMX(detail.register.difference)}`,
+                      value: `$${fmtNumber(detail.register.difference)}`,
                       tone: diffTone,
                     },
                   ].map((k) => (
@@ -1177,7 +1172,7 @@ const RegisterHistory = () => {
                 {[
                   {
                     label: "Ventas",
-                    value: `$${fmtMX(detail.totalSales)}`,
+                    value: `$${fmtNumber(detail.totalSales)}`,
                     icon: CircleDollarSign,
                     color: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
                   },
@@ -1222,27 +1217,27 @@ const RegisterHistory = () => {
                     {[
                       {
                         label: "Apertura",
-                        value: fmtMX(detail.register.opening_balance),
+                        value: fmtNumber(detail.register.opening_balance),
                         neg: false,
                       },
                       {
                         label: "Efectivo",
-                        value: fmtMX(detail.register.cash_sales),
+                        value: fmtNumber(detail.register.cash_sales),
                         neg: false,
                       },
                       {
                         label: "Tarjeta",
-                        value: fmtMX(detail.register.card_sales),
+                        value: fmtNumber(detail.register.card_sales),
                         neg: false,
                       },
                       {
                         label: "Transferencia",
-                        value: fmtMX(detail.register.transfer_sales),
+                        value: fmtNumber(detail.register.transfer_sales),
                         neg: false,
                       },
                       {
                         label: "Gastos",
-                        value: fmtMX(detail.totalExpenses),
+                        value: fmtNumber(detail.totalExpenses),
                         neg: true,
                       },
                     ].map((row) => (
@@ -1273,7 +1268,7 @@ const RegisterHistory = () => {
                                 {postCloseDeltas
                                   .map(
                                     (m) =>
-                                      `${m.label} ${m.delta > 0 ? "+" : "−"}$${fmtMX(Math.abs(m.delta))}`,
+                                      `${m.label} ${m.delta > 0 ? "+" : "−"}$${fmtNumber(Math.abs(m.delta))}`,
                                   )
                                   .join(" · ")}
                               </span>
@@ -1290,7 +1285,7 @@ const RegisterHistory = () => {
                     <div className="flex items-baseline justify-between">
                       <span className="text-sm font-extrabold text-foreground">Neto</span>
                       <span className="text-xl font-extrabold tabular-nums text-foreground">
-                        ${fmtMX(detail.totalSales - (detail.totalExpenses || 0))}
+                        ${fmtNumber(detail.totalSales - (detail.totalExpenses || 0))}
                       </span>
                     </div>
                   </SCardContent>
@@ -1304,17 +1299,17 @@ const RegisterHistory = () => {
                     {[
                       {
                         label: "Cierre Esperado",
-                        value: fmtMX(detail.register.expected_close),
+                        value: fmtNumber(detail.register.expected_close),
                         tone: "text-foreground",
                       },
                       {
                         label: "Declarado",
-                        value: fmtMX(detail.register.declared_close),
+                        value: fmtNumber(detail.register.declared_close),
                         tone: "text-foreground",
                       },
                       {
                         label: "Diferencia",
-                        value: fmtMX(detail.register.difference),
+                        value: fmtNumber(detail.register.difference),
                         tone: diffText,
                       },
                     ].map((row) => (
@@ -1536,7 +1531,7 @@ const RegisterHistory = () => {
                                     : "text-red-600 dark:text-red-400",
                               )}
                             >
-                              {isIncome ? "+" : "−"}${fmtMX(Math.abs(mov.amount))}
+                              {isIncome ? "+" : "−"}${fmtNumber(Math.abs(mov.amount))}
                             </span>
 
                             {(isAdmin || mov.can_cancel) && !cancelled && (
@@ -1630,7 +1625,7 @@ const RegisterHistory = () => {
                                         )}
                                       </span>
                                       <span className="shrink-0 tabular-nums text-muted-foreground">
-                                        {it.quantity} × ${fmtMX(it.price_at_sale)}
+                                        {it.quantity} × ${fmtNumber(it.price_at_sale)}
                                       </span>
                                     </div>
                                   ))}
@@ -1757,10 +1752,10 @@ const RegisterHistory = () => {
                               {p.quantity}
                             </ShTableCell>
                             <ShTableCell className="px-4 py-2.5 text-right text-sm tabular-nums text-muted-foreground">
-                              ${fmtMX(p.quantity ? p.gross / p.quantity : 0)}
+                              ${fmtNumber(p.quantity ? p.gross / p.quantity : 0)}
                             </ShTableCell>
                             <ShTableCell className="px-4 py-2.5 text-right text-sm font-bold tabular-nums text-foreground">
-                              ${fmtMX(p.subtotal)}
+                              ${fmtNumber(p.subtotal)}
                             </ShTableCell>
                           </ShTableRow>
                         ))}
@@ -1874,7 +1869,7 @@ const RegisterHistory = () => {
                 <br />
               </>
             ) : null}
-            Se cancelará el gasto de ${cancelExpenseData?.amount?.toFixed(2)}. Esta acción no se puede deshacer.
+            Se cancelará el gasto de ${fmtMoney(cancelExpenseData?.amount)}. Esta acción no se puede deshacer.
           </>
         }
         cancelLabel="No"

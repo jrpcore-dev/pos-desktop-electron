@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DollarSign, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
@@ -102,7 +103,7 @@ const FastCashDialog = ({
       <DialogContent className="max-w-md" onKeyDown={handleKeyDown}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
-            <DollarSign size={22} className="text-success" />
+            <DollarSign size={22} className="text-foreground" />
             Pago en Efectivo
           </DialogTitle>
         </DialogHeader>
@@ -111,8 +112,8 @@ const FastCashDialog = ({
           <p className="text-center text-base font-semibold text-muted-foreground">
             Total a pagar
           </p>
-          <p className="text-center text-4xl font-extrabold leading-tight text-success tabular-nums">
-            ${total?.toFixed(2) ?? "0.00"}
+          <p className="text-center text-4xl font-extrabold leading-tight text-foreground tabular-nums">
+            {fmtMoney(total)}
           </p>
 
           {!waitingDrawer && (
@@ -130,10 +131,10 @@ const FastCashDialog = ({
                   className={cn(
                     "h-11 gap-1.5 text-[15px] font-bold tabular-nums transition-all",
                     (parseFloat(cashAmount) === v || chipFocus === i) &&
-                      "border-success bg-success/10 text-success ring-1 ring-success"
+                      "border-primary bg-primary/10 text-primary ring-1 ring-primary"
                   )}
                 >
-                  {i === 0 ? "Monto Exacto" : `$${v.toLocaleString("es-MX")}`}
+                  {i === 0 ? "Monto Exacto" : fmtMoney(v)}
                 </Button>
               ))}
             </div>
@@ -155,7 +156,7 @@ const FastCashDialog = ({
               value={cashAmount}
               onChange={handleChange}
               disabled={waitingDrawer}
-              className="h-14 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
+              className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
             />
           </div>
 
@@ -170,7 +171,7 @@ const FastCashDialog = ({
             >
               <span>{isPositive ? "Cambio:" : "Falta:"}</span>
               <span className="text-2xl font-extrabold leading-none tabular-nums">
-                ${(isPositive ? change : Math.abs(change)).toFixed(2)}
+                {fmtMoney(isPositive ? change : Math.abs(change))}
               </span>
             </div>
           )}

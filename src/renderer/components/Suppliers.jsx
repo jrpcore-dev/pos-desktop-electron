@@ -26,6 +26,8 @@ import {
 import { usePagination } from "../lib/usePagination";
 import PaginationBar from "./PaginationBar";
 
+import PageHeader from "./PageHeader";
+
 const PAGE_SIZE = 10;
 
 const SectionTitle = ({ icon: Icon, title, className }) => (
@@ -448,25 +450,23 @@ const Suppliers = () => {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="p-1">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Gestiona tus proveedores y datos de contacto
-          </p>
-        </div>
-        <Button onClick={openAdd} className="shrink-0">
-          <PlusCircle className="h-4 w-4" />
-          Nuevo Proveedor
-          <KbdGroup className="ml-1">
-            <Kbd className="h-[20px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-2 font-sans text-[13px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
-              Ctrl
-            </Kbd>
-            <Kbd className="h-[20px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-2 font-sans text-[13px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
-              P
-            </Kbd>
-          </KbdGroup>
-        </Button>
-      </div>
+      <PageHeader
+        description="Gestiona tus proveedores y datos de contacto"
+        actions={
+          <Button onClick={openAdd} className="shrink-0">
+            <PlusCircle className="h-4 w-4" />
+            Nuevo Proveedor
+            <KbdGroup className="ml-1">
+              <Kbd className="h-[20px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-2 font-sans text-[13px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
+                Ctrl
+              </Kbd>
+              <Kbd className="h-[20px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-2 font-sans text-[13px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">
+                P
+              </Kbd>
+            </KbdGroup>
+          </Button>
+        }
+      />
 
       <div className="relative mb-5 max-w-sm">
         <Search

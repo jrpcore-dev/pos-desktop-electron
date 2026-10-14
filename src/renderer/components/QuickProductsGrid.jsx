@@ -12,7 +12,9 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
+import { promoInfo } from "../utils/cartMath";
 
 const GRID_CLS = {
   compact: "grid-cols-2 sm:grid-cols-3 lg:grid-cols-3",
@@ -136,13 +138,13 @@ const QuickProductsGrid = React.memo(
           </div>
           <div className="flex items-center justify-end gap-1.5">
             <button type="button" onClick={() => setPickerOpen(true)} title="Fijar producto a accesos rápidos"
-              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-md border border-border bg-muted px-2.5 text-xs font-semibold text-foreground transition-colors duration-150 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="inline-flex h-9 cursor-pointer items-center gap-1 rounded-md border border-border bg-muted px-2.5 text-xs font-semibold text-foreground transition-colors duration-150 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Plus size={14} />
               Agregar
             </button>
             {onOpenServicios && (
               <button type="button" onClick={onOpenServicios} title="Recargas y pagos de servicios"
-                className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-md border border-dashed border-primary/40 bg-primary/5 px-2.5 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/70 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                className="inline-flex h-9 cursor-pointer items-center gap-1 rounded-md border border-dashed border-primary/40 bg-primary/5 px-2.5 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/70 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <Zap size={14} aria-hidden />
                 Servicios
               </button>
@@ -153,7 +155,7 @@ const QuickProductsGrid = React.memo(
         {products === null ? (
           <div className={cn("grid w-full gap-2.5", GRID_CLS[compact ? "compact" : "default"])}>
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex h-[5.5rem] flex-col justify-between rounded-xl border border-border bg-background/60 p-2.5 shadow-md">
+              <div key={i} className="flex h-[5.5rem] flex-col justify-between rounded-xl border border-border bg-background/60 p-2.5">
                 <div className="flex items-center gap-1.5">
                   <Skeleton className="h-9 w-9 rounded-md" />
                   <Skeleton className="h-3 w-2/3" />
@@ -169,19 +171,21 @@ const QuickProductsGrid = React.memo(
         ) : (
           <div className={cn("grid w-full gap-2.5", GRID_CLS[compact ? "compact" : "default"])}>
             {products.map((p) => {
-              const price = (p.price * (1 - (p.discount_percent || 0) / 100)).toFixed(2);
+              const promo = promoInfo(p, 1);
+              const finalPrice = promo.unit;
+              const hasPromo = promo.applied || (p.discount_percent || 0) > 0;
               const out = p.stock > 0 && p.stock <= 2;
               const unitLabel = isContainerUnit(p.sale_unit) ? unitLabels(p.sale_unit)?.badge || "c/u" : p.sale_unit === "weight" ? "kg" : "c/u";
               return (
                 <div key={p.id} onClick={() => onAddProduct(p)}
-                  className="group relative flex h-[5.5rem] w-full cursor-pointer select-none flex-col items-start justify-between gap-1.5 overflow-hidden rounded-xl border border-border bg-background/60 p-2.5 text-left shadow-md transition-all duration-150 hover:border-primary/60 hover:bg-primary/5 hover:shadow-lg active:scale-95">
+                  className="group relative flex h-[5.5rem] w-full cursor-pointer select-none flex-col items-start justify-between gap-1.5 overflow-hidden rounded-xl border border-border bg-background/60 p-2.5 text-left transition-all duration-150 hover:border-primary/60 hover:bg-primary/5 hover:shadow-sm active:scale-[0.985]">
                   <button type="button" onClick={(e) => removeFavorite(e, p.id)}
                     onPointerDown={(e) => e.stopPropagation()}
                     title="Quitar de accesos rápidos"
-                    className="absolute right-1 top-1 z-30 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground opacity-60 transition-all duration-150 hover:opacity-100 hover:border-destructive hover:bg-destructive/15 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    className="absolute right-1 top-1 z-30 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground opacity-60 transition-all duration-150 hover:opacity-100 hover:border-destructive hover:bg-destructive/15 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <X size={14} />
                   </button>
-                  <span className="flex w-full min-w-0 items-center gap-1.5 pr-5">
+                  <span className="flex w-full min-w-0 items-center gap-1.5 pr-10">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       <PackagePlus size={18} />
                     </span>
@@ -190,10 +194,15 @@ const QuickProductsGrid = React.memo(
                     </span>
                   </span>
                   <span className="flex flex-wrap items-center gap-1">
-                    <span className="text-[1.05rem] font-extrabold text-success tabular-nums">
-                      ${price}
+                    {hasPromo && (
+                      <span className="text-[0.75rem] line-through text-muted-foreground">
+                        {fmtMoney(p.price)}
+                      </span>
+                    )}
+                    <span className="text-[1.05rem] font-extrabold text-foreground tabular-nums">
+                      {fmtMoney(finalPrice)}
                     </span>
-                    {p.discount_percent > 0 && (
+                    {(p.discount_percent || 0) > 0 && !promo.applied && (
                       <span className="text-[0.65rem] font-bold text-destructive">-{p.discount_percent}%</span>
                     )}
                     <span className="rounded border border-border px-1.5 py-0 text-[0.6rem] font-medium">{unitLabel}</span>
@@ -244,7 +253,7 @@ const QuickProductsGrid = React.memo(
                         <PackagePlus size={15} />
                       </span>
                       <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
-                      <span className="text-xs text-success tabular-nums">${(p.price || 0).toFixed(2)}</span>
+                      <span className="text-xs text-foreground tabular-nums">{fmtMoney(p.price)}</span>
                     </button>
                   ))
                 )}

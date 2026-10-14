@@ -81,166 +81,149 @@ const LoginScreen = ({ onLogin }) => {
   const selectedColor = selectedId !== null ? colors[selectedId % colors.length] : null;
 
   return (
-    <div
-      className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-8"
-      style={{ background: "hsl(var(--background))" }}
-    >
-      <div className="fade-in grid w-full max-w-6xl overflow-hidden rounded-3xl border shadow-xl md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
-        style={{ borderColor: "hsl(var(--border))", background: "hsl(var(--card))" }}
-      >
-        {/* Panel lateral de marca */}
-        <div
-          className="relative hidden flex-col items-center justify-center overflow-hidden p-10 text-center md:flex"
-          style={{
-            background: "linear-gradient(135deg, hsl(222,47%,24%), hsl(218,55%,40%))",
-          }}
-        >
-          <div
-            className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full opacity-20 blur-3xl"
-            style={{ background: "hsl(218,55%,60%)" }}
-          />
-          <div
-            className="pointer-events-none absolute -bottom-20 -left-16 h-72 w-72 rounded-full opacity-20 blur-3xl"
-            style={{ background: "hsl(199,89%,48%)" }}
-          />
+    <div className="fade-in login-shell relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background p-4 sm:p-8">
+      {/* ══ Fondo de marca full-bleed (gradiente derivado de primary + trama) ══ */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: "linear-gradient(135deg, hsl(222 47% 14%), hsl(218 55% 32%))",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-60"
+        style={{
+          backgroundImage: "radial-gradient(hsl(0 0% 100% / 0.10) 1px, transparent 1px)",
+          backgroundSize: "22px 22px",
+        }}
+      />
 
-          <div className="relative mb-6 flex h-24 w-24 items-center justify-center rounded-2xl bg-white/10 shadow-lg ring-1 ring-white/20 backdrop-blur">
-            {storeLogo ? (
-              <img src={storeLogo} alt="Logo" className="h-full w-full rounded-2xl object-contain p-2" />
-            ) : (
-              <User size={48} className="text-white" />
-            )}
-          </div>
-
-          <h1 className="relative text-3xl font-extrabold tracking-tight text-white text-display">
-            {storeName}
-          </h1>
-          <p className="relative mt-1 text-sm font-medium uppercase tracking-[3px] text-white/70">
-            VENDIA
-          </p>
-
-          <div className="relative mt-10 space-y-3 text-left text-sm text-white/80">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 size={18} className="shrink-0 text-white" />
-              <span>Acceso rápido y seguro</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <CheckCircle2 size={18} className="shrink-0 text-white" />
-              <span>Selecciona tu usuario e ingresa tu PIN</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <CheckCircle2 size={18} className="shrink-0 text-white" />
-              <span>Control por cajero en tiempo real</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Panel de acceso */}
-        <div className="flex max-h-[calc(100vh-4rem)] flex-col justify-center overflow-y-auto p-7 sm:p-12">
-          {/* Header móvil (cuando no hay panel lateral) */}
-          <div className="mb-6 flex flex-col items-center text-center md:hidden">
-            {storeLogo ? (
-              <img src={storeLogo} alt="Logo" className="mb-3 h-16 w-16 rounded-2xl border object-contain p-1"
-                style={{ borderColor: "hsl(var(--border))", background: "hsl(var(--card))" }} />
-            ) : (
-              <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl"
-                style={{ background: "hsl(var(--primary))" }}>
-                <User size={32} style={{ color: "hsl(var(--primary-foreground))" }} />
-              </div>
-            )}
-            <h1 className="text-2xl font-extrabold tracking-tight" style={{ color: "hsl(var(--foreground))" }}>
-              {storeName}
-            </h1>
-            <p className="text-xs font-medium uppercase tracking-[3px]" style={{ color: "hsl(var(--muted-foreground))" }}>
-              VENDIA
-            </p>
-          </div>
-
-          {/* Seleccionar cajero */}
-          <h2 className="mb-4 w-full text-center text-sm font-bold uppercase tracking-wider" style={{ color: "hsl(var(--muted-foreground))" }}>
-            Seleccionar Cajero
-          </h2>
-
-          {usersLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 rounded-xl border p-4"
-                  style={{ borderColor: "hsl(var(--border))", background: "hsl(var(--muted))" }}>
-                  <Skeleton className="h-12 w-12 shrink-0 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-[60%]" />
-                    <Skeleton className="h-3 w-[40%]" />
-                  </div>
-                </div>
-              ))}
-            </div>
+      {/* ══ Marca ══ */}
+      <div className="login-brand relative z-10 mb-5 flex flex-col items-center text-center">
+        <div className="login-logo mb-3 flex h-16 w-16 items-center justify-center rounded-xl bg-white/10 p-2 ring-1 ring-white/20 backdrop-blur">
+          {storeLogo ? (
+            <img src={storeLogo} alt={`Logo de ${storeName}`} className="h-full w-full rounded-lg object-contain" />
           ) : (
-            <div className="space-y-2.5">
-              {cashiers.map((c, idx) => {
-                const isSelected = selectedId === c.id;
-                const initial = c.name.charAt(0).toUpperCase();
-                const bgColor = colors[idx % colors.length];
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => handleUserClick(c.id)}
-                    className={cn(
-                      "flex w-full min-h-[64px] items-center gap-4 rounded-xl border-2 px-4 py-3 text-left transition-all duration-150",
-                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 cursor-pointer",
-                      isSelected ? "shadow-sm" : "hover:border-black/20 hover:bg-black/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.04]"
-                    )}
-                    style={
-                      isSelected
-                        ? { borderColor: bgColor, backgroundColor: `${bgColor}12` }
-                        : { borderColor: "hsl(var(--border))", background: "hsl(var(--muted))" }
-                    }
-                  >
+            <User size={30} className="text-white" />
+          )}
+        </div>
+        <h1 className="text-3xl font-bold tracking-tight text-white text-display">
+          {storeName}
+        </h1>
+        <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.3em] text-white/60">
+          VENDIA
+        </p>
+      </div>
+
+      {/* ══ Card de acceso ══ */}
+      {/* La card se ensancha sola con 4+ cajeros para que todos quepan
+          en una fila (sin envolver a 2 filas y sin scroll). */}
+      <div className={cn(
+        "login-card relative z-10 w-full rounded-xl border border-border bg-card px-7 py-10 shadow-md transition-[max-width] duration-300 sm:px-9 sm:py-12",
+        cashiers.length >= 4 ? "max-w-3xl" : "max-w-2xl"
+      )}>
+        <h2 className="mb-6 text-center text-sm font-bold uppercase tracking-wider text-muted-foreground">
+          Selecciona tu usuario
+        </h2>
+
+        {/* Grid de cajeros (estilo profile picker) */}
+        {usersLoading ? (
+          <div className="flex flex-wrap justify-center gap-3 sm:gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="w-32 sm:w-40">
+                <Skeleton className="mx-auto h-[72px] w-[72px] rounded-full" />
+                <Skeleton className="mx-auto mt-3 h-4 w-20" />
+                <Skeleton className="mx-auto mt-1.5 h-3 w-12" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-wrap justify-center gap-3 sm:gap-4">
+            {cashiers.map((c, idx) => {
+              const isSelected = selectedId === c.id;
+              const initial = c.name.charAt(0).toUpperCase();
+              const bgColor = colors[idx % colors.length];
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => handleUserClick(c.id)}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    "flex w-32 flex-col items-center gap-2 rounded-lg border px-4 py-4 text-center transition-colors duration-150 sm:w-40",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-card cursor-pointer",
+                    isSelected
+                      ? "shadow-sm"
+                      : "border-border bg-muted hover:border-foreground/20 hover:bg-foreground/[0.04]"
+                  )}
+                  style={
+                    isSelected
+                      ? {
+                          borderColor: bgColor,
+                          backgroundColor: `color-mix(in srgb, ${bgColor} 12%, transparent)`,
+                        }
+                      : undefined
+                  }
+                >
+                  <span className="relative">
                     <span
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-bold"
-                      style={{
-                        background: isSelected ? bgColor : "hsl(var(--muted))",
-                        color: isSelected ? "white" : "hsl(var(--muted-foreground))",
-                      }}
+                      className={cn(
+                        "flex h-[72px] w-[72px] items-center justify-center rounded-full text-xl font-bold",
+                        isSelected ? "" : "border border-border bg-card text-muted-foreground"
+                      )}
+                      style={isSelected ? { background: bgColor, color: "white" } : undefined}
                     >
                       {initial}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block w-full overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold" style={{ color: "hsl(var(--foreground))" }}>
-                        {c.name}
+                    {isSelected && (
+                      <span className="absolute -right-1 -top-1 rounded-full bg-card p-0.5 shadow-sm ring-1 ring-border">
+                        <CheckCircle2 size={16} style={{ color: bgColor }} aria-hidden="true" />
                       </span>
-                      <span className="block w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium" style={{ color: "hsl(var(--muted-foreground))" }}>
-                        {c.role === "admin" ? "Propietario" : "Cajero"}
-                      </span>
-                    </span>
-                    {isSelected && <CheckCircle2 size={20} style={{ color: bgColor }} className="shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                    )}
+                  </span>
+                  <span className="w-full truncate text-base font-semibold text-foreground">
+                    {c.name}
+                  </span>
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {c.role === "admin" ? "Propietario" : "Cajero"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-          {/* PIN */}
-          {selectedId !== null && (
-            <div className="fade-in-up mt-6 rounded-xl border p-6" style={{ borderColor: "hsl(var(--border))", background: "hsl(var(--muted))" }}>
-              <div className="relative mb-5 flex flex-col items-center gap-2 text-center">
-                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-bold"
-                  style={{ background: selectedColor, color: "white" }}>
+        {/* ══ Zona PIN — altura reservada, sin salto de layout ══ */}
+        <div className="login-zone relative mt-10 min-h-[304px]">
+          {selectedId === null ? (
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/50 px-6 text-center text-sm text-muted-foreground"
+            >
+              Selecciona tu usuario para ingresar tu PIN
+            </div>
+          ) : (
+            <div className="login-pin fade-in rounded-lg border border-border bg-muted p-7">
+              <div className="mb-5 flex items-center gap-3">
+                <span
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-bold"
+                  style={{ background: selectedColor, color: "white" }}
+                >
                   {selectedCashier?.name.charAt(0).toUpperCase()}
                 </span>
-                <div>
-                  <p className="text-lg font-bold" style={{ color: "hsl(var(--foreground))" }}>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-base font-bold text-foreground">
                     {selectedCashier?.name}
                   </p>
-                  <p className="text-sm font-medium" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  <p className="text-xs font-medium text-muted-foreground">
                     Ingresa tu PIN de acceso
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => { setSelectedId(null); setPin(""); setError(""); }}
-                  className="absolute right-0 top-0 cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-black/5"
-                  style={{ color: "hsl(var(--muted-foreground))" }}
+                  className="shrink-0 cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
                 >
                   Cambiar
                 </button>
@@ -254,20 +237,22 @@ const LoginScreen = ({ onLogin }) => {
                 type="password"
                 placeholder="••••"
                 maxLength={6}
-                className="h-16 rounded-lg text-center text-3xl font-bold tracking-[0.6em] shadow-inner"
+                aria-label="PIN de acceso"
+                className="h-16 rounded-lg pl-[0.6em] text-center text-3xl font-bold tracking-[0.6em] shadow-none"
               />
 
-              {error && (
-                <p className="mt-3 text-center text-sm font-medium" style={{ color: "hsl(var(--destructive))" }}>
-                  {error}
-                </p>
-              )}
+              <div className="mt-3 flex min-h-[24px] items-center justify-center">
+                {error && (
+                  <p role="alert" className="text-sm font-medium text-destructive">
+                    {error}
+                  </p>
+                )}
+              </div>
 
               <Button
                 onClick={handleSubmit}
                 disabled={loading || pin.length < 3}
                 className="mt-4 h-14 w-full rounded-lg text-base font-bold"
-                style={{ background: "hsl(var(--primary))", color: "hsl(var(--primary-foreground))" }}
               >
                 {loading ? (
                   <>
@@ -286,8 +271,8 @@ const LoginScreen = ({ onLogin }) => {
         </div>
       </div>
 
-      <p className="mt-8 text-center text-sm" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>
-        POWERED BY JRP CORE V2.0
+      <p className="login-footer relative z-10 mt-6 text-center text-[11px] font-medium uppercase tracking-wider text-white/50">
+        Powered by JRP Core v2.0
       </p>
     </div>
   );

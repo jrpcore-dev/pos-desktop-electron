@@ -33,6 +33,7 @@ module.exports = {
     {
       name: "@electron-forge/publisher-github",
       config: {
+        force: true,
         repository: {
           owner: "jrpcore-dev",
           name: "pos-desktop-electron",

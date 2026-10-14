@@ -37,6 +37,8 @@ import {
 import { cn } from "@/lib/utils";
 import { formatMXDate, formatMXTime } from "../utils/dateUtils";
 
+import PageHeader from "./PageHeader";
+
 const BackupRestore = () => {
   const [backups, setBackups] = useState([]);
   const [restoreConfirm, setRestoreConfirm] = useState(null);
@@ -184,27 +186,25 @@ const BackupRestore = () => {
 
   return (
     <div className="flex flex-col gap-4 p-1" style={{ animation: "fadeIn 0.4s ease-out" }}>
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Crea, importa y administra copias de seguridad de la base de datos
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="warning"
-            onClick={importData}
-            disabled={importing}
-          >
-            <Upload size={16} />
-            {importing ? "Importando..." : "Importar Datos"}
-          </Button>
-          <Button onClick={createBackup}>
-            <DatabaseBackup size={16} />
-            Crear Respaldo
-          </Button>
-        </div>
-      </header>
+      <PageHeader
+        description="Crea, importa y administra copias de seguridad de la base de datos"
+        actions={
+          <>
+            <Button
+              variant="warning"
+              onClick={importData}
+              disabled={importing}
+            >
+              <Upload size={16} />
+              {importing ? "Importando..." : "Importar Datos"}
+            </Button>
+            <Button onClick={createBackup}>
+              <DatabaseBackup size={16} />
+              Crear Respaldo
+            </Button>
+          </>
+        }
+      />
 
       {message && (
         <div

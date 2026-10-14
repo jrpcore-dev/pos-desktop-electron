@@ -64,17 +64,17 @@ const UpdateButton = () => {
   };
 
   const btnClass =
-    "flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10";
+    "flex h-full w-10 shrink-0 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 last:rounded-r-lg";
 
   if (state.status === "downloading") {
     return (
-      <span className="fade-in-up">
+      <span className="flex h-full fade-in-up">
         <ShadcnTooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               disabled
-              className="flex h-9 w-9 cursor-default items-center justify-center rounded-lg text-muted-foreground"
+              className="flex h-full w-10 shrink-0 cursor-default items-center justify-center text-muted-foreground last:rounded-r-lg"
             >
               <RefreshCw size={17} className="animate-spin" />
             </button>
@@ -89,7 +89,7 @@ const UpdateButton = () => {
 
   if (state.status === "downloaded") {
     return (
-      <span className="fade-in-up">
+      <span className="flex h-full fade-in-up">
         <ShadcnTooltip>
           <TooltipTrigger asChild>
             <button
@@ -109,7 +109,7 @@ const UpdateButton = () => {
   }
 
   return (
-    <span className="fade-in-up">
+    <span className="flex h-full fade-in-up">
       <ShadcnTooltip>
         <TooltipTrigger asChild>
           <button type="button" onClick={onClickDownload} className={btnClass}>
