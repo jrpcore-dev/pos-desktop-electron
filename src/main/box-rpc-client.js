@@ -126,6 +126,9 @@ const verifyPin = async (db, id, pin) => {
     return fail(code, res.data.error || "PIN inválido");
   }
   if (res.data.token) clientLink.saveSessionToken(db, res.data.token);
+  // La ventana de gracia rota el token de dispositivo en cada login: si la caja
+  // no guarda el nuevo, el Host la rechaza con "no está activado" en todo.
+  if (res.data.pairedToken) clientLink.savePairedToken(db, res.data.pairedToken);
   return { success: true, cashier: res.data.cashier };
 };
 

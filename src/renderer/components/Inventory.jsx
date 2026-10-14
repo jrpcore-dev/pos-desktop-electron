@@ -506,15 +506,17 @@ ProductRow.displayName = "ProductRow";
 const FilterCombobox = ({ label, value, options, emptyValue, onChange }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const selected = options.find((o) => String(o.id) === String(value));
+  // Si la lista vino undefined (RPC rechazada), no truena el combobox.
+  const opts = options || [];
+  const selected = opts.find((o) => String(o.id) === String(value));
   const filtered = useMemo(
     () =>
       query.trim()
-        ? options.filter((o) =>
+        ? opts.filter((o) =>
             o.name.toLowerCase().includes(query.trim().toLowerCase()),
           )
-        : options,
-    [options, query],
+        : opts,
+    [opts, query],
   );
   return (
     <div className="space-y-1.5">
@@ -702,8 +704,8 @@ const Inventory = () => {
       window.api.invoke("get-categories"),
       window.api.invoke("get-suppliers"),
     ]);
-    setProducts(result.products);
-    setTotal(result.total);
+    setProducts(result?.products || []);
+    setTotal(result?.total || 0);
     setCategories(cats || []);
     setSuppliers(sups || []);
     setLoading(false);

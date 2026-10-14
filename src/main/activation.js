@@ -80,6 +80,16 @@ const ensureSchema = (db) => {
     protocol_version TEXT,
     approved INTEGER DEFAULT 1
   )`);
+  // Reparación de BDs cuya tabla vino de otra versión sin device_id: sin esto
+  // el Host truena en la sección de activación y rechaza a toda caja con
+  // "Este dispositivo no está activado para este negocio".
+  ensureColumn(db, "paired_devices", "device_id", "TEXT");
+  ensureColumn(db, "paired_devices", "device_name", "TEXT DEFAULT ''");
+  ensureColumn(db, "paired_devices", "paired_token_hash", "TEXT");
+  ensureColumn(db, "paired_devices", "cashier_id", "INTEGER");
+  ensureColumn(db, "paired_devices", "activated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+  ensureColumn(db, "paired_devices", "last_seen_at", "DATETIME");
+  ensureColumn(db, "paired_devices", "revoked", "INTEGER DEFAULT 0");
   // Entrega 2b: migración aditiva para BD existentes. `approved` DEFAULT 1
   // marca a los dispositivos ya emparejados como aprobados (sin pérdida).
   ensureColumn(db, "paired_devices", "device_code", "TEXT");
