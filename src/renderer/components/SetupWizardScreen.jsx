@@ -229,16 +229,32 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
       clearLoadTimers();
       setConfirmConvert(false);
       setServerFound(false);
-      // ¿Hay un Host en la red? Si no, ni se muestra el botón de caja.
-      (async () => {
+      // Detecta apenas arranca el asistente y sigue buscando cada 5 s mientras
+      // esté abierto: el escritorio del Host puede prenderse después.
+      let alive = true;
+      let probing = false;
+      let found = false;
+      const probe = async () => {
+        if (probing || found) return;
+        probing = true;
         try {
           const res = await window.api.invoke("box-discover-hosts", {
             manualIps: [],
             manualPort: 3456,
           });
-          if (res?.success && res.hosts?.length) setServerFound(true);
+          if (alive && res?.success && res.hosts?.length) {
+            found = true;
+            setServerFound(true);
+          }
         } catch {}
-      })();
+        probing = false;
+      };
+      probe();
+      const probeTimer = window.setInterval(probe, 5000);
+      return () => {
+        alive = false;
+        window.clearInterval(probeTimer);
+      };
     } else {
       clearLoadTimers();
       setLoading(false);
