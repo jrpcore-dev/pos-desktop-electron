@@ -47,7 +47,18 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
     };
     load(true);
     const timer = window.setInterval(() => load(false), 10000);
-    return () => window.clearInterval(timer);
+    // Al instante: si el Host agrega un cajero, el aviso db-changed llega por
+    // el flujo en vivo y la lista se refresca sin esperar al barrido.
+    const off = window.api?.on?.("db-changed", (payload) => {
+      const tables = Array.isArray(payload?.tables)
+        ? payload.tables.map((t) => String(t).toLowerCase())
+        : [];
+      if (!tables.length || tables.includes("cashiers")) load(false);
+    });
+    return () => {
+      window.clearInterval(timer);
+      if (typeof off === "function") off();
+    };
   }, []);
 
   useEffect(() => {
