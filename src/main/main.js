@@ -2854,9 +2854,15 @@ ipcMain.handle("is-first-time", async () => {
     const setting = db
       .prepare("SELECT value FROM settings WHERE key = ?")
       .get("store_name");
+    const done = db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get("setup_completed");
+    // Si la configuración ya terminó, el asistente no vuelve a aparecer,
+    // y un error de BD NUNCA lo reabre: mejor el login con su error.
+    if (done && done.value === "true") return false;
     return !setting;
   } catch (error) {
-    return true;
+    return false;
   }
 });
 

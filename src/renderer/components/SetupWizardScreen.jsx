@@ -359,17 +359,30 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
     setIsSubmitting(true);
     try {
       if (!isPreviewMode) {
-        await window.api.invoke("save-setting", "store_name", setupData.storeName);
-        await window.api.invoke("save-setting", "owner_name", setupData.ownerName);
-        await window.api.invoke("save-setting", "store_address", setupData.address);
-        await window.api.invoke("save-setting", "store_phone", setupData.phone);
-        await window.api.invoke("save-setting", "currency", setupData.currency);
-        await window.api.invoke("save-setting", "setup_completed", "true");
-        await window.api.invoke("add-cashier", {
+        // Cada guardado se verifica: si uno falla, se avisa y NO se finge
+        // el final (el asistente no debe volver a salir como si nada).
+        const guarded = [
+          ["store_name", setupData.storeName],
+          ["owner_name", setupData.ownerName],
+          ["store_address", setupData.address],
+          ["store_phone", setupData.phone],
+          ["currency", setupData.currency],
+          ["setup_completed", "true"],
+        ];
+        for (const [key, value] of guarded) {
+          const res = await window.api.invoke("save-setting", key, value);
+          if (res?.success === false) {
+            throw new Error(res.error || `No se pudo guardar ${key}`);
+          }
+        }
+        const cashierRes = await window.api.invoke("add-cashier", {
           name: setupData.ownerName,
           pin: setupData.adminPin,
           role: "admin",
         });
+        if (cashierRes?.success === false) {
+          throw new Error(cashierRes.error || "No se pudo crear el administrador");
+        }
       } else {
         await new Promise((resolve) => setTimeout(resolve, 700));
       }
@@ -387,7 +400,10 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
       ];
     } catch (error) {
       console.error("Error saving setup:", error);
-      setErrors((prev) => ({ ...prev, submit: "Error al guardar la configuración, inténtalo de nuevo" }));
+      setErrors((prev) => ({
+        ...prev,
+        submit: error?.message || "Error al guardar la configuración, inténtalo de nuevo",
+      }));
     } finally {
       setIsSubmitting(false);
     }
