@@ -67,7 +67,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
-import { Divider } from "./ui/divider";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
@@ -1218,7 +1217,9 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                   )}
                   {todayTasksCount > 0 && (
                     <>
-                      {insightsUnread > 0 && <Divider className="my-3" />}
+                      {insightsUnread > 0 && (
+                        <div className="my-3 h-px bg-border" />
+                      )}
                       <div className="px-3 py-2">
                         <p className="text-sm font-semibold text-foreground mb-1">
                           Tareas pendientes
