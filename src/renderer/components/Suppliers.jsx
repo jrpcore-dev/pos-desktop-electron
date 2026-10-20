@@ -411,25 +411,28 @@ const Suppliers = () => {
               field.onChange(next.join(","));
             };
             return (
-              <div className="flex flex-wrap justify-center gap-1.5">
-                {DELIVERY_DAYS.map(([k, label]) => {
-                  const on = selected.includes(k);
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => toggle(k)}
-                      aria-pressed={on}
-                      className={
-                        on
-                          ? "h-10 min-w-[3rem] cursor-pointer rounded-lg border border-primary bg-primary px-3 text-sm font-bold text-primary-foreground transition-colors"
-                          : "h-10 min-w-[3rem] cursor-pointer rounded-lg border border-border bg-background px-3 text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-                      }
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+              <div className="space-y-1.5">
+                <Label htmlFor="supplier-delivery-days">Días de llegada</Label>
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  {DELIVERY_DAYS.map(([k, label]) => {
+                    const on = selected.includes(k);
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => toggle(k)}
+                        aria-pressed={on}
+                        className={
+                          on
+                            ? "h-10 min-w-[3rem] cursor-pointer rounded-lg border border-primary bg-primary px-3 text-sm font-bold text-primary-foreground transition-colors"
+                            : "h-10 min-w-[3rem] cursor-pointer rounded-lg border border-border bg-background px-3 text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                        }
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             );
           }}
