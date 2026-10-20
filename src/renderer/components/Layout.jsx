@@ -67,6 +67,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
+import { Divider } from "./ui/divider";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
@@ -1124,6 +1125,125 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
             >
               <Search size={16} />
             </button>
+
+            {/* ─── Notificaciones y tareas (solo si hay algo sin leer) ─── */}
+            {(insightsUnread > 0 || todayTasksCount > 0) && (
+              <Popover open={insightsOpen} onOpenChange={setInsightsOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={
+                      insightsUnread > 0
+                        ? `Avisos del negocio, ${insightsUnread} sin leer`
+                        : todayTasksCount > 0
+                          ? `${todayTasksCount} tarea(s) pendiente(s)`
+                          : "Avisos del negocio"
+                    }
+                    title="Avisos del negocio y tareas"
+                    className="relative flex w-10 shrink-0 cursor-pointer items-center justify-center rounded-l-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  >
+                    <Bell size={16} />
+                    {insightsUnread > 0 && (
+                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground tabular-nums">
+                        {insightsUnread > 9 ? "9+" : insightsUnread}
+                      </span>
+                    )}
+                    {todayTasksCount > 0 && insightsUnread === 0 && (
+                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-warning-foreground tabular-nums">
+                        {todayTasksCount > 9 ? "9+" : todayTasksCount}
+                      </span>
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" sideOffset={8} className="w-[340px] p-0">
+                  {insightsUnread > 0 && (
+                    <>
+                      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
+                        <span className="text-sm font-semibold text-foreground">
+                          Pulso del negocio
+                        </span>
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary tabular-nums">
+                          {insightsUnread} sin leer
+                        </span>
+                      </div>
+                      <div className="p-3">
+                        <ul className="flex max-h-[320px] flex-col gap-2 overflow-y-auto">
+                          {insights.map((ins) => (
+                            <li
+                              key={ins.id}
+                              className={cn(
+                                "rounded-md border border-border p-2.5 text-left transition-colors hover:bg-muted/50",
+                                ins.status === "unread" &&
+                                  "border-l-2 border-l-primary",
+                              )}
+                            >
+                              <button
+                                className="w-full cursor-pointer text-left"
+                                onClick={async () => {
+                                  await window.api.invoke("mark-insight", {
+                                    id: ins.id,
+                                    status: "actioned",
+                                  });
+                                  setInsights((prev) =>
+                                    prev.filter((x) => x.id !== ins.id),
+                                  );
+                                  setInsightsUnread((n) =>
+                                    Math.max(0, n - 1),
+                                  );
+                                  setInsightsOpen(false);
+                                  navigate(ins.route || "/reports");
+                                }}
+                              >
+                                <p className="text-[14px] font-semibold text-foreground">
+                                  {ins.title}
+                                </p>
+                                <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                                  {ins.body}
+                                </p>
+                                <p className="mt-1 text-[11px] font-medium text-primary">
+                                  Ver detalle →
+                                </p>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        <button
+                          className="mt-2 w-full cursor-pointer border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                          onClick={handleRefreshPulse}
+                        >
+                          Generar pulso semanal ahora
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {todayTasksCount > 0 && (
+                    <>
+                      {insightsUnread > 0 && <Divider className="my-3" />}
+                      <div className="px-3 py-2">
+                        <p className="text-sm font-semibold text-foreground mb-1">
+                          Tareas pendientes
+                        </p>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            setInsightsOpen(false);
+                            setTaskDialogOpen(true);
+                          }}
+                        >
+                          Ver tareas ({todayTasksCount})
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                  {insightsUnread === 0 && todayTasksCount === 0 && (
+                    <p className="py-4 text-center text-xs text-muted-foreground">
+                      Sin avisos por ahora.
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
+            )}
 
             {/* Separador visual entre buscador y estado del sistema */}
             <span className="hidden h-5 w-px bg-border md:block" />
