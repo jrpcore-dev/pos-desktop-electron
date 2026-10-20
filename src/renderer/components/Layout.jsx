@@ -187,7 +187,7 @@ function Btn({
     outline: "border border-border text-foreground hover:bg-muted",
     ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
     destructive: "text-destructive hover:bg-destructive/10",
-    success: "bg-emerald-600 text-white hover:bg-emerald-700",
+    success: "bg-success text-success-foreground hover:bg-success/90",
   };
   const sizes = { sm: "h-8 px-2.5 text-xs", md: "h-10 px-4 text-sm" };
   return (
@@ -208,8 +208,7 @@ function Btn({
 
 function Alert({ tone = "warning", children }) {
   const tones = {
-    warning:
-      "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+    warning: "bg-warning/10 text-warning dark:text-warning border-warning/30",
     error: "bg-destructive/10 text-destructive border-destructive/30",
   };
   return (
@@ -228,9 +227,9 @@ function StatusDot({ ok, pulse, tone }) {
   const resolved = tone || (ok ? "ok" : "err");
   const color =
     resolved === "ok"
-      ? "bg-emerald-500"
+      ? "bg-success"
       : resolved === "warn"
-        ? "bg-amber-500"
+        ? "bg-warning"
         : resolved === "neutral"
           ? "bg-muted-foreground/40"
           : "bg-destructive";
@@ -250,6 +249,8 @@ function StatusDot({ ok, pulse, tone }) {
 
 const Layout = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Ítem del mini-sidebar bajo el ratón (para mostrar su etiqueta sin expandir).
+  const [miniHoverItem, setMiniHoverItem] = useState(null);
   const [storeName, setStoreName] = useState("MI TIENDA");
   const [storeLogo, setStoreLogo] = useState("");
   const [clock, setClock] = useState(new Date());
@@ -798,7 +799,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   ];
 
   const renderSidebar = (expanded) => (
-    <TooltipProvider>
+    <TooltipProvider delayDuration={0}>
       <div
         key={expanded ? "sidebar-expanded" : "sidebar-mini"}
         className="flex h-full flex-col overflow-hidden select-none"
@@ -824,8 +825,20 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                       <TooltipTrigger asChild>
                         <RouterLink
                           to={item.path}
-                          onMouseEnter={() => ROUTE_PRELOADERS[item.path]?.()}
-                          onFocus={() => ROUTE_PRELOADERS[item.path]?.()}
+                          onMouseEnter={() => {
+                            ROUTE_PRELOADERS[item.path]?.();
+                            if (!expanded) setMiniHoverItem(item.text);
+                          }}
+                          onMouseLeave={() => {
+                            if (!expanded) setMiniHoverItem(null);
+                          }}
+                          onFocus={() => {
+                            ROUTE_PRELOADERS[item.path]?.();
+                            if (!expanded) setMiniHoverItem(item.text);
+                          }}
+                          onBlur={() => {
+                            if (!expanded) setMiniHoverItem(null);
+                          }}
                           aria-current={isActive ? "page" : undefined}
                           style={{
                             animationDelay: `${
@@ -1087,7 +1100,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           </div>
 
           <div
-            className="ml-auto flex items-center gap-2"
+            className="ml-auto flex items-center gap-6"
             style={{ WebkitAppRegion: "no-drag" }}
           >
             {/* ─── Lanzador de la paleta de comandos (Ctrl + K) ─── */}
@@ -1112,98 +1125,11 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
               <Search size={16} />
             </button>
 
-            {/* ─── CLÚSTER DE ESTADO: un solo borde, divisores internos ─── */}
-            <div className="flex h-10 items-stretch divide-x divide-border rounded-lg border border-border bg-card">
-              <Popover open={insightsOpen} onOpenChange={setInsightsOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label={
-                      insightsUnread > 0
-                        ? `Avisos del negocio, ${insightsUnread} sin leer`
-                        : "Avisos del negocio"
-                    }
-                    title="Avisos del negocio"
-                    className="relative flex w-10 shrink-0 cursor-pointer items-center justify-center rounded-l-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                  >
-                    <Bell size={16} />
-                    {insightsUnread > 0 && (
-                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground tabular-nums">
-                        {insightsUnread > 9 ? "9+" : insightsUnread}
-                      </span>
-                    )}
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="end"
-                  sideOffset={8}
-                  className="w-[340px] p-0"
-                >
-                  <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-                    <span className="text-sm font-semibold text-foreground">
-                      Pulso del negocio
-                    </span>
-                    {insightsUnread > 0 && (
-                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary tabular-nums">
-                        {insightsUnread} sin leer
-                      </span>
-                    )}
-                  </div>
-                  <div className="p-3">
-                    {insights.length === 0 ? (
-                      <p className="py-4 text-center text-xs text-muted-foreground">
-                        Sin avisos por ahora.
-                      </p>
-                    ) : (
-                      <ul className="flex max-h-[320px] flex-col gap-2 overflow-y-auto">
-                        {insights.map((ins) => (
-                          <li
-                            key={ins.id}
-                            className={cn(
-                              "rounded-md border border-border p-2.5 text-left transition-colors hover:bg-muted/50",
-                              ins.status === "unread" &&
-                                "border-l-2 border-l-primary",
-                            )}
-                          >
-                            <button
-                              className="w-full cursor-pointer text-left"
-                              onClick={async () => {
-                                await window.api.invoke("mark-insight", {
-                                  id: ins.id,
-                                  status: "actioned",
-                                });
-                                setInsights((prev) =>
-                                  prev.filter((x) => x.id !== ins.id),
-                                );
-                                setInsightsUnread((n) => Math.max(0, n - 1));
-                                setInsightsOpen(false);
-                                navigate(ins.route || "/reports");
-                              }}
-                            >
-                              <p className="text-[14px] font-semibold text-foreground">
-                                {ins.title}
-                              </p>
-                              <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                                {ins.body}
-                              </p>
-                              <p className="mt-1 text-[11px] font-medium text-primary">
-                                Ver detalle →
-                              </p>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <button
-                      className="mt-2 w-full cursor-pointer border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      onClick={handleRefreshPulse}
-                    >
-                      Generar pulso semanal ahora
-                    </button>
-                  </div>
-                </PopoverContent>
-              </Popover>
+            {/* Separador visual entre buscador y estado del sistema */}
+            <span className="hidden h-5 w-px bg-border md:block" />
 
+            {/* ─── ESTADO DEL SISTEMA: caja, conexión, tema ─── */}
+            <div className="flex h-10 items-stretch divide-x divide-border rounded-lg border border-border bg-card">
               <SystemStatus
                 register={register}
                 clock={clockLabel}
@@ -1348,8 +1274,8 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           }}
         >
           <ModalHeader className="flex-col items-center pt-6 text-center">
-            <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-xl bg-amber-500/15">
-              <TriangleAlert size={28} className="text-amber-600" />
+            <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-xl bg-warning/15">
+              <TriangleAlert size={28} className="text-warning" />
             </div>
             <h2 className="text-base font-bold text-foreground">
               Caja anterior abierta
@@ -1425,7 +1351,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 <span
                   className={cn(
                     "text-sm font-semibold",
-                    scaleConnected ? "text-emerald-600" : "text-destructive",
+                    scaleConnected ? "text-success" : "text-destructive",
                   )}
                 >
                   {scaleConnected ? "Conectada" : "Desconectada"}
@@ -1576,7 +1502,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           }}
         >
           <ModalHeader className="flex-col items-center text-center">
-            <CalendarDays size={40} className="mb-1 text-amber-500" />
+            <CalendarDays size={40} className="mb-1 text-warning" />
             <h2 className="text-base font-bold text-foreground">
               Recordatorio
             </h2>

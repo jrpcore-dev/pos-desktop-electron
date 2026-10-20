@@ -234,16 +234,10 @@ const openRegister = () => {
                 <Field label="Abierta por" value={register.opener_name} />
               )}
               <Field
-                label="Apertura"
-                value={fmtMoney(register.opening_balance)}
-              />
-              <Field label="Desde" value={formatMXTime(register.opened_at)} />
-              <Field
                 label="Efectivo en caja"
                 value={fmtMoney(register.currentCash)}
                 strong
               />
-              <Field label="Gastos" value={fmtMoney(register.expenses)} />
             </div>
             <Divider />
             <div className="p-2">
@@ -274,8 +268,8 @@ const openRegister = () => {
               </p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                 {closedAt
-                  ? `Se cerró a las ${closedAt}. Las ventas en efectivo no quedan registradas en ningún corte.`
-                  : "Las ventas en efectivo no quedan registradas en ningún corte hasta que abras una."}
+                  ? `Se cerró a las ${closedAt}.`
+                  : "Abra una caja para registrar ventas en efectivo."}
               </p>
             </div>
             <Divider />
@@ -302,7 +296,7 @@ const openRegister = () => {
               </p>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
             <StateTile
               icon={hostStatus ? Wifi : Server}
               label={hostStatus ? "Host" : "Servidor"}
@@ -326,14 +320,6 @@ const openRegister = () => {
               tone={scaleConnected ? "ok" : "neutral"}
               onClick={openScale}
               title={scaleConnected ? "Báscula conectada" : "Conectar báscula"}
-            />
-            <StateTile
-              icon={CalendarDays}
-              label="Tareas"
-              status={tasksCount > 0 ? String(tasksCount) : "—"}
-              tone={tasksCount > 0 ? "warn" : "neutral"}
-              onClick={openTasks}
-              title="Tareas del día"
             />
             <StateTile
               icon={isDark ? Sun : Moon}
