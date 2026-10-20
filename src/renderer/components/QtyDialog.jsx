@@ -3,6 +3,7 @@ import { Kbd } from "./ui/kbd";
 import { Percent } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +43,10 @@ const QtyDialog = ({ open, onClose, value, onChange, onConfirm }) => {
 
   const qty = parseInt(value, 10);
   const valid = qty >= 1;
+  const errorMessage =
+    value !== "" && value !== undefined && !valid
+      ? "La cantidad debe ser al menos 1."
+      : "";
 
   return (
     <Dialog
@@ -61,19 +66,38 @@ const QtyDialog = ({ open, onClose, value, onChange, onConfirm }) => {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="relative">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
-            ×
-          </span>
-          <Input
-            ref={inputRef}
-            type="number"
-            min="1"
-            step="1"
-            value={value}
-            onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
-            className="h-12 rounded-xl bg-field pl-10 pr-3 text-center text-3xl font-bold tabular-nums"
-          />
+        <div className="space-y-1.5">
+          <Label htmlFor="qty-value">Cantidad (piezas)</Label>
+          <div className="relative">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
+              ×
+            </span>
+            <Input
+              id="qty-value"
+              ref={inputRef}
+              type="number"
+              min="1"
+              step="1"
+              value={value}
+              onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
+              aria-invalid={!!errorMessage}
+              aria-describedby={errorMessage ? "qty-value-error" : undefined}
+              className="h-12 rounded-xl bg-field pl-10 pr-3 text-center text-3xl font-bold tabular-nums"
+            />
+          </div>
+          {errorMessage ? (
+            <p
+              id="qty-value-error"
+              role="alert"
+              className="text-center text-xs font-medium text-destructive"
+            >
+              {errorMessage}
+            </p>
+          ) : (
+            <p className="text-center text-xs text-muted-foreground">
+              Cuántas piezas se capturarán en la próxima lectura.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/utils/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +45,14 @@ const DiscountDialog = ({
   const discount = Math.max(0, Math.min(amount, subtotal));
   const final = subtotal - discount;
   const valid = !!item && !!value && amount > 0 && amount <= subtotal;
+  const hasValue = value !== "" && value !== undefined;
+  const errorMessage = !hasValue
+    ? ""
+    : amount > subtotal
+      ? `El descuento no puede superar el subtotal (${fmtMoney(subtotal)}).`
+      : amount <= 0
+        ? "Ingresa un monto mayor a 0."
+        : "";
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
@@ -92,19 +101,40 @@ const DiscountDialog = ({
               </div>
             </div>
 
-            <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
-                $
-              </span>
-              <Input
-                ref={inputRef}
-                type="text"
-                inputMode="decimal"
-                placeholder="0.00"
-                value={value}
-                onChange={handleChange}
-                className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
-              />
+            <div className="space-y-1.5">
+              <Label htmlFor="discount-amount">Monto del descuento</Label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
+                  $
+                </span>
+                <Input
+                  id="discount-amount"
+                  ref={inputRef}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={value}
+                  onChange={handleChange}
+                  aria-invalid={!!errorMessage}
+                  aria-describedby={
+                    errorMessage ? "discount-amount-error" : undefined
+                  }
+                  className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
+                />
+              </div>
+              {errorMessage ? (
+                <p
+                  id="discount-amount-error"
+                  role="alert"
+                  className="text-xs font-medium text-destructive"
+                >
+                  {errorMessage}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Se aplica sobre {fmtMoney(subtotal)} de este producto.
+                </p>
+              )}
             </div>
 
             <div

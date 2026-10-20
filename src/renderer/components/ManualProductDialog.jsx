@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { QrCode, PlusCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import {
   Dialog,
   DialogContent,
@@ -33,7 +34,17 @@ const ManualProductDialog = ({
     }
   }, [open]);
 
-  const valid = !!name && !!price;
+  const trimmedName = (name || "").trim();
+  const priceNum = parseFloat(price) || 0;
+  const nameError =
+    (name || "") !== "" && !trimmedName
+      ? "Escribe el nombre del producto."
+      : "";
+  const priceError =
+    (price || "") !== "" && priceNum <= 0
+      ? "El precio debe ser mayor a 0."
+      : "";
+  const valid = !!trimmedName && priceNum > 0;
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && valid) {
@@ -67,36 +78,64 @@ const ManualProductDialog = ({
         </DialogHeader>
 
         <div className="space-y-4 pt-1">
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
-              Nombre del producto
-            </label>
+          <div className="space-y-1.5">
+            <Label htmlFor="manual-product-name">Nombre del producto</Label>
             <Input
+              id="manual-product-name"
               ref={nameRef}
               type="text"
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
-              placeholder="Nombre del producto"
+              placeholder="Ej. Pan dulce"
+              aria-invalid={!!nameError}
+              aria-describedby={
+                nameError ? "manual-product-name-error" : undefined
+              }
               className="h-12 rounded-xl text-base"
             />
+            {nameError && (
+              <p
+                id="manual-product-name-error"
+                role="alert"
+                className="text-xs font-medium text-destructive"
+              >
+                {nameError}
+              </p>
+            )}
           </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
-              Precio
-            </label>
+          <div className="space-y-1.5">
+            <Label htmlFor="manual-product-price">Precio</Label>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-lg font-bold text-muted-foreground">
                 $
               </span>
               <Input
+                id="manual-product-price"
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
                 value={price}
                 onChange={handlePriceChange}
+                aria-invalid={!!priceError}
+                aria-describedby={
+                  priceError ? "manual-product-price-error" : undefined
+                }
                 className="h-12 rounded-xl pl-9 text-right text-xl font-bold tabular-nums"
               />
             </div>
+            {priceError ? (
+              <p
+                id="manual-product-price-error"
+                role="alert"
+                className="text-xs font-medium text-destructive"
+              >
+                {priceError}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Precio de venta por pieza.
+              </p>
+            )}
           </div>
         </div>
 

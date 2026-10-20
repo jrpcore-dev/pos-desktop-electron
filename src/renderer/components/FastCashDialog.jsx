@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/utils/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Kbd } from "./ui/kbd";
 import {
   Dialog,
@@ -144,24 +145,41 @@ const FastCashDialog = ({
             </div>
           )}
 
-          <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
-              $
-            </span>
-            <Input
-              ref={inputRef}
-              type="text"
-              inputMode="decimal"
-              placeholder="0.00"
-              value={cashAmount}
-              onChange={handleChange}
-              disabled={waitingDrawer}
-              className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
-            />
+          <div className="space-y-1.5">
+            <Label htmlFor="fast-cash-amount">Efectivo recibido</Label>
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
+                $
+              </span>
+              <Input
+                id="fast-cash-amount"
+                ref={inputRef}
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={cashAmount}
+                onChange={handleChange}
+                disabled={waitingDrawer}
+                aria-invalid={
+                  cashAmount !== "" &&
+                  cashAmount !== undefined &&
+                  !isPositive
+                }
+                aria-describedby={
+                  cashAmount !== "" && cashAmount !== undefined
+                    ? "fast-cash-change"
+                    : undefined
+                }
+                className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
+              />
+            </div>
           </div>
 
           {cashAmount !== "" && cashAmount !== undefined && (
             <div
+              id="fast-cash-change"
+              role="status"
+              aria-live="polite"
               className={cn(
                 "flex items-center justify-between rounded-lg px-4 py-3 text-sm font-semibold transition-colors",
                 isPositive

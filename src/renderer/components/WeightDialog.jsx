@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/utils/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import {
   Dialog,
   DialogContent,
@@ -62,6 +63,9 @@ const WeightDialog = ({
   };
 
   const total = kg > 0 ? effectivePrice * kg : 0;
+  const hasValue = weightAmount !== "" && weightAmount !== undefined;
+  const errorMessage =
+    hasValue && kg <= 0 ? "El peso debe ser mayor a 0 kg." : "";
 
   return (
     <Dialog
@@ -99,19 +103,40 @@ const WeightDialog = ({
               </div>
             </div>
 
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
-                kg
-              </span>
-              <Input
-                ref={inputRef}
-                type="text"
-                inputMode="decimal"
-                placeholder="0.000"
-                value={weightAmount}
-                onChange={handleChange}
-                className="h-16 rounded-xl bg-field pl-12 pr-4 text-center text-3xl font-bold tabular-nums"
-              />
+            <div className="space-y-1.5">
+              <Label htmlFor="weight-amount">Peso en kilogramos (kg)</Label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
+                  kg
+                </span>
+                <Input
+                  id="weight-amount"
+                  ref={inputRef}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.000"
+                  value={weightAmount}
+                  onChange={handleChange}
+                  aria-invalid={!!errorMessage}
+                  aria-describedby={
+                    errorMessage ? "weight-amount-error" : undefined
+                  }
+                  className="h-16 rounded-xl bg-field pl-12 pr-4 text-center text-3xl font-bold tabular-nums"
+                />
+              </div>
+              {errorMessage ? (
+                <p
+                  id="weight-amount-error"
+                  role="alert"
+                  className="text-center text-xs font-medium text-destructive"
+                >
+                  {errorMessage}
+                </p>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground">
+                  El total se calcula automáticamente según el peso.
+                </p>
+              )}
             </div>
 
             {kg > 0 && (

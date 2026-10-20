@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, UserPlus, Clock, User } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Spinner } from "./ui/spinner";
 import { Badge } from "./ui/badge";
 import {
   Dialog,
@@ -50,6 +52,7 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [saving, setSaving] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useEffect(() => {
@@ -58,6 +61,7 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
     setShowCreate(false);
     setNewName("");
     setNewPhone("");
+    setCreateError("");
     setResults([]);
     setSelectedIndex(0);
     window.api.invoke("get-recent-customers").then(setRecents).catch(() => {});
@@ -139,6 +143,7 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
     const name = newName.trim();
     if (!name || saving) return;
     setSaving(true);
+    setCreateError("");
     try {
       const res = await window.api.invoke("add-customer", {
         name,
@@ -147,7 +152,13 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
       if (res.success && res.customer) {
         onSelect(res.customer);
         onClose();
+      } else {
+        setCreateError(
+          res?.error || "No se pudo crear el cliente. Intenta de nuevo.",
+        );
       }
+    } catch {
+      setCreateError("No se pudo crear el cliente. Revisa tu conexión.");
     } finally {
       setSaving(false);
     }
@@ -239,48 +250,77 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
             </Button>
           </div>
         ) : (
-          <div className="space-y-2 border-t border-border p-4">
-            <Input
-              ref={nameRef}
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  phoneRef.current?.focus();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowCreate(false);
-                  inputRef.current?.focus();
+          <div className="space-y-3 border-t border-border p-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="quick-customer-name">Nombre</Label>
+              <Input
+                id="quick-customer-name"
+                ref={nameRef}
+                type="text"
+                value={newName}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  if (createError) setCreateError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    phoneRef.current?.focus();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowCreate(false);
+                    inputRef.current?.focus();
+                  }
+                }}
+                placeholder="Ej. Juan Pérez"
+                autoComplete="off"
+                aria-invalid={!!createError}
+                aria-describedby={
+                  createError ? "quick-customer-error" : undefined
                 }
-              }}
-              placeholder="Nombre *"
-              autoComplete="off"
-              className="h-12 text-base"
-              autoFocus
-            />
-            <Input
-              ref={phoneRef}
-              type="tel"
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleQuickCreate();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowCreate(false);
-                  inputRef.current?.focus();
-                }
-              }}
-              placeholder="Teléfono"
-              autoComplete="off"
-              className="h-12 text-base tabular-nums"
-            />
+                className="h-12 text-base"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="quick-customer-phone">
+                Teléfono{" "}
+                <span className="font-normal text-muted-foreground">
+                  (opcional)
+                </span>
+              </Label>
+              <Input
+                id="quick-customer-phone"
+                ref={phoneRef}
+                type="tel"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleQuickCreate();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowCreate(false);
+                    inputRef.current?.focus();
+                  }
+                }}
+                placeholder="Ej. 555 123 4567"
+                autoComplete="off"
+                className="h-12 text-base tabular-nums"
+              />
+            </div>
+            {createError && (
+              <p
+                id="quick-customer-error"
+                role="alert"
+                className="text-xs font-medium text-destructive"
+              >
+                {createError}
+              </p>
+            )}
             <div className="flex gap-2 pt-1">
               <Button
                 type="button"
@@ -296,7 +336,14 @@ const CustomerSearchDialog = ({ open, onClose, onSelect }) => {
                 disabled={!newName.trim() || saving}
                 onClick={handleQuickCreate}
               >
-                Guardar
+                {saving ? (
+                  <span className="flex items-center gap-2">
+                    <Spinner size={16} />
+                    Guardando...
+                  </span>
+                ) : (
+                  "Guardar"
+                )}
               </Button>
             </div>
           </div>
