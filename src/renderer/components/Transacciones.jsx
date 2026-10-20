@@ -167,6 +167,42 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
   );
 });
 
+const ExpenseRow = memo(function ExpenseRow({ expense }) {
+  const isCanceled = expense.status === "cancelado";
+  return (
+    <TableRow>
+      <TableCell className="px-4 py-3">
+        <p className="text-sm font-medium text-foreground">{formatMXDate(expense.created_at)}</p>
+        <p className="text-xs text-muted-foreground">{formatMXTime(expense.created_at)}</p>
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <span className={cn("text-sm text-foreground", isCanceled && "line-through text-muted-foreground")}>
+          {expense.reason || "—"}
+        </span>
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <Badge
+          variant="outline"
+          className={cn(
+            "whitespace-nowrap",
+            isCanceled
+              ? "border-destructive/50 text-destructive"
+              : "border-red-500/50 text-red-600 dark:border-red-400/50 dark:text-red-400",
+          )}
+        >
+          {expenseType(expense)}
+        </Badge>
+      </TableCell>
+      <TableCell className="px-4 py-3">{statusBadge(expense)}</TableCell>
+      <TableCell className="px-4 py-3 text-right">
+        <span className={cn("text-sm font-bold tabular-nums", isCanceled ? "line-through text-muted-foreground" : "text-red-600 dark:text-red-400")}>
+          -{fmtMoney(expense.amount)}
+        </span>
+      </TableCell>
+    </TableRow>
+  );
+});
+
 const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => {
   if (!saleDetail) return;
   setPrinting(true);
