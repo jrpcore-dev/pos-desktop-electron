@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   PlusCircle, Search, Truck, Pencil, Trash2,
-  Phone, Mail, User, MapPin, Loader2, Building2,
+  Phone, Mail, User, MapPin, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "./ToastProvider";
@@ -29,17 +30,6 @@ import PaginationBar from "./PaginationBar";
 import PageHeader from "./PageHeader";
 
 const PAGE_SIZE = 10;
-
-const SectionTitle = ({ icon: Icon, title, className }) => (
-  <div className={cn("flex items-center gap-2", className)}>
-    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-primary">
-      <Icon className="h-4 w-4" />
-    </span>
-    <span className="text-sm font-semibold uppercase tracking-wide text-foreground">
-      {title}
-    </span>
-  </div>
-);
 
 const DELIVERY_DAYS = [
   ["lun", "Lun"],
@@ -172,18 +162,23 @@ const Suppliers = () => {
     defaultValues: { name: "", contact: "", phone: "", email: "", address: "", delivery_days: "" },
   });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco vivo (db-changed) sin skeleton (regla 1).
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const result = await window.api.invoke("get-suppliers");
       setSuppliers(result);
     } catch {}
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
   }, []);
+
+  // In vivo: la lista se refresca sola; el modal de alta/edición y su
+  // formulario no se reinician (reglas 1 y 2).
+  useDbChanges(() => load(true), ["suppliers"]);
 
   const filtered = useMemo(
     () =>
@@ -268,7 +263,6 @@ const Suppliers = () => {
   return (
     <div className="space-y-6">
       <section className="space-y-4">
-        <SectionTitle icon={Building2} title="Empresa" />
         <div className="space-y-1.5">
           <Label htmlFor="supplier-name">Nombre del proveedor</Label>
           <Controller
@@ -322,7 +316,6 @@ const Suppliers = () => {
       </section>
 
       <section className="space-y-4">
-        <SectionTitle icon={User} title="Contacto" />
         <div className="space-y-1.5">
           <Label htmlFor="supplier-contact">Persona de contacto</Label>
           <Controller
@@ -402,7 +395,6 @@ const Suppliers = () => {
       </section>
 
       <section className="space-y-4">
-        <SectionTitle icon={Truck} title="Días de llegada" />
         <Controller
           name="delivery_days"
           control={control}
