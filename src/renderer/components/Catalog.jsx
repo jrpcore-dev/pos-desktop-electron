@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, memo } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   Search,
+  SearchX,
   Plus,
   Pencil,
   Trash2,
@@ -46,6 +48,7 @@ import {
 } from "./ui/dialog";
 import { ConfirmDialog } from "./ui/confirm";
 import { Skeleton } from "./ui/skeleton";
+import { EmptyState } from "./ui/empty-state";
 import {
   Tooltip,
   TooltipContent,
@@ -375,8 +378,10 @@ const Catalog = () => {
     }
   }, []);
 
-  const loadProducts = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco vivo (db-changed) sin skeleton, con la misma página
+  // y filtros (regla 1).
+  const loadProducts = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await window.api.invoke("get-catalog-products", {
         search: searchRef.current,
@@ -395,7 +400,7 @@ const Catalog = () => {
       setRows([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [categoryId, page, pageSize]);
 
@@ -420,6 +425,16 @@ const Catalog = () => {
   const reload = useCallback(async () => {
     await Promise.all([loadCategories(), loadProducts()]);
   }, [loadCategories, loadProducts]);
+
+  // In vivo: catálogo al día con su página/filtros intactos; los modales de
+  // registrar/renombrar/borrar conservan su estado (reglas 1 y 2).
+  useDbChanges(
+    () => {
+      loadCategories();
+      loadProducts(true);
+    },
+    ["products", "product_prices", "categories"],
+  );
 
   const handleSearchChange = useCallback((e) => setSearch(e.target.value), []);
   const handleCategoryChange = useCallback((v) => setCategoryId(v), []);
@@ -517,16 +532,33 @@ const Catalog = () => {
                     </TableRow>
                   ))
                 ) : rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="h-28 px-4 text-center">
-                      <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                        <Library size={32} className="opacity-40" />
-                        <p className="text-sm">
-                          {search || categoryId
-                            ? "Sin resultados. Ajusta la búsqueda."
-                            : "Aún no hay productos en el catálogo."}
-                        </p>
-                      </div>
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={6} className="p-0">
+                      {search || categoryId ? (
+                        <EmptyState
+                          icon={SearchX}
+                          title="Sin resultados en el catálogo"
+                          description="Ningún producto coincide con la búsqueda o el filtro de categoría actual."
+                          action={
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSearch("");
+                                setCategoryId("");
+                              }}
+                            >
+                              Limpiar filtros
+                            </Button>
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          icon={Library}
+                          title="Aún no hay productos en el catálogo"
+                          description="El catálogo se llena solo: aquí aparecen los productos que registras en el terminal de venta."
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ) : (

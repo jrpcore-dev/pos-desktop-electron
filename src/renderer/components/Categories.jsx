@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, Shapes, Search, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Shapes, Search, SearchX, Loader2 } from "lucide-react";
 import { useToast } from "./ToastProvider";
 import {
   Sheet,
@@ -24,6 +25,7 @@ import {
   TableRow,
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
+import { EmptyState } from "./ui/empty-state";
 import {
   Tooltip,
   TooltipContent,
@@ -131,18 +133,23 @@ const Categories = () => {
     defaultValues: { name: "", description: "" },
   });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco vivo (db-changed) sin skeleton (regla 1).
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const list = await window.api.invoke("get-categories");
       setCategories(list);
     } catch {}
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // In vivo: la lista se refresca sola; el diálogo de alta/edición y su
+  // formulario no se reinician (reglas 1 y 2).
+  useDbChanges(() => load(true), ["categories"]);
 
 const filtered = useMemo(
     () =>
@@ -303,22 +310,39 @@ const filtered = useMemo(
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-28 px-4 text-center">
-                  <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                    <Shapes size={32} className="opacity-40" />
-                    <p className="text-sm">
-                      {categories.length === 0
-                        ? "No hay categorías registradas"
-                        : "No se encontraron categorías con ese nombre"}
-                    </p>
-                    {categories.length === 0 && (
-                      <Button size="sm" onClick={() => handleOpen()}>
-                        <Plus className="h-4 w-4" />
-                        Nueva categoría
-                      </Button>
-                    )}
-                  </div>
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={4} className="p-0">
+                  {categories.length === 0 ? (
+                    <EmptyState
+                      icon={Shapes}
+                      title="Aún no tienes categorías"
+                      description="Agrupa tus productos por tipo para encontrarlos más rápido en la caja y en el catálogo."
+                      action={
+                        <Button size="sm" onClick={() => handleOpen()}>
+                          <Plus className="h-4 w-4" />
+                          Crear primera categoría
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={SearchX}
+                      title="No se encontraron categorías"
+                      description={`Ninguna categoría coincide con “${searchTerm.trim()}”. Prueba con otro nombre.`}
+                      action={
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSearchTerm("");
+                            resetPage();
+                          }}
+                        >
+                          Limpiar búsqueda
+                        </Button>
+                      }
+                    />
+                  )}
                 </TableCell>
               </TableRow>
             ) : (

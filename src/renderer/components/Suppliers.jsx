@@ -4,7 +4,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  PlusCircle, Search, Truck, Pencil, Trash2,
+  PlusCircle, Search, SearchX, Truck, Pencil, Trash2,
   Phone, Mail, User, MapPin, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
+import { EmptyState } from "./ui/empty-state";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "./ui/tooltip";
@@ -534,22 +535,39 @@ const Suppliers = () => {
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-28 px-4 text-center">
-                  <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                    <Truck size={32} className="opacity-40" />
-                    <p className="text-sm">
-                      {suppliers.length === 0
-                        ? "No hay proveedores registrados"
-                        : "No se encontraron proveedores con ese nombre"}
-                    </p>
-                    {suppliers.length === 0 && (
-                      <Button size="sm" onClick={openAdd}>
-                        <PlusCircle className="h-4 w-4" />
-                        Nuevo proveedor
-                      </Button>
-                    )}
-                  </div>
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={4} className="p-0">
+                  {suppliers.length === 0 ? (
+                    <EmptyState
+                      icon={Truck}
+                      title="Aún no tienes proveedores"
+                      description="Registra a quién le compras para llevar el control de contacto y días de entrega."
+                      action={
+                        <Button size="sm" onClick={openAdd}>
+                          <PlusCircle className="h-4 w-4" />
+                          Registrar primer proveedor
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={SearchX}
+                      title="No se encontraron proveedores"
+                      description={`Ningún proveedor coincide con “${searchTerm.trim()}”. Prueba con otro nombre.`}
+                      action={
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSearchTerm("");
+                            resetPage();
+                          }}
+                        >
+                          Limpiar búsqueda
+                        </Button>
+                      }
+                    />
+                  )}
                 </TableCell>
               </TableRow>
             ) : (
