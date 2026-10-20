@@ -314,7 +314,7 @@ const filtered = useMemo(
                 <TableCell colSpan={4} className="p-0">
                   {categories.length === 0 ? (
                     <EmptyState
-                      icon={Shapes}
+                      icon={<Shapes size={26} aria-hidden="true" />}
                       title="Aún no tienes categorías"
                       description="Agrupa tus productos por tipo para encontrarlos más rápido en la caja y en el catálogo."
                       action={
@@ -326,7 +326,7 @@ const filtered = useMemo(
                     />
                   ) : (
                     <EmptyState
-                      icon={SearchX}
+                      icon={<SearchX size={26} aria-hidden="true" />}
                       title="No se encontraron categorías"
                       description={`Ninguna categoría coincide con “${searchTerm.trim()}”. Prueba con otro nombre.`}
                       action={

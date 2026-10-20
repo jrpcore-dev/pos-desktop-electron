@@ -536,7 +536,7 @@ const Catalog = () => {
                     <TableCell colSpan={6} className="p-0">
                       {search || categoryId ? (
                         <EmptyState
-                          icon={SearchX}
+                          icon={<SearchX size={26} aria-hidden="true" />}
                           title="Sin resultados en el catálogo"
                           description="Ningún producto coincide con la búsqueda o el filtro de categoría actual."
                           action={
@@ -554,7 +554,7 @@ const Catalog = () => {
                         />
                       ) : (
                         <EmptyState
-                          icon={Library}
+                          icon={<Library size={26} aria-hidden="true" />}
                           title="Aún no hay productos en el catálogo"
                           description="El catálogo se llena solo: aquí aparecen los productos que registras en el terminal de venta."
                         />

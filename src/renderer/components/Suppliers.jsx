@@ -539,7 +539,7 @@ const Suppliers = () => {
                 <TableCell colSpan={4} className="p-0">
                   {suppliers.length === 0 ? (
                     <EmptyState
-                      icon={Truck}
+                      icon={<Truck size={26} aria-hidden="true" />}
                       title="Aún no tienes proveedores"
                       description="Registra a quién le compras para llevar el control de contacto y días de entrega."
                       action={
@@ -551,7 +551,7 @@ const Suppliers = () => {
                     />
                   ) : (
                     <EmptyState
-                      icon={SearchX}
+                      icon={<SearchX size={26} aria-hidden="true" />}
                       title="No se encontraron proveedores"
                       description={`Ningún proveedor coincide con “${searchTerm.trim()}”. Prueba con otro nombre.`}
                       action={
