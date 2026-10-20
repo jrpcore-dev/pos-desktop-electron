@@ -216,6 +216,15 @@ const SalesTerminal = () => {
   }, []);
   const [selectedCartItemIndex, setSelectedCartItemIndex] = useState(-1);
   const [focusZone, setFocusZone] = useState("search");
+  const [cartFlashKey, setCartFlashKey] = useState(null);
+
+  // Limpia el flash de confirmación tras 600 ms para que no se quede pegado.
+  useEffect(() => {
+    if (!cartFlashKey) return;
+    const t = setTimeout(() => setCartFlashKey(null), 600);
+    return () => clearTimeout(t);
+  }, [cartFlashKey]);
+
 const processSaleRef = useRef(null);
 
   const cartSummary = useMemo(() => {
@@ -963,6 +972,7 @@ if (e.key === "Tab" && !isEditable) {
         return [...prev, { ...productWithDiscount, quantity: qty }];
       });
       if (qty !== 1) setPendingQty(1);
+      setCartFlashKey(lineKeyOf(product));
       clearSearch();
       showNotification(`${product.name} agregado al carrito`, "success");
       return;
@@ -991,6 +1001,7 @@ if (e.key === "Tab" && !isEditable) {
       return [...prev, { ...productWithDiscount, quantity: qty }];
     });
     if (qty !== 1) setPendingQty(1);
+    setCartFlashKey(lineKeyOf(productWithDiscount));
     clearSearch();
     showNotification(`${product.name} agregado al carrito`, "success");
   };
@@ -1580,6 +1591,7 @@ if (e.key === "Tab" && !isEditable) {
                       onRemove={removeWithCollapse}
                       onDiscount={openDiscountDialog}
                       round={isCashPayment ? roundCash : noRound}
+                      flash={cartFlashKey === lineKeyOf(item)}
                     />
                   </div>
                 </div>
@@ -1588,7 +1600,9 @@ if (e.key === "Tab" && !isEditable) {
           )}
         </div>
 
-        <div className="border-t border-border bg-muted/30 p-3">
+        <div
+          className="sticky bottom-0 z-20 border-t border-border p-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.10)] bg-gradient-to-t from-transparent via-card/60 to-card"
+        >
           <div className="mb-2.5">
             {customer ? (
               <div className="flex h-11 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
@@ -1640,33 +1654,36 @@ if (e.key === "Tab" && !isEditable) {
                 </span>
               </div>
             )}
-            <div className="my-1 border-t border-dashed border-border" />
+            <div className="my-1.5 border-t border-dashed border-border" />
             <div
               className={cn(
-                // Sin hover:shadow — el acento (totalAccentClass) es estático
-                // (bg-muted/40), así que un efecto hover de elevación sería
-                // un detalle fantasma sin cambio de estado real.
-                "flex items-end justify-between gap-3 rounded-xl border px-4 py-2",
-                totalAccentClass,
+                "flex items-end justify-between gap-3 rounded-xl border border-primary/40 bg-primary/[0.04] px-4 py-2.5",
               )}
             >
               <div className="flex flex-col leading-tight">
-                <span className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                  Total
+                <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  Total a cobrar
                 </span>
-                <span className="text-[11px] font-medium text-muted-foreground">
+                <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
                   {itemCount} · {paymentLabel}
                 </span>
               </div>
-              <span
-                key={displayTotal}
-                className={cn(
-                  "cart-total-pop inline-block text-3xl font-bold leading-none tabular-nums",
-                  totalValueClass,
+              <div className="flex flex-col items-end leading-tight">
+                <span
+                  key={displayTotal}
+                  className={cn(
+                    "cart-total-pop inline-block text-4xl font-bold leading-none tabular-nums",
+                    totalValueClass,
+                  )}
+                >
+                  {fmtMoney(displayTotal)}
+                </span>
+                {isCashPayment && change > 0 && (
+                  <span className="mt-0.5 text-xs text-success font-semibold tabular-nums">
+                    Cambio: {fmtMoney(change)}
+                  </span>
                 )}
-              >
-                {fmtMoney(displayTotal)}
-              </span>
+              </div>
             </div>
           </div>
 

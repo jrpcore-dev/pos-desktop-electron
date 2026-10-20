@@ -60,6 +60,7 @@ const CartItem = React.memo(
     onRemove,
     onDiscount,
     round,
+    flash = false,
   }) => {
     const roundValue = round || ((v) => v);
     const promo = promoInfo(item, item.quantity).applied;
@@ -102,6 +103,9 @@ const CartItem = React.memo(
           isSelected
             ? "border-primary bg-primary/10"
             : "border-border bg-primary/[0.04] hover:bg-primary/10",
+          flash
+            ? "border-emerald-500/60 bg-emerald-50 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]"
+            : "",
         )}
       >
         {/* Línea 1: nombre (truncate) + badge unificado + precio unitario discreto + acciones */}
