@@ -47,6 +47,8 @@ import { fmtMoney } from "../utils/format";
 import { isSaleInProgress } from "../utils/posState";
 import CancelButton from "./CancelButton";
 import CommandPalette from "./CommandPalette";
+import HostStatusBanner from "./HostStatusBanner";
+import ReauthModal from "./ReauthModal";
 import UpdateButton from "./UpdateButton";
 import {
   Popover,
@@ -81,6 +83,7 @@ const ROUTE_PRELOADERS = {
   "/register-history": () => import("./RegisterHistory"),
   "/transacciones": () => import("./Transacciones"),
   "/inventory": () => import("./Inventory"),
+  "/stock-conflicts": () => import("./StockConflicts"),
   "/categories": () => import("./Categories"),
   "/suppliers": () => import("./Suppliers"),
   "/stock-movements": () => import("./StockMovements"),
@@ -109,6 +112,7 @@ const PAGE_META = {
   "/servicios": { title: "Servicios", crumb: "Transacciones" },
   "/customers": { title: "Clientes", crumb: "Transacciones" },
   "/inventory": { title: "Productos", crumb: "Inventario" },
+  "/stock-conflicts": { title: "Conflictos de stock", crumb: "Inventario" },
   "/stock-movements": { title: "Movimientos", crumb: "Inventario" },
   "/categories": { title: "Categorías", crumb: "Inventario" },
   "/suppliers": { title: "Proveedores", crumb: "Inventario" },
@@ -263,6 +267,9 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
   // 3g/F · sólo en caja: estado del Host al que sirve (null en el Host).
   const [hostStatus, setHostStatus] = useState(null);
+  // Bloque 4/D · cola y antigüedad de la réplica para la barra superior.
+  const [pendingCount, setPendingCount] = useState(0);
+  const [replicaStaleMs, setReplicaStaleMs] = useState(null);
   const { cashier, logout } = useCashier();
   const [register, setRegister] = useState(null);
   const [handover, setHandover] = useState(null);
@@ -292,6 +299,42 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     open: false,
     task: null,
   });
+
+  // Bloque 4/A · SESSION_EXPIRED en la caja: se pide el PIN encima de la
+  // pantalla actual. El carrito vive en React y NO se desmonta; al confirmar,
+  // el usuario reintenta la acción sin perder la venta.
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [reauthBusy, setReauthBusy] = useState(false);
+  const [reauthError, setReauthError] = useState(null);
+  useEffect(() => {
+    const off = window.api.on("session-expired", () => {
+      setReauthError(null);
+      setReauthOpen(true);
+    });
+    return off;
+  }, []);
+  const handleReauth = useCallback(
+    async (pin) => {
+      if (!cashier?.id) return;
+      setReauthBusy(true);
+      setReauthError(null);
+      try {
+        const res = await window.api.invoke("verify-cashier-pin", cashier.id, pin);
+        if (res?.success) {
+          setReauthOpen(false);
+          // La cola offline, si quedó pendiente por sesión, se reintenta ya.
+          window.api.invoke("pending-sales-sync-now").catch(() => {});
+        } else {
+          setReauthError(res?.error || "PIN inválido");
+        }
+      } catch (e) {
+        setReauthError("No se pudo verificar el PIN");
+      } finally {
+        setReauthBusy(false);
+      }
+    },
+    [cashier?.id],
+  );
 
   const isVisibleRef = useRef(true);
   useEffect(() => {
@@ -447,6 +490,12 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         const status = await window.api.invoke("get-server-status");
         setServerRunning(status.running);
         setHostStatus(status.host || null);
+        setPendingCount(Number(status.pending?.count) || 0);
+        setReplicaStaleMs(
+          status.replica && status.replica.stale_ms != null
+            ? Number(status.replica.stale_ms)
+            : null,
+        );
       } catch (e) {
         setServerRunning(false);
       }
@@ -644,6 +693,15 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           icon: <ArrowLeftRight />,
           path: "/stock-movements",
         },
+        ...(isAdmin
+          ? [
+              {
+                text: "Conflictos de stock",
+                icon: <TriangleAlert />,
+                path: "/stock-conflicts",
+              },
+            ]
+          : []),
       ],
     },
     ...(isAdmin
@@ -1258,6 +1316,8 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 hostStatus={hostStatus}
                 scaleConnected={scaleConnected}
                 tasksCount={todayTasksCount}
+                pendingCount={pendingCount}
+                replicaStaleMs={replicaStaleMs}
                 isDark={isDark}
                 onToggleTheme={toggleMode}
                 onOpenScale={handleOpenScaleDialog}
@@ -1273,6 +1333,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           className="flex-1 p-4 transition-[margin-left] duration-300 ease-in-out md:p-6"
           style={{ marginLeft: drawerOpen ? drawerWidth : miniDrawerWidth }}
         >
+          <HostStatusBanner />
           <Suspense fallback={<RouteShellSkeleton />}>
             <div key={location.pathname} className="animate-enter">
               <Outlet />
@@ -1293,6 +1354,15 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           onOpenShortcuts={() => setShortcutsDialogOpen(true)}
           onRefreshPulse={handleRefreshPulse}
           onLogout={logout}
+        />
+
+        {/* Bloque 4/A · reautenticación sin perder el carrito */}
+        <ReauthModal
+          open={reauthOpen}
+          busy={reauthBusy}
+          error={reauthError}
+          onConfirm={handleReauth}
+          onCancel={() => setReauthOpen(false)}
         />
 
         {/* ─── ATAJOS DE TECLADO ─── */}

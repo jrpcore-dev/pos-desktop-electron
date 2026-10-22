@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   Search,
   Download,
@@ -689,8 +690,10 @@ const Inventory = () => {
   const scanTimeoutRef = useRef(null);
   const [initialBarcode, setInitialBarcode] = useState("");
 
-  const fetchProducts = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco en vivo (db-changed) sin skeleton: mismos filtros,
+  // orden y página (regla 1).
+  const fetchProducts = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const [result, cats, sups] = await Promise.all([
       window.api.invoke("get-products", {
         search: debouncedSearch || undefined,
@@ -708,7 +711,7 @@ const Inventory = () => {
     setTotal(result?.total || 0);
     setCategories(cats || []);
     setSuppliers(sups || []);
-    setLoading(false);
+    if (!silent) setLoading(false);
     setHasLoadedOnce(true);
   }, [
     debouncedSearch,
@@ -744,6 +747,18 @@ const Inventory = () => {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  // In vivo: productos, precios y categorías; se re-consulta con los mismos
+  // filtros/orden/página y sin tocar modales ni formularios abiertos.
+  // (`suppliers` hoy no genera change_log — no se replica —; queda declarado
+  // por semántica y el refresh de productos arrastra su dropdown).
+  useDbChanges(
+    () => {
+      fetchProducts(true);
+      fetchStats();
+    },
+    ["products", "product_prices", "categories", "suppliers"],
+  );
 
   useEffect(() => {
     if (viewDetailsOpen && selectedProduct) {

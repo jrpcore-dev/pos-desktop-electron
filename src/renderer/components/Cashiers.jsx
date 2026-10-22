@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus, Pencil, Trash2, User, UserPlus, Lock, Search, Loader2 } from "lucide-react";
 import { useToast } from "./ToastProvider";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   Sheet,
   SheetContent,
@@ -148,18 +149,23 @@ const Cashiers = () => {
     defaultValues: { name: "", pin: "", active: true },
   });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco en vivo sin parpadeo de skeletons (db-changed).
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const list = await window.api.invoke("get-cashiers");
-      setCashiers(list);
+      if (Array.isArray(list)) setCashiers(list);
     } catch {}
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
+
+  // Cualquier alta/baja/edición de cajero (en el Host o en la réplica de una
+  // caja) recarga la lista al instante, sin recargar la pantalla.
+  useDbChanges(() => load(true), ["cashiers"]);
 
   const filtered = searchTerm.trim()
     ? cashiers.filter((c) =>

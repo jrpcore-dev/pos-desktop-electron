@@ -146,6 +146,12 @@ const SalesTerminal = () => {
     cancelCart,
   } = useMultiCart();
   const lastRegisterWarnRef = useRef(0);
+  // Bloque 5 · folio real de la última venta (el que devuelve el Host o la
+  // cola offline). Solo cambia DE DÓNDE sale el número del ticket.
+  const lastSaleFolioRef = useRef(null);
+  // Bloque 4 · última caja abierta conocida: viaja en la venta offline para
+  // que el Host sepa a qué corte pertenece.
+  const lastRegisterRef = useRef(null);
   const [cashDialogOpen, setCashDialogOpen] = useState(false);
   const [cashAmount, setCashAmount] = useState("");
   const [change, setChange] = useState(0);
@@ -292,9 +298,18 @@ const processSaleRef = useRef(null);
       paymentMethod: method,
       discountTotal: cartSummary.discountTotal,
       cashierName: cashier?.name || "Usuario Principal",
+      cashierId: cashier?.id ?? null,
       customerId: customer?.id ?? null,
+      registerId: lastRegisterRef.current?.id ?? null,
     });
     if (result.success) {
+      lastSaleFolioRef.current = result.folio || null;
+      if (result.offline) {
+        showNotification(
+          "Host sin conexión: la venta quedó guardada y se subirá sola al reconectar.",
+          "warning",
+        );
+      }
       if (method === "cash") {
         setWaitingDrawer(true);
       } else {
@@ -908,6 +923,7 @@ if (e.key === "Tab" && !isEditable) {
         cashierId: cashier?.id,
         role: cashier?.role,
       });
+      if (res.success && res.register) lastRegisterRef.current = res.register;
       return !!(res.success && res.register && res.register.status === "open");
     } catch {
       return false;
@@ -1428,7 +1444,7 @@ if (e.key === "Tab" && !isEditable) {
       store: storeSettings,
       headerNote: receiptNotes.header,
       footerNote: receiptNotes.footer,
-      ticketNum: Date.now().toString().slice(-6),
+      ticketNum: lastSaleFolioRef.current || Date.now().toString().slice(-6),
       date: new Date(),
       cashierName: cashier?.name || "Usuario Principal",
       items,

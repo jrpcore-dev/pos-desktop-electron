@@ -3,20 +3,28 @@
 // 3g/D · traductor IPC→HTTP de la caja: los canales con scope `rpc` no se
 // ejecutan aquí, viajan al Host. Tres puertas: /api/rpc (lista blanca),
 // /api/sales (con Idempotency-Key) y /api/auth (PIN → token de sesión).
+//
+// Bloque 4 · cuando el Host no responde, la venta se guarda en `pending_sales`
+// y se sube sola al reconectar. Abrir/cerrar caja y gastos siguen exigiendo
+// Host; cerrar caja exige además la cola vacía.
 const crypto = require("crypto");
 const activation = require("./activation");
 const clientLink = require("./client-link");
 const dbSchema = require("./db-schema");
+const offlineQueue = require("./offline-queue");
+const pins = require("./pins");
+const protocol = require("./protocol");
 // 3g/D · registro de listeners CRUDOS: el puente lo usa para ejecutar en la
 // caja las claves de `save-setting` que son del propio aparato.
 const ipcRegistry = require("./ipc-registry");
 
 const TIMEOUT_MS = 8000;
+const OFFLINE_PIN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 // Claves de `save-setting` que el negocio comparte entre cajas (van al Host).
 const BUSINESS_SETTING_KEYS = new Set(dbSchema.REPLICATED_SETTINGS_KEYS);
 
-const fail = (code, error) => ({ success: false, code, error });
+const fail = (code, error, extra = {}) => ({ success: false, code, error, ...extra });
 
 // Lo que la caja sabe del Host: su URL, su propio id y sus dos tokens.
 const credentials = (db) => ({
@@ -28,9 +36,59 @@ const credentials = (db) => ({
   sessionToken: clientLink.readSessionToken(db) || "",
 });
 
-const postJson = async (creds, path, body, extraHeaders = {}) => {
+const canonical = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+};
+
+const sha256 = (text) => crypto.createHash("sha256").update(String(text)).digest("hex");
+
+// ── Folio local (Bloque 5) ──────────────────────────────────────────────────
+// La caja reserva su folio ANTES de enviar. Si el Host no responde, la misma
+// reserva viaja en la cola; el contador local nunca retrocede.
+const nextBoxFolio = (db) => {
+  const code = activation.getSetting(db, "box_device_code") || "";
+  const m = /^([A-Z])/.exec(String(code));
+  const letter = m ? m[1] : "X";
+  const key = "folio_next_seq";
+  const seq = Math.max(1, Number(activation.getSetting(db, key) || 1) || 1);
+  activation.setSetting(db, key, String(seq + 1));
+  return `${letter}-${String(seq).padStart(6, "0")}`;
+};
+
+// ── Intento de venta estable (Bloque 4/A) ───────────────────────────────────
+// La misma canasta reutiliza la MISMA clave y el MISMO folio aunque el usuario
+// reintente tras un timeout. Cambia la canasta → clave nueva. Tras éxito (o
+// tras encolar) se limpia.
+const ATTEMPT_KEY = "box_sale_attempt";
+const readAttempt = (db) => {
+  try {
+    const raw = activation.getSetting(db, ATTEMPT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+};
+const saveAttempt = (db, value) =>
+  activation.setSetting(db, ATTEMPT_KEY, JSON.stringify(value));
+const clearAttempt = (db) => {
+  try {
+    db.prepare("DELETE FROM settings WHERE key = ?").run(ATTEMPT_KEY);
+  } catch (err) {}
+};
+
+const postJson = async (db, creds, path, body, extraHeaders = {}) => {
+  const pendingCount = safe(() => offlineQueue.summary(db).count, 0);
   const headers = {
     "content-type": "application/json",
+    "x-protocol-version": protocol.PROTOCOL_VERSION,
+    "x-pending-sales": String(pendingCount),
     ...(creds.deviceId ? { "x-device-id": creds.deviceId } : {}),
     ...(creds.pairedToken ? { "x-device-token": creds.pairedToken } : {}),
     ...(creds.sessionToken ? { authorization: creds.sessionToken } : {}),
@@ -46,7 +104,19 @@ const postJson = async (creds, path, body, extraHeaders = {}) => {
   try {
     data = await res.json();
   } catch (err) {}
-  return { status: res.status, data };
+  try {
+    const warning = res.headers.get("x-protocol-warning");
+    activation.setSetting(db, "protocol_warning", warning || "");
+  } catch (err) {}
+  return { status: res.status, data, headers: res.headers };
+};
+
+const safe = (fn, fallback) => {
+  try {
+    return fn();
+  } catch (err) {
+    return fallback;
+  }
 };
 
 // 401 del Host = la sesión de PIN ya no sirve: se borra y el renderer la pide.
@@ -61,23 +131,41 @@ const unreachable = (err) =>
     `No se pudo contactar con el Host (${err && err.message})`,
   );
 
-// POST /api/rpc · los canales de la lista blanca del Host (rpc-channels.js).
-const rpcCall = async (db, channel, args = []) => {
-  const creds = credentials(db);
-  if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
-  let res;
-  try {
-    res = await postJson(creds, "/api/rpc", { channel, args });
-  } catch (err) {
-    return unreachable(err);
+// ── Cola offline ────────────────────────────────────────────────────────────
+const enqueueSale = (db, row) => {
+  const saved = offlineQueue.enqueue(db, row);
+  // La venta ya está a salvo en disco: se limpia el intento para que una
+  // canasta nueva no reutilice la clave.
+  clearAttempt(db);
+  return {
+    success: true,
+    offline: true,
+    pending: true,
+    saleId: null,
+    folio: saved.folio,
+    warnings: [],
+  };
+};
+
+const saleBody = (payload, folio, offline) => {
+  const body = {
+    cart: payload.cart,
+    total: payload.total,
+    paymentMethod: payload.paymentMethod,
+    discountTotal: payload.discountTotal,
+    folio,
+  };
+  if (payload.customerId !== null && payload.customerId !== undefined) {
+    body.customer_id = payload.customerId;
   }
-  if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
-  if (res.status === 401) return expired(db, res.data);
-  // Éxito: el Host envuelve el valor del handler en {success, result}.
-  if (res.status === 200 && res.data.success) {
-    return res.data.result === undefined ? null : res.data.result;
+  if (payload.registerId != null) body.register_id = payload.registerId;
+  if (payload.cashierId != null) body.cashier_id = payload.cashierId;
+  if (payload.cashierName) body.cashier_name = payload.cashierName;
+  if (offline) {
+    body.offline = true;
+    body.client_created_at = payload.clientCreatedAt || new Date().toISOString();
   }
-  return res.data; // fallo del Host ({success:false, code, error}) tal cual.
+  return body;
 };
 
 // POST /api/sales · la venta viaja con Idempotency-Key; el cajero que la firma
@@ -85,40 +173,161 @@ const rpcCall = async (db, channel, args = []) => {
 const recordSale = async (db, payload = {}) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
-  const body = {
-    cart: payload.cart,
-    total: payload.total,
-    paymentMethod: payload.paymentMethod,
-    discountTotal: payload.discountTotal,
-  };
-  if (payload.customerId !== null && payload.customerId !== undefined) {
-    body.customer_id = payload.customerId;
+
+  const signature = sha256(
+    canonical({
+      cart: payload.cart,
+      total: payload.total,
+      paymentMethod: payload.paymentMethod,
+      discountTotal: payload.discountTotal,
+      customerId: payload.customerId ?? null,
+      registerId: payload.registerId ?? null,
+    }),
+  );
+  let attempt = readAttempt(db);
+  if (!attempt || attempt.signature !== signature) {
+    attempt = {
+      signature,
+      key: crypto.randomUUID(),
+      folio: nextBoxFolio(db),
+    };
+    saveAttempt(db, attempt);
   }
+
+  let body = saleBody(payload, attempt.folio, false);
   let res;
   try {
-    res = await postJson(creds, "/api/sales", body, {
-      "idempotency-key": crypto.randomUUID(),
+    res = await postJson(db, creds, "/api/sales", body, {
+      "idempotency-key": attempt.key,
     });
   } catch (err) {
-    return unreachable(err);
+    return enqueueSale(db, {
+      folio: attempt.folio,
+      payload,
+      idempotencyKey: attempt.key,
+      registerId: payload.registerId,
+      cashierId: payload.cashierId,
+      cashierName: payload.cashierName,
+      localCreatedAt: new Date().toISOString(),
+    });
   }
-  if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
-  if (res.status === 401) return expired(db, res.data);
+  if (!res.data) {
+    return enqueueSale(db, {
+      folio: attempt.folio,
+      payload,
+      idempotencyKey: attempt.key,
+      registerId: payload.registerId,
+      cashierId: payload.cashierId,
+      cashierName: payload.cashierName,
+      localCreatedAt: new Date().toISOString(),
+    });
+  }
+  if (res.status === 401) {
+    // No se pierde: queda en cola y el renderer pedirá el PIN.
+    expired(db, res.data);
+    return enqueueSale(db, {
+      folio: attempt.folio,
+      payload,
+      idempotencyKey: attempt.key,
+      registerId: payload.registerId,
+      cashierId: payload.cashierId,
+      cashierName: payload.cashierName,
+      localCreatedAt: new Date().toISOString(),
+    });
+  }
+  // Folio repetido (solo posible tras restaurar un respaldo): se reasigna una
+  // vez con una clave nueva y se reintenta. La venta no se pierde.
+  if (res.data.code === "FOLIO_INVALID" || res.data.code === "SQLITE_CONSTRAINT_UNIQUE") {
+    attempt = { signature, key: crypto.randomUUID(), folio: nextBoxFolio(db) };
+    saveAttempt(db, attempt);
+    body = saleBody(payload, attempt.folio, false);
+    try {
+      res = await postJson(db, creds, "/api/sales", body, {
+        "idempotency-key": attempt.key,
+      });
+    } catch (err) {
+      return enqueueSale(db, {
+        folio: attempt.folio,
+        payload,
+        idempotencyKey: attempt.key,
+        registerId: payload.registerId,
+        cashierId: payload.cashierId,
+        cashierName: payload.cashierName,
+        localCreatedAt: new Date().toISOString(),
+      });
+    }
+  }
+  if (res.data.success) clearAttempt(db);
   return res.data; // éxito o fallo del Host: mismo contrato que el IPC local.
+};
+
+// Sube la cola en orden. El Host deduplica por la clave guardada en la fila.
+let syncInFlight = null;
+const syncPending = async (db) => {
+  if (syncInFlight) return syncInFlight;
+  const creds = credentials(db);
+  if (!creds.hostUrl) return { success: false, code: "NO_HOST_LINKED", pending: offlineQueue.countBlocking(db) };
+  syncInFlight = offlineQueue.sync(db, async (row) => {
+    const body = {
+      ...row.payload,
+      folio: row.folio,
+      offline: true,
+      register_id: row.registerId,
+      cashier_id: row.cashierId,
+      cashier_name: row.cashierName,
+      client_created_at: row.localCreatedAt,
+    };
+    const res = await postJson(db, creds, "/api/sales", body, {
+      "idempotency-key": row.idempotencyKey,
+    });
+    if (!res.data) return { success: false, code: "HOST_UNREACHABLE" };
+    if (res.status === 401) return { success: false, code: "SESSION_EXPIRED", error: "Sesión expirada" };
+    return res.data;
+  });
+  try {
+    return await syncInFlight;
+  } finally {
+    syncInFlight = null;
+  }
+};
+
+// ── PIN cacheado (Bloque 4) ─────────────────────────────────────────────────
+const offlineVerifyPin = (db, id, pin) => {
+  const cashier = db
+    .prepare("SELECT id, name, role, pin_hash, pin_salt FROM cashiers WHERE id = ? AND is_active = 1")
+    .get(Number(id));
+  if (!cashier || !cashier.pin_hash || !cashier.pin_salt) {
+    return fail("OFFLINE_PIN_UNAVAILABLE", "No hay PIN cacheado para este usuario");
+  }
+  if (!pins.verifyPin(pin, cashier.pin_salt, cashier.pin_hash)) {
+    return fail("PIN_INVALID", "PIN inválido");
+  }
+  const syncedAt = Number(activation.getSetting(db, "replica_synced_at") || 0);
+  const age = syncedAt ? Date.now() - syncedAt : Infinity;
+  return {
+    success: true,
+    offline: true,
+    cashier: { id: cashier.id, name: cashier.name, role: cashier.role },
+    warning:
+      age > OFFLINE_PIN_MAX_AGE_MS
+        ? "PIN verificado sin conexión con datos de más de 24 h. Conecta la caja pronto."
+        : null,
+    stale_ms: Number.isFinite(age) ? age : null,
+  };
 };
 
 // POST /api/auth · el PIN se comprueba en el Host y el token resultante
 // queda cifrado en safeStorage (nunca en claro).
 const verifyPin = async (db, id, pin) => {
   const creds = credentials(db);
-  if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  if (!creds.hostUrl) return offlineVerifyPin(db, id, pin);
   let res;
   try {
-    res = await postJson(creds, "/api/auth", { id, pin });
+    res = await postJson(db, creds, "/api/auth", { id, pin });
   } catch (err) {
-    return unreachable(err);
+    return offlineVerifyPin(db, id, pin);
   }
-  if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
+  if (!res.data) return offlineVerifyPin(db, id, pin);
   if (res.status !== 200 || res.data.success !== true) {
     // 401 aquí es "PIN inválido", NO sesión caducada: no se borra nada.
     const code =
@@ -132,10 +341,69 @@ const verifyPin = async (db, id, pin) => {
   return { success: true, cashier: res.data.cashier };
 };
 
+// ── Estado de caja cacheado (para vender sin Host) ──────────────────────────
+const REGISTER_CACHE_KEY = "last_register_snapshot";
+const cacheRegister = (db, result) => {
+  if (result && result.success && result.register) {
+    activation.setSetting(db, REGISTER_CACHE_KEY, JSON.stringify(result.register));
+  }
+};
+const cachedRegister = (db) => {
+  try {
+    const raw = activation.getSetting(db, REGISTER_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+};
+
+const HOST_REQUIRED = (what) =>
+  fail("HOST_REQUIRED", `${what} requiere conexión con el Host.`);
+
 // Punto de entrada del guard: el canal entra igual que por IPC y sale traducido.
 const forward = (db, channel, args = []) => {
   if (channel === "verify-cashier-pin") return verifyPin(db, args[0], args[1]);
   if (channel === "record-sale") return recordSale(db, args[0]);
+  // Cerrar caja exige que la cola esté vacía (decisión de negocio).
+  if (channel === "close-cash-register") {
+    const pending = offlineQueue.countBlocking(db);
+    if (pending > 0) {
+      return Promise.resolve(
+        fail(
+          "PENDING_SALES",
+          `Hay ${pending} venta(s) pendiente(s) de sincronizar. Conecta el Host y espera a que suban antes de cerrar caja.`,
+        ),
+      );
+    }
+  }
+  if (channel === "open-cash-register" || channel === "register-cash-expense" || channel === "delete-cash-expense") {
+    // Si el Host está caído, el error de red no es claro para el cajero.
+    return rpcCall(db, channel, args).then((r) => {
+      if (r && r.code === "HOST_UNREACHABLE") return HOST_REQUIRED("Esta operación");
+      return r;
+    });
+  }
+  if (channel === "get-cash-register-status") {
+    return rpcCall(db, channel, args).then((r) => {
+      if (r && r.success) {
+        cacheRegister(db, r);
+        return r;
+      }
+      if (r && r.code === "HOST_UNREACHABLE") {
+        const cached = cachedRegister(db);
+        if (cached) {
+          return {
+            success: true,
+            offline: true,
+            register: cached,
+            warning: "Mostrando la última caja conocida; el Host no responde.",
+          };
+        }
+      }
+      return r;
+    });
+  }
   // save-setting: negocio (nombre del local, moneda, ticket…) → Host; lo del
   // propio aparato (báscula, impresora) se escribe AQUÍ, en la BD de la caja.
   if (channel === "save-setting" && !BUSINESS_SETTING_KEYS.has(String(args[0]))) {
@@ -146,4 +414,35 @@ const forward = (db, channel, args = []) => {
   return rpcCall(db, channel, args);
 };
 
-module.exports = { forward, rpcCall, recordSale, verifyPin };
+// POST /api/rpc · los canales de la lista blanca del Host (rpc-channels.js).
+const rpcCall = async (db, channel, args = []) => {
+  const creds = credentials(db);
+  if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  let res;
+  try {
+    res = await postJson(db, creds, "/api/rpc", { channel, args });
+  } catch (err) {
+    return unreachable(err);
+  }
+  if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
+  if (res.status === 401) return expired(db, res.data);
+  // Éxito: el Host envuelve el valor del handler en {success, result}.
+  if (res.status === 200 && res.data.success) {
+    return res.data.result === undefined ? null : res.data.result;
+  }
+  return res.data; // fallo del Host ({success:false, code, error}) tal cual.
+};
+
+module.exports = {
+  forward,
+  rpcCall,
+  recordSale,
+  verifyPin,
+  nextBoxFolio,
+  syncPending,
+  offlineVerifyPin,
+  pendingSummary: (db) => offlineQueue.summary(db),
+  pendingList: (db, statuses) => offlineQueue.list(db, statuses),
+  pendingCancel: (db, id) => offlineQueue.cancel(db, id),
+  pendingRetry: (db) => offlineQueue.retryConflicts(db),
+};

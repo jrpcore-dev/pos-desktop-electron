@@ -163,7 +163,13 @@ const dropTriggers = (db) => {
   const cashierBefore = dbA.prepare("SELECT pin_hash, pin_salt FROM cashiers WHERE id=1").get();
   dbA.prepare("UPDATE cashiers SET pin_hash='nuevo', pin_salt='sal' WHERE id=1").run();
   const logPin = logAll().slice(seqC);
-  check(logPin.length === 0, "cashiers: cambiar pin_hash/pin_salt NO genera evento", JSON.stringify(logPin));
+  // Bloque 4/C · el hash del PIN SÍ se replica: la caja lo necesita para
+  // validar el login offline (24 h desde la última sincronización).
+  check(
+    logPin.length === 1 && logPin[0].op === "upsert",
+    "cashiers: cambiar pin_hash/pin_salt SÍ genera evento (PIN offline)",
+    JSON.stringify(logPin),
+  );
   const seqC2 = logAll().length;
   dbA.prepare("UPDATE cashiers SET name='Ana Maria', role='manager' WHERE id=1").run();
   const logRole = logAll().slice(seqC2);

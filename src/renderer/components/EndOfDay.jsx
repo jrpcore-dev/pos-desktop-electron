@@ -1,4 +1,5 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   Activity,
   Banknote,
@@ -247,8 +248,9 @@ const EndOfDay = () => {
   const [turnoSearch, setTurnoSearch] = useState("");
   const turnoSearchRef = useRef(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco vivo sin skeleton (reglas 1 y 5).
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
 
     try {
       const regResult = await window.api.invoke("get-cash-register-status", {
@@ -328,13 +330,17 @@ const EndOfDay = () => {
         text: "No se pudo cargar la información de caja.",
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [cashier?.id, cashier?.role]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // In vivo: un cierre/apertura de caja (también el del encabezado) refresca
+  // el corte sola. Eventos raros → refresco directo y silencioso, sin chip.
+  useDbChanges(() => fetchData(true), ["cash_register"]);
 
   useEffect(() => {
     const handleSaleRegistered = () => fetchData();

@@ -30,8 +30,10 @@
 //
 // Nota sobre `get-outside-register-sales` y `cancel-sale`: son los dos casos
 // en los que "la venta" puede no tener caja asignada (`register_id IS NULL`).
-// Se les añadió el filtro por `sales.device_id` (entrega 3g/C): así una caja
-// no puede leer ni cancelar ventas hechas en otra.
+// Bloque 4/A · el filtro por `sales.device_id` y la comprobación de propiedad
+// se aplican de verdad en main.js: una caja remota no puede leer ni cancelar
+// ventas hechas en otra. El Host local (sin device) sí administra todas, y
+// `cancel-sale` conserva las reglas de rol y de corte cerrado.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RPC_CHANNELS = new Set([
@@ -56,12 +58,18 @@ const RPC_CHANNELS = new Set([
   "get-sale-details",
   "get-sales-by-date",
   "get-sales-by-range",
+  "list-sale-devices",
   "get-daily-sales-week",
   "get-weekly-sales",
   "get-weekly-sales-range",
   "get-top-products",
   "get-expenses-by-date",
   "get-expenses-by-range",
+  // ── Bloque 4/E · conflictos de stock (se resuelven en el Host) ────────────
+  "get-stock-conflicts",
+  "resolve-stock-conflict",
+  // ── Bloque 5 · la caja lee su archivo y manda el contenido ────────────────
+  "import-products-content",
   // ── catálogo: el inventario se lee local, se ESCRIBE en el Host ───────────
   "get-stock-movements",
   "add-product",

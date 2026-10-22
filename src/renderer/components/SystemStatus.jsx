@@ -96,6 +96,8 @@ const SystemStatus = ({
   scaleConnected,
   tasksCount,
   isDark,
+  pendingCount = 0,
+  replicaStaleMs = null,
   onToggleTheme,
   onOpenScale,
   onOpenTasks,
@@ -168,7 +170,7 @@ const openRegister = () => {
             className="flex shrink-0 items-center gap-1.5"
             title={
               hostStatus
-                ? `Host: ${hostStatus.reachable ? "conectado" : "desconectado"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
+                ? `Host: ${hostStatus.busy ? "ocupado" : hostStatus.reachable ? "conectado" : "desconectado"}${pendingCount ? ` · ${pendingCount} venta(s) pendiente(s)` : ""} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
                 : `Servidor: ${serverRunning ? "activo" : "caído"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
             }
           >
@@ -176,18 +178,22 @@ const openRegister = () => {
               size={14}
               aria-label={
                 hostStatus
-                  ? hostStatus.reachable
-                    ? "Conectado al Host"
-                    : "Host desconectado"
+                  ? hostStatus.busy
+                    ? "Host ocupado"
+                    : hostStatus.reachable
+                      ? "Conectado al Host"
+                      : "Host desconectado"
                   : serverRunning
                     ? "Servidor activo"
                     : "Servidor caído"
               }
               className={
                 hostStatus
-                  ? hostStatus.reachable
-                    ? "text-success"
-                    : "text-destructive"
+                  ? hostStatus.busy
+                    ? "text-warning"
+                    : hostStatus.reachable
+                      ? "text-success"
+                      : "text-destructive"
                   : serverRunning
                     ? "text-success"
                     : "text-destructive"
@@ -284,15 +290,58 @@ const openRegister = () => {
         <Divider />
 
         <div className="p-1.5">
-          {(hostStatus ? !hostStatus.reachable : !serverRunning) && (
+          {hostStatus && hostStatus.busy && (
+            <div className="mb-1.5 rounded-md border border-warning/30 bg-warning/[0.08] px-2.5 py-2">
+              <p className="text-[14px] font-semibold text-warning">
+                Host ocupado
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-warning/90">
+                Está importando datos. Puedes vender; los avisos y la
+                sincronización se reanudan solos al terminar.
+              </p>
+            </div>
+          )}
+          {hostStatus && !hostStatus.reachable && (
             <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
               <p className="text-[14px] font-semibold text-destructive">
-                {hostStatus ? "Host desconectado" : "Servidor móvil detenido"}
+                Host desconectado
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">
-                {hostStatus
-                  ? "La caja no puede vender ni sincronizar hasta que el Host vuelva."
-                  : "La app móvil no está conectada. La venta local sigue funcionando."}
+                Puedes seguir vendiendo: las ventas se guardan y se suben solas
+                al reconectar. Abrir/cerrar caja y gastos sí requieren Host.
+              </p>
+            </div>
+          )}
+          {!hostStatus && !serverRunning && (
+            <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
+              <p className="text-[14px] font-semibold text-destructive">
+                Servidor móvil detenido
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">
+                La app móvil no está conectada. La venta local sigue funcionando.
+              </p>
+            </div>
+          )}
+          {pendingCount > 0 && (
+            <div className="mb-1.5 rounded-md border border-warning/30 bg-warning/[0.07] px-2.5 py-2">
+              <p className="text-[14px] font-semibold text-warning">
+                {pendingCount} venta(s) pendiente(s)
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-warning/90">
+                Están a salvo en esta caja y subirán solas. No cierres la caja
+                hasta que la cola esté vacía.
+              </p>
+            </div>
+          )}
+          {replicaStaleMs != null && replicaStaleMs > 30 * 60 * 1000 && (
+            <div className="mb-1.5 rounded-md border border-warning/30 bg-warning/[0.07] px-2.5 py-2">
+              <p className="text-[14px] font-semibold text-warning">
+                Datos de hace {Math.floor(replicaStaleMs / 3600000)} h{" "}
+                {Math.floor((replicaStaleMs % 3600000) / 60000)} min
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-warning/90">
+                Catálogo y precios pueden estar desactualizados. Se sigue
+                vendiendo; no se bloquea nada.
               </p>
             </div>
           )}
@@ -302,15 +351,25 @@ const openRegister = () => {
               label={hostStatus ? "Host" : "Servidor"}
               status={
                 hostStatus
-                  ? hostStatus.reachable
-                    ? "Conectado"
-                    : "Desconectado"
+                  ? hostStatus.busy
+                    ? "Ocupado"
+                    : hostStatus.reachable
+                      ? "Conectado"
+                      : "Desconectado"
                   : serverRunning
                     ? "Activo"
                     : "Caído"
               }
               tone={
-                (hostStatus ? hostStatus.reachable : serverRunning) ? "ok" : "err"
+                hostStatus
+                  ? hostStatus.busy
+                    ? "warn"
+                    : hostStatus.reachable
+                      ? "ok"
+                      : "err"
+                  : serverRunning
+                    ? "ok"
+                    : "err"
               }
             />
             <StateTile

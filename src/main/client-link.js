@@ -8,6 +8,16 @@ const crypto = require("crypto");
 const dgram = require("dgram");
 const activation = require("./activation");
 const protocol = require("./protocol");
+const offlineQueue = require("./offline-queue");
+// Bloque 5 · la caja reporta cuántas ventas tiene pendientes para que el Host
+// las muestre en la administración de cajas.
+const safePending = (db) => {
+  try {
+    return offlineQueue.countBlocking(db);
+  } catch (err) {
+    return 0;
+  }
+};
 // A3 · al volverse cliente, la caja se queda SIN triggers de réplica: sólo
 // consume la del Host, y su propio `change_log`/tumbas no tienen lector.
 const dbSchema = require("./db-schema");
@@ -31,6 +41,7 @@ const SETTINGS = Object.freeze({
   HOST_DEVICE_ID: "linked_host_device_id",
   SYNC_COMPLETED: "sync_completed",
   BOX_DEVICE_ID: "box_device_id",
+  BOX_DEVICE_CODE: "box_device_code",
   BOX_PAIRED_TOKEN: "box_paired_token",
   // 3g/D · sesión de cajero abierta en el Host (PIN verificado allí).
   BOX_SESSION_TOKEN: "box_session_token",
@@ -285,7 +296,10 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
   try {
     res = await fetch(`${url}/api/activation/pair`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-protocol-version": protocol.PROTOCOL_VERSION,
+      },
       body: JSON.stringify({
         deviceId,
         code,
@@ -317,6 +331,9 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
   activation.setSetting(db, SETTINGS.DEVICE_ROLE, "client");
   activation.setSetting(db, SETTINGS.HOST_URL, url);
   activation.setSetting(db, SETTINGS.HOST_DEVICE_ID, hostDeviceId);
+  if (data.device_code) {
+    activation.setSetting(db, SETTINGS.BOX_DEVICE_CODE, data.device_code);
+  }
   // A3 · el rol acaba de pasar a "client": los triggers creados con el rol
   // por defecto se retiran YA, sin esperar al próximo arranque.
   dbSchema.ensureTriggersForRole(db);
@@ -356,7 +373,12 @@ const linkStatus = async (db, opts = {}) => {
   let res;
   try {
     res = await fetch(`${url}/api/activation/status`, {
-      headers: { "x-device-id": deviceId, "x-device-token": token },
+      headers: {
+        "x-device-id": deviceId,
+        "x-device-token": token,
+        "x-protocol-version": protocol.PROTOCOL_VERSION,
+        "x-pending-sales": String(safePending(db)),
+      },
       signal: AbortSignal.timeout(opts.timeoutMs || DEFAULT_TIMEOUT_MS),
     });
   } catch (err) {
@@ -379,6 +401,9 @@ const linkStatus = async (db, opts = {}) => {
 
   const revoked = data.revoked === true;
   const approved = data.approved === true && !revoked;
+  if (data.device_code) {
+    activation.setSetting(db, SETTINGS.BOX_DEVICE_CODE, data.device_code);
+  }
   return {
     success: true,
     approved,

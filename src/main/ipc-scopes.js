@@ -63,6 +63,7 @@ const CLASSIFICATION_BASE = {
   "log-error": SCOPES.SYSTEM,
   "print-pdf": SCOPES.SYSTEM,
   "print-receipt": SCOPES.SYSTEM,
+  "print-escpos-test": SCOPES.SYSTEM,
   "open-cash-drawer": SCOPES.SYSTEM,
   "get-printers": SCOPES.SYSTEM,
   "is-first-time": SCOPES.SYSTEM,
@@ -83,6 +84,11 @@ const CLASSIFICATION_BASE = {
   "get-backups": SCOPES.SYSTEM,
   "delete-backup": SCOPES.SYSTEM,
   "download-backup": SCOPES.SYSTEM,
+  // Bloque 6 · configuración local del respaldo y promoción manual.
+  "get-backup-config": SCOPES.LOCAL_READ,
+  "save-backup-config": SCOPES.SYSTEM,
+  "pull-backup-now": SCOPES.SYSTEM,
+  "promote-to-host": SCOPES.SYSTEM,
   // 3g/D · verify-cashier-pin ya no está aquí: va al Host (scope RPC).
   "vendesaldo:status": SCOPES.SYSTEM,
 
@@ -93,6 +99,14 @@ const CLASSIFICATION_BASE = {
   // 3d · sincronizar la réplica escribe en la BD y usa la red: SYSTEM.
   "replica-sync-now": SCOPES.SYSTEM,
   "replica-reset": SCOPES.SYSTEM,
+  // Bloque 4/C · cola offline: es estado del propio aparato.
+  "pending-sales-summary": SCOPES.SYSTEM,
+  "pending-sales-list": SCOPES.SYSTEM,
+  "pending-sales-cancel": SCOPES.SYSTEM,
+  "pending-sales-retry": SCOPES.SYSTEM,
+  "pending-sales-sync-now": SCOPES.SYSTEM,
+  // Bloque 5 · leer el archivo elegido en el diálogo LOCAL de la caja.
+  "read-import-file": SCOPES.SYSTEM,
 
   // ── LOCAL_READ: lectura local ───────────────────────────────────────────
   "get-next-barcode": SCOPES.LOCAL_READ,
@@ -135,6 +149,7 @@ const CLASSIFICATION_BASE = {
   "import-products-data": SCOPES.HOST_WRITE,
   "restore-backup": SCOPES.HOST_WRITE,
   "revoke-device": SCOPES.HOST_WRITE,
+  "rename-device": SCOPES.HOST_WRITE,
   "rotate-activation-code": SCOPES.HOST_WRITE,
   "set-activation-enabled": SCOPES.HOST_WRITE,
   "set-activation-grace": SCOPES.HOST_WRITE,

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
+import FreshDataChip from "./FreshDataChip";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -1131,6 +1133,27 @@ const Reports = () => {
   const [topLoading, setTopLoading] = useState(true);
   // Histograma de ventas por hora (0-23, hora MX) del período
   const [hourly, setHourly] = useState([]);
+  // Regla 5 · los datos nuevos NO recalculan el informe solo: chip a decisión.
+  const [freshData, setFreshData] = useState(false);
+  // Bloque 5 · filtro por caja. "all" = consolidado; "__host__" = ventas del Host.
+  const [deviceFilter, setDeviceFilter] = useState("all");
+  const [devices, setDevices] = useState([]);
+  const [hasHostSales, setHasHostSales] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.api
+      .invoke("list-sale-devices")
+      .then((res) => {
+        if (cancelled) return;
+        setDevices(Array.isArray(res?.devices) ? res.devices : []);
+        setHasHostSales(!!res?.hasHost);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ─── FECHA INICIAL (semana de calendario, modo semanal) ───
   // Usa la misma getWeekRange del gráfico (lunes→domingo). Antes el rango
@@ -1159,15 +1182,21 @@ const Reports = () => {
     setLoading(true);
     const prev = prevRangeOf(startDate, endDate);
     const [salesRes, expRes, prevSalesRes, prevExpRes] = await Promise.all([
-      window.api.invoke("get-sales-by-range", { startDate, endDate }),
-      window.api.invoke("get-expenses-by-range", { startDate, endDate }),
+      window.api.invoke("get-sales-by-range", { startDate, endDate, deviceId: deviceFilter }),
+      window.api.invoke("get-expenses-by-range", {
+        startDate,
+        endDate,
+        deviceId: deviceFilter,
+      }),
       window.api.invoke("get-sales-by-range", {
         startDate: prev.start,
         endDate: prev.end,
+        deviceId: deviceFilter,
       }),
       window.api.invoke("get-expenses-by-range", {
         startDate: prev.start,
         endDate: prev.end,
+        deviceId: deviceFilter,
       }),
     ]);
 
@@ -1207,7 +1236,7 @@ const Reports = () => {
     });
     setHourly(hourlyByHour);
     setLoading(false);
-  }, [startDate, endDate]);
+  }, [startDate, endDate, deviceFilter]);
 
   useEffect(() => {
     fetchSummary();
@@ -1216,10 +1245,12 @@ const Reports = () => {
   // ─── PRODUCTOS MÁS VENDIDOS (all-time) ────────────────────
   const fetchTopProducts = useCallback(async () => {
     setTopLoading(true);
-    const res = await window.api.invoke("get-top-products");
+    const res = await window.api.invoke("get-top-products", {
+      deviceId: deviceFilter,
+    });
     setTopProducts(Array.isArray(res) ? res : []);
     setTopLoading(false);
-  }, []);
+  }, [deviceFilter]);
 
   useEffect(() => {
     fetchTopProducts();
@@ -1249,18 +1280,22 @@ const Reports = () => {
       window.api.invoke("get-daily-sales-week", {
         startDate: monthStart,
         endDate: monthEndPlus,
+        deviceId: deviceFilter,
       }),
       window.api.invoke("get-expenses-by-range", {
         startDate: monthStart,
         endDate: monthEnd,
+        deviceId: deviceFilter,
       }),
       window.api.invoke("get-sales-by-range", {
         startDate: prevStart,
         endDate: prevEnd,
+        deviceId: deviceFilter,
       }),
       window.api.invoke("get-expenses-by-range", {
         startDate: prevStart,
         endDate: prevEnd,
+        deviceId: deviceFilter,
       }),
     ]);
 
@@ -1300,7 +1335,7 @@ const Reports = () => {
       prevExpenses: prevExpRes.success ? prevExpRes.totalExpenses || 0 : 0,
     });
     setCalendarLoading(false);
-  }, []);
+  }, [deviceFilter]);
 
   useEffect(() => {
     if (calendarOpen) fetchCalendarMonth(calendarDate);
@@ -1310,8 +1345,8 @@ const Reports = () => {
   const fetchDayKpi = useCallback(async (day) => {
     setDayLoading(true);
     const [salesRes, expRes] = await Promise.all([
-      window.api.invoke("get-sales-by-date", { date: day }),
-      window.api.invoke("get-expenses-by-date", { date: day }),
+      window.api.invoke("get-sales-by-date", { date: day, deviceId: deviceFilter }),
+      window.api.invoke("get-expenses-by-date", { date: day, deviceId: deviceFilter }),
     ]);
     setDayKpi({
       salesTotal: salesRes.success ? salesRes.total || 0 : 0,
@@ -1320,7 +1355,7 @@ const Reports = () => {
       expensesCount: expRes.success ? expRes.count || 0 : 0,
     });
     setDayLoading(false);
-  }, []);
+  }, [deviceFilter]);
 
   useEffect(() => {
     if (selectedDay) fetchDayKpi(selectedDay);
@@ -1345,10 +1380,12 @@ const Reports = () => {
       window.api.invoke("get-daily-sales-week", {
         startDate: start,
         endDate: toEndExclusive(end),
+        deviceId: deviceFilter,
       }),
       window.api.invoke("get-expenses-by-range", {
         startDate: start,
         endDate,
+        deviceId: deviceFilter,
       }),
     ]);
 
@@ -1410,11 +1447,25 @@ const Reports = () => {
       setTrendData(pts);
     }
     setChartLoading(false);
-  }, []);
+  }, [deviceFilter]);
 
   useEffect(() => {
     fetchTrend(chartRefDate, chartMode);
   }, [chartMode, chartRefDate, fetchTrend]);
+
+  // Regla 5 · chip "Hay datos nuevos": refresca resumen, top y gráfica del
+  // período elegido, solo a petición del usuario (nunca con cada venta).
+  const refreshNow = useCallback(() => {
+    setFreshData(false);
+    fetchSummary();
+    fetchTopProducts();
+    fetchTrend(chartRefDate, chartMode);
+  }, [fetchSummary, fetchTopProducts, fetchTrend, chartRefDate, chartMode]);
+
+  useDbChanges(
+    () => setFreshData(true),
+    ["sales", "cash_register_expenses"],
+  );
 
   const syncRangeWithChart = (d, mode) => {
     if (mode === "semanal") {
@@ -1812,6 +1863,26 @@ const Reports = () => {
           }
           actions={
             <>
+              {freshData && <FreshDataChip onClick={refreshNow} />}
+              <label className="sr-only" htmlFor="report-device-filter">
+                Filtrar por caja
+              </label>
+              <select
+                id="report-device-filter"
+                value={deviceFilter}
+                onChange={(e) => setDeviceFilter(e.target.value)}
+                className="h-9 rounded-md border border-input bg-background px-2.5 text-sm text-foreground shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                title="Vista consolidada o por caja"
+              >
+                <option value="all">Todas las cajas</option>
+                {hasHostSales && <option value="__host__">Host</option>}
+                {devices.map((d) => (
+                  <option key={d.device_id} value={d.device_id}>
+                    {(d.device_code || d.device_name || d.device_id) +
+                      (d.device_name && d.device_code ? ` · ${d.device_name}` : "")}
+                  </option>
+                ))}
+              </select>
               <DateRangePicker
                 value={dateRangePickerValue}
                 onApply={handleApplyRange}

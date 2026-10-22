@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
+import FreshDataChip from "./FreshDataChip";
 import {
   ArrowDown,
   ArrowUp,
@@ -31,7 +33,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
-import { receiptDocCss } from "../utils/receiptTemplate";
+import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { Badge } from "./ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -130,7 +132,9 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
   return (
     <TableRow key={sale.id}>
       <TableCell className="px-4 py-3">
-        <span className="text-sm font-semibold text-foreground">#{sale.id}</span>
+        <span className="text-sm font-semibold text-foreground">
+          {sale.folio || `#${sale.id}`}
+        </span>
       </TableCell>
       <TableCell className="px-4 py-3">
         <p className="text-sm font-medium text-foreground">{formatMXDate(sale.created_at)}</p>
@@ -138,6 +142,11 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
       </TableCell>
       <TableCell className="px-4 py-3">
         <span className="text-sm text-foreground">{sale.cashier_name || "—"}</span>
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <span className="text-sm text-foreground">
+          {sale.device_code || (sale.device_id ? sale.device_id.slice(0, 8) : "Host")}
+        </span>
       </TableCell>
       <TableCell className="px-4 py-3">{methodChip(sale.payment_method)}</TableCell>
       <TableCell className="px-4 py-3">{statusBadge(sale)}</TableCell>
@@ -203,48 +212,56 @@ const ExpenseRow = memo(function ExpenseRow({ expense }) {
   );
 });
 
+// Reimpresión con la MISMA plantilla del ticket de venta (logo, notas, ancho
+// del rollo). Recibido/cambio no se guardan en la venta, así que se omiten.
 const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => {
   if (!saleDetail) return;
   setPrinting(true);
   try {
-    const store = (await window.api.invoke("get-setting", "store_name")) || "MI TIENDA";
-    const now = new Date(saleDetail.created_at);
-    const items = saleItems || [];
-    const lines = [];
-    lines.push(`<div style="text-align:center;font-weight:bold;font-size:15px">${store}</div>`);
-    lines.push(`<div style="text-align:center;font-size:10px">${now.toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Mexico_City" })}<br>${now.toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}</div>`);
-    lines.push(`<div class="sep"></div>`);
-    lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Cajero:</span><span>${saleDetail.cashier_name || "Usuario"}</span></div>`);
-    lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Ticket #:</span><span>${saleDetail.id}</span></div>`);
-    lines.push(`<div class="sep"></div>`);
-    lines.push(`<div style="text-align:center;font-weight:bold;font-size:12px">DETALLE DE COMPRA</div>`);
-    lines.push(`<div class="sep"></div>`);
-    items.forEach((it) => {
+    const get = (key) => window.api.invoke("get-setting", key);
+    const [storeName, storeLogo, headerNote, footerNote, paperWidthMm] =
+      await Promise.all([
+        get("store_name"),
+        get("store_logo"),
+        get("print_header_note"),
+        get("print_footer_note"),
+        get("paper_width_mm"),
+      ]);
+    const items = (saleItems || []).map((it) => {
       const qty = Number(it.quantity || 0);
       const price = Number(it.price_at_sale || 0);
-      const name = (it.name || it.product_name || "Producto").length > 24
-        ? (it.name || it.product_name || "Producto").substring(0, 22) + ".."
-        : it.name || it.product_name || "Producto";
-      lines.push(`<div style="font-weight:bold;font-size:12px">${name}</div>`);
-      lines.push(`<div style="display:flex;justify-content:space-between;font-size:10px"><span>${qty} x ${fmtMoney(price)}</span><span>${fmtMoney(qty * price)}</span></div>`);
-      lines.push(`<div style="border-bottom:1px dotted #ccc;margin:3px 0"></div>`);
+      const fullName = it.name || it.product_name || "Producto";
+      return {
+        name: fullName.length > 24 ? fullName.substring(0, 22) + ".." : fullName,
+        qtyDisplay: qty,
+        unit: "",
+        unitPrice: price,
+        lineTotal: qty * price,
+        discountLabel: Number(it.discount_percent) > 0 ? `-${it.discount_percent}%` : null,
+      };
     });
-    lines.push(`<div class="sep"></div>`);
-    lines.push(`<div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px"><span>TOTAL:</span><span>${fmtMoney(saleDetail.total)}</span></div>`);
-    lines.push(`<div class="sep"></div>`);
-    lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Metodo:</span><span><strong>${methodNames[saleDetail.payment_method] || saleDetail.payment_method}</strong></span></div>`);
-    if ((saleDetail.discount_total ?? 0) > 0) {
-      lines.push(`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Descuento:</span><span>-${fmtMoneyAbs(saleDetail.discount_total)}</span></div>`);
-    }
-    lines.push(`<div class="sep"></div>`);
-    lines.push(`<div style="text-align:center;font-weight:bold;font-size:13px">¡GRACIAS POR SU COMPRA!</div>`);
-    lines.push(`<div style="height:20px"></div>`);
-    const paperWidthMm = await window.api.invoke(
-      "get-setting",
-      "paper_width_mm",
-    );
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${receiptDocCss(paperWidthMm)}
-    </style></head><body>${lines.join("")}</body></html>`;
+    const discountTotal = Number(saleDetail.discount_total ?? 0);
+    const total = Number(saleDetail.total || 0);
+    const html = buildReceiptHTML({
+      store: {
+        name: (storeName || "MI TIENDA").toUpperCase(),
+        logo: storeLogo || "",
+      },
+      headerNote: headerNote || "",
+      footerNote: footerNote || "",
+      ticketNum: saleDetail.id,
+      date: new Date(saleDetail.created_at),
+      cashierName: saleDetail.cashier_name || "Usuario",
+      items,
+      subtotal: total + discountTotal,
+      showDiscounts: discountTotal > 0,
+      discountTotal,
+      total,
+      methodLabel: (
+        methodNames[saleDetail.payment_method] || saleDetail.payment_method || ""
+      ).toUpperCase(),
+      paperWidthMm: paperWidthMm ?? 58,
+    });
     const res = await window.api.invoke("print-receipt", html);
     if (res && !res.success) setError(res.error || "No se pudo imprimir el ticket");
   } catch (e) {
@@ -499,6 +516,13 @@ const Transacciones = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState(null);
   const [printing, setPrinting] = useState(false);
+  // Regla 5 · venta/gasto nuevo (aquí o en otra caja) NO mueve la tabla
+  // debajo del usuario: aparece el chip y él decide cuándo refrescar.
+  const [freshData, setFreshData] = useState(false);
+  useDbChanges(
+    () => setFreshData(true),
+    ["sales", "cash_register_expenses"],
+  );
 
   const load = useCallback(async () => {
     const skipFlash = initialLoadRef.current;
@@ -544,6 +568,11 @@ const Transacciones = () => {
   }, [dateRange]);
 
   useEffect(() => {
+    load();
+  }, [load]);
+
+  const refreshNow = useCallback(() => {
+    setFreshData(false);
     load();
   }, [load]);
 
@@ -682,7 +711,9 @@ const Transacciones = () => {
       <PageHeader
         description="Historial de ventas y egresos"
         actions={
-          !loading && (sales.length > 0 || expenses.length > 0) ? (
+          <>
+            {freshData && <FreshDataChip onClick={refreshNow} />}
+            {!loading && (sales.length > 0 || expenses.length > 0) ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-1.5">
@@ -703,6 +734,8 @@ const Transacciones = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
+          </>
+        }
       />
 
       {!loading && error && (
@@ -854,6 +887,7 @@ const Transacciones = () => {
                   <SortHead label="Venta" k="id" active={saleSortKey === "id"} dir={saleSortDir} onSort={handleSaleSort} />
                   <SortHead label="Fecha" k="created_at" active={saleSortKey === "created_at"} dir={saleSortDir} onSort={handleSaleSort} />
                   <SortHead label="Cajero" k="cashier_name" active={saleSortKey === "cashier_name"} dir={saleSortDir} onSort={handleSaleSort} />
+                  <TableHead className="px-4 font-semibold text-foreground/75">Caja</TableHead>
                   <SortHead label="Método" k="payment_method" active={saleSortKey === "payment_method"} dir={saleSortDir} onSort={handleSaleSort} />
                   <TableHead className="px-4 font-semibold text-foreground/75">Estado</TableHead>
                   <SortHead label="Monto" k="total" align="right" active={saleSortKey === "total"} dir={saleSortDir} onSort={handleSaleSort} />
@@ -872,6 +906,7 @@ const Transacciones = () => {
                         </div>
                       </TableCell>
                       <TableCell className="px-4 py-3"><Skeleton className="h-4 w-24" /></TableCell>
+                      <TableCell className="px-4 py-3"><Skeleton className="h-4 w-10" /></TableCell>
                       <TableCell className="px-4 py-3"><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell className="px-4 py-3"><Skeleton className="h-5 w-20" /></TableCell>
                       <TableCell className="px-4 py-3 text-right"><Skeleton className="ml-auto h-4 w-16" /></TableCell>
@@ -880,7 +915,7 @@ const Transacciones = () => {
                   ))
                 ) : sortedSales.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-28 px-4 text-center">
+                    <TableCell colSpan={8} className="h-28 px-4 text-center">
                       <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
                         {search || method ? (
                           <>

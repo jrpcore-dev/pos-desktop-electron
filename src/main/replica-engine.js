@@ -14,6 +14,7 @@
 const activation = require("./activation");
 const clientLink = require("./client-link");
 const dbSchema = require("./db-schema");
+const protocol = require("./protocol");
 
 const STAGING_PREFIX = "stg_replica_";
 const DEFAULT_PAGE_SIZE = 2000;
@@ -48,7 +49,11 @@ const getJson = async (url, { deviceId, token, timeoutMs = 15000 }) => {
   let res;
   try {
     res = await fetch(url, {
-      headers: { "x-device-id": deviceId, "x-device-token": token },
+      headers: {
+        "x-device-id": deviceId,
+        "x-device-token": token,
+        "x-protocol-version": protocol.PROTOCOL_VERSION,
+      },
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
@@ -58,7 +63,16 @@ const getJson = async (url, { deviceId, token, timeoutMs = 15000 }) => {
   try {
     data = await res.json();
   } catch (err) {}
-  if (res.status === 403) return { ok: false, code: "NOT_PAIRED", error: (data && data.error) || "Emparejamiento inválido" };
+  // 403 · el cuerpo trae el código real (NOT_APPROVED / SCOPE_MISSING…);
+  // NOT_PAIRED queda como respaldo para los 403 sin código. El mensaje del
+  // Host viaja igual y ahora además se conserva el scope que faltaba.
+  if (res.status === 403)
+    return {
+      ok: false,
+      code: (data && data.code) || "NOT_PAIRED",
+      scopeRequired: (data && data.scopeRequired) || undefined,
+      error: (data && data.error) || "Emparejamiento inválido",
+    };
   if (!res.ok || !data) return { ok: false, code: "HOST_ERROR", error: `El Host respondió HTTP ${res.status}`, status: res.status };
   if (data.success === false) {
     return { ok: false, code: data.code || "HOST_ERROR", resync: data.resync === true, error: data.error };
@@ -92,11 +106,29 @@ const setState = (db, values) => {
 // Tablas staging: se conservan entre ejecuciones para poder REANUDAR la
 // descarga por el cursor persistido. Sólo se vacían al empezar una tabla.
 const ensureStaging = (db, table, cols) => {
+  const name = `${STAGING_PREFIX}${table}`;
+  // Forma vieja del staging (p. ej. una descarga interrumpida ANTES de que
+  // `products` ganara `day_open_stock`/`day_sold`): `CREATE ... IF NOT
+  // EXISTS` no agrega columnas y el INSERT de la nueva forma reventaría.
+  // Se elimina y se REINICA el cursor: si no, al reanudar quedarían filas
+  // sueltas y el swap borraría la tabla entera para recargar sólo ese pedazo.
+  const existing = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name);
+  if (existing) {
+    const have = new Set(
+      db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name),
+    );
+    if (cols.some((c) => !have.has(c))) {
+      db.exec(`DROP TABLE IF EXISTS ${name}`);
+      activation.setSetting(db, cursorKey(table), "");
+    }
+  }
   db.exec(
-    `CREATE TABLE IF NOT EXISTS ${STAGING_PREFIX}${table} AS SELECT ${cols.join(", ")} FROM ${table} WHERE 0`,
+    `CREATE TABLE IF NOT EXISTS ${name} AS SELECT ${cols.join(", ")} FROM ${table} WHERE 0`,
   );
   return db.prepare(
-    `INSERT OR REPLACE INTO ${STAGING_PREFIX}${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(",")})`,
+    `INSERT OR REPLACE INTO ${name} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(",")})`,
   );
 };
 
@@ -176,7 +208,7 @@ const downloadSnapshot = async (db, opts = {}) => {
       });
       if (!r.ok) {
         setState(db, { [KEYS.STATE]: "error", [KEYS.ERROR]: r.code });
-        return fail(r.code, r.error, { table });
+        return fail(r.code, r.error, { table, scopeRequired: r.scopeRequired });
       }
       if (!snapshotSeq) snapshotSeq = Number(r.data.snapshot_seq) || 0;
       if (!totals[table]) totals[table] = Number(r.data.total) || 0;
@@ -225,7 +257,20 @@ const downloadSnapshot = async (db, opts = {}) => {
       [KEYS.ERROR]: null,
     });
   });
-  finalize.exclusive();
+  // FKs OFF alrededor de la transacción final. CLAVE: `PRAGMA foreign_keys`
+  // es un NO-OP dentro de un BEGIN (sólo puede cambiarse sin transacción
+  // pendiente), así que el OFF interno de `swap()` no hacía efecto al ir
+  // anidado en `finalize` y el primer `DELETE` de un padre (categories,
+  // primero en SWAP_ORDER) con hijos locales encima reventaba con
+  // "FOREIGN KEY constraint failed" al re-sincronizar una caja con datos.
+  // El OFF aquí sí aplica (fuera de transacción) y el finally la restaura
+  // pase lo que pase; la atomicidad swap+marcadores queda intacta.
+  db.pragma("foreign_keys = OFF");
+  try {
+    finalize.exclusive();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
   return { success: true, ...state(db) };
 };
 
@@ -258,9 +303,19 @@ const applyChanges = (db, changes = []) => {
     return true;
   });
 
-  for (const c of changes) {
-    if (applyOne(c)) applied++;
-    if (Number(c.seq) > lastSeq) lastSeq = Number(c.seq);
+  // Deltas con FKs OFF (mismo criterio que el swap): el Host es el único
+  // escritor y garanticiza la integridad; aquí sólo se copian filas completas
+  // y el orden de los cambios no siempre respeta padres/hijos de la caja
+  // (p. ej. `products.supplier_id` apunta a `suppliers`, que NO se replica).
+  // El pragma sólo aplica FUERA de transacción → el OFF rodea el bucle.
+  db.pragma("foreign_keys = OFF");
+  try {
+    for (const c of changes) {
+      if (applyOne(c)) applied++;
+      if (Number(c.seq) > lastSeq) lastSeq = Number(c.seq);
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
   }
 
   if (lastSeq) activation.setSetting(db, KEYS.LAST_SEQ, String(lastSeq));

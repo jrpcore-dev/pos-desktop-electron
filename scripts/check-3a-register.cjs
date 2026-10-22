@@ -157,14 +157,27 @@ const cashRegisterRow = (db, id) =>
   // Lo que la 3f.i dejó (ya dentro de HEAD, sólo para que conste): las 8
   // tablas de entidad con `updated_at`, la tumba-sigilo `replica_tombstones`,
   // los 28 triggers reescritos y los 8 `*_touch` nuevos (45 altas / 36 bajas).
-  const headYaMigrado = ddlOld.some((s) => /idx_sales_device_id/.test(s));
-  const DDL_AGREGADO = headYaMigrado
-    ? []
-    : [
-        /^CREATE TABLE[^;]*\bsales\s*\(/,
-        /CREATE INDEX[^;]*\bidx_sales_device_id\b/,
-      ];
-  const DDL_BORRADO = headYaMigrado ? [] : [/^CREATE TABLE[^;]*\bsales\s*\(/];
+  // Bloques 4/5/6 · delta de esquema de esta línea (folio, cola offline,
+  // conflictos de stock). HEAD todavía no los tiene, así que se declaran aquí.
+  const DDL_AGREGADO = [
+    /CREATE TABLE[^;]*\bproducts\s*\(/,
+    /CREATE TABLE[^;]*\bsales\s*\(/,
+    /CREATE TABLE[^;]*\bsale_items\s*\(/,
+    /CREATE TABLE[^;]*\bfolio_counters\b/,
+    /CREATE TABLE[^;]*\bpending_sales\b/,
+    /CREATE TABLE[^;]*\bstock_conflict_resolutions\b/,
+    /CREATE UNIQUE INDEX[^;]*\bidx_sales_folio\b/,
+    /CREATE INDEX[^;]*\bidx_sales_device\b/,
+    /CREATE UNIQUE INDEX[^;]*\bidx_pending_sales_folio\b/,
+    /CREATE INDEX[^;]*\bidx_pending_sales_status\b/,
+    /CREATE TRIGGER[^;]*\btrg_change_log_cashiers_update\b/,
+  ];
+  const DDL_BORRADO = [
+    /CREATE TABLE[^;]*\bproducts\s*\(/,
+    /CREATE TABLE[^;]*\bsales\s*\(/,
+    /CREATE TABLE[^;]*\bsale_items\s*\(/,
+    /CREATE TRIGGER[^;]*\btrg_change_log_cashiers_update\b/,
+  ];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -175,7 +188,8 @@ const cashRegisterRow = (db, id) =>
     `agregados=${d.added.length} borrados=${d.removed.length}`,
   );
   check(
-    DDL_AGREGADO.every((re) => d.added.some((s) => re.test(s))),
+    d.added.every((s) => DDL_AGREGADO.some((re) => re.test(s))) &&
+      d.removed.every((s) => DDL_BORRADO.some((re) => re.test(s))),
     "los statements agregados son exactamente los declarados (delta sin commitear)",
   );
   check(

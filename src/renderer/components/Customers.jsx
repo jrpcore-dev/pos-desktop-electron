@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   PlusCircle,
   Search,
@@ -57,6 +58,7 @@ import { Skeleton } from "./ui/skeleton";
 
 import PageHeader from "./PageHeader";
 import { fmtMoney } from "../utils/format";
+import { receiptDocCss } from "../utils/receiptTemplate";
 
 const PAGE_SIZE = 10;
 
@@ -202,9 +204,11 @@ const QrDialog = ({ customer, open, onClose }) => {
 
   const printQr = async () => {
     if (!dataUrl || !customer) return;
-    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-      body{font-family:sans-serif;text-align:center;margin:0;padding:8px 0;color:#000}
-      img{width:200px;height:200px}
+    // Mismo CSS base del ticket: el ancho del contenido sigue al rollo.
+    const paperWidthMm = await window.api.invoke("get-setting", "paper_width_mm");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>${receiptDocCss(paperWidthMm)}
+      body{font-family:sans-serif;text-align:center;padding:8px 2px}
+      img{width:200px;height:200px;max-width:100%}
       .n{font-size:14px;font-weight:bold}
       .c{font-size:12px}
     </style></head><body>
@@ -289,15 +293,16 @@ const Customers = () => {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const searchRef = useRef(null);
 
-  const loadCustomers = async (q = "") => {
-    setLoading(true);
+  // `silent` → refresco vivo (db-changed) sin skeleton (regla 1).
+  const loadCustomers = async (q = "", silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const rows = q.trim()
         ? await window.api.invoke("search-customers", q)
         : await window.api.invoke("search-customers", "");
       setCustomers(rows || []);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -305,6 +310,16 @@ const Customers = () => {
     window.api.invoke("get-tiers").then(setTiers).catch(() => {});
     loadCustomers();
   }, []);
+
+  // In vivo: lista, escalas y excepciones por tabla; el sheet/formulario en
+  // edición NUNCA se toca (reglas 1 y 2).
+  useDbChanges(
+    () => {
+      loadCustomers(searchTerm, true);
+      window.api.invoke("get-tiers").then(setTiers).catch(() => {});
+    },
+    ["customers", "customer_prices", "customer_tiers", "tier_prices"],
+  );
 
   useEffect(() => {
     const t = setTimeout(() => loadCustomers(searchTerm), 250);

@@ -31,6 +31,8 @@ const rpcContext = require("./rpc-context");
 // 3g/D · puente IPC→HTTP de la caja: el rol cliente manda al Host los
 // canales con scope `rpc` en lugar de ejecutarlos aquí.
 const boxRpc = require("./box-rpc-client");
+// Bloque 6 · respaldos verificados y retención (24 + 8).
+const backupService = require("./backup-service");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -40,12 +42,25 @@ const { createTables, runMigrations } = dbSchema;
 // Entrega 2a: rol del dispositivo. Por defecto "host" (comportamiento intacto).
 // El guard solo rechaza handlers cuando el rol es "client" (fail-closed).
 let deviceRole = ipcScopes.ROLES.HOST;
+const notifySessionExpired = () => {
+  try {
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send("session-expired");
+    }
+  } catch (err) {}
+};
 ipcScopes.installIpcScopeGuard({
   ipcMain,
   getRole: () => deviceRole,
   // 3g/D · `db` se lee al vuelo en cada llamada: el guard se instala antes de
   // abrir la BD y esto sólo se ejecuta cuando un renderer invoca un canal.
-  forwardRpc: (channel, args) => boxRpc.forward(db, channel, args),
+  forwardRpc: (channel, args) =>
+    Promise.resolve(boxRpc.forward(db, channel, args)).then((result) => {
+      // Bloque 4 · la sesión del Host caducó: el renderer abre el ReauthModal
+      // sin desmontar la venta en curso (el carrito sigue en React).
+      if (result && result.code === "SESSION_EXPIRED") notifySessionExpired();
+      return result;
+    }),
 });
 
 const legacyUserData = path.join(app.getPath("appData"), "JRP POS");
@@ -180,6 +195,7 @@ if (!gotTheLock) {
 
 const apiServer = require("./api-server");
 const clientLink = require("./client-link");
+const protocol = require("./protocol");
 const discovery = require("./discovery");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
@@ -436,7 +452,12 @@ app.on("ready", async () => {
     migrateLegacyBackups();
     migrateRegisterContinuity();
     maybeRunAutoBackup();
-    setInterval(maybeRunAutoBackup, 6 * 60 * 60 * 1000);
+    setInterval(maybeRunAutoBackup, 15 * 60 * 1000);
+    // Bloque 6 · la caja designada revisa si hay respaldo nuevo.
+    if (deviceRole === ipcScopes.ROLES.CLIENT) {
+      maybePullBackup();
+      setInterval(maybePullBackup, 15 * 60 * 1000);
+    }
   }
 
   // 3e · se espera dentro de `ready` a propósito: el orden de arranque es el
@@ -462,6 +483,9 @@ app.on("ready", async () => {
   // 3f · si esta caja ya tenía la réplica aplicada, retoma el delta desde donde
   // se quedó. Va DESPUÉS del cipher porque necesita leer el token de emparejar.
   startLiveReplica();
+  // Bloque 4 · la caja reintenta su cola aunque el arranque anterior haya
+  // quedado a medias. Sin Host no hace nada.
+  startOfflineQueueSync();
 
   // A1 · aviso al renderer del Host: UN solo sonda sobre `change_log`, que es
   // por donde pasa toda escritura (venta local, /api/sales, stock, edición).
@@ -490,16 +514,31 @@ app.on("ready", async () => {
     setInterval(runChangeLogCompaction, changeLogCompact.RUN_EVERY_MS);
   }
 
-  // Start local API server for mobile app
-  (async () => {
-    const result = await apiServer.startServer(db, 3456, { appVersion: app.getVersion() });
-    if (result.success) {
-      await discovery.startDiscovery(3456);
-      console.log(`Mobile API ready on port ${3456}`);
-    } else {
-      console.error("Failed to start mobile API:", result.error);
-    }
-  })();
+  // Sólo el Host levanta API local (3456) y anuncio UDP (3457). Una CAJA no
+  // se anuncia como Host: si lo hiciera, el botón "detectar en la red"
+  // listaría DOS candidatas y otra caja podría emparejarse contra la máquina
+  // equivocada. Al convertir la PC en caja en caliente, box-save-settings
+  // apaga servidor y descubrimiento en el acto.
+  if (deviceRole !== ipcScopes.ROLES.CLIENT) {
+    (async () => {
+      const result = await apiServer.startServer(db, 3456, {
+        appVersion: app.getVersion(),
+        // Ventas que llegan por HTTP (otra caja o móvil) también avisan a las
+        // pantallas del Host vía db-changed (chip "Hay datos nuevos").
+        onDataChanged: emitDbChanged,
+        // Bloque 6 · la caja designada baja la copia más reciente.
+        getLatestBackup: getLatestBackupPayload,
+      });
+      if (result.success) {
+        await discovery.startDiscovery(3456);
+        console.log(`Mobile API ready on port ${3456}`);
+      } else {
+        console.error("Failed to start mobile API:", result.error);
+      }
+    })();
+  } else {
+    console.log("Rol caja: API local y descubrimiento UDP desactivados.");
+  }
 
   // Task reminder checker every 30 seconds
   setInterval(() => {
@@ -616,8 +655,94 @@ const attachPrices = (products) => {
   return products;
 };
 
+// ─── LÍNEA BASE DE STOCK COMPARTIDA (multicaja) ─────────────────────────────
+// El "inicial del día" de la barra de progreso se calculaba en cada equipo
+// con SUS movimientos y SUS ventas. El Host tiene TODAS las ventas (las cajas
+// las reenvían por HTTP), pero una caja no ve las ventas de las demás: por
+// eso caja 2 mostraba "17 de 17" en vez de "17 de 18". Ahora el Host fija una
+// vez al día `products.day_open_stock` (stock a la medianoche MX) y mantiene
+// `products.day_sold` (vendido de hoy) con cada venta: como son columnas de
+// `products`, se replican a las cajas con la propia fila y todos leen el
+// mismo dato. En la caja sólo se LEEN (nunca se escriben).
+let stockBaselineDay = null; // día ya fijado en esta sesión (caché en memoria)
+const ensureStockBaseline = () => {
+  if (deviceRole === ipcScopes.ROLES.CLIENT) return; // la caja sólo lee
+  const today = mxToday();
+  if (stockBaselineDay === today) return; // ya fijado hoy: ni una consulta
+  const dayRow = db
+    .prepare("SELECT value FROM settings WHERE key = 'stock_baseline_day'")
+    .get();
+  if (dayRow && dayRow.value === today) {
+    stockBaselineDay = today;
+    return;
+  }
+
+  // Misma fórmula de siempre (inicial = stock − entradas − devoluciones +
+  // salidas + vendido), pero sobre TODOS los productos y PERSISTIDA: lo que
+  // era un cálculo local por equipo pasa a ser un dato compartido. Como el
+  // Host tiene todas las ventas, el resultado es exacto a cualquier hora.
+  const { start, end } = toUTCDateRange(today);
+  const movRows = db
+    .prepare(
+      `SELECT product_id, type, SUM(quantity) as qty
+       FROM stock_movements
+       WHERE created_at >= ? AND created_at < ?
+       GROUP BY product_id, type`,
+    )
+    .all(start, end);
+  const soldRows = db
+    .prepare(
+      `SELECT si.product_id, SUM(si.stock_deducted) as qty
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE s.created_at >= ? AND s.created_at < ?
+       GROUP BY si.product_id`,
+    )
+    .all(start, end);
+
+  const mov = {};
+  for (const r of movRows) {
+    const m = (mov[r.product_id] = mov[r.product_id] || { in: 0, out: 0, dev: 0 });
+    if (r.type === "in") m.in += r.qty || 0;
+    else if (r.type === "out") m.out += r.qty || 0;
+    else if (r.type === "devolution") m.dev += r.qty || 0;
+  }
+  const sold = {};
+  for (const r of soldRows) sold[r.product_id] = r.qty || 0;
+
+  const products = db
+    .prepare("SELECT id, stock, day_open_stock, day_sold FROM products")
+    .all();
+  const upBaseline = db.prepare(
+    "UPDATE products SET day_open_stock = ? WHERE id = ?",
+  );
+  const upSold = db.prepare("UPDATE products SET day_sold = ? WHERE id = ?");
+  const setDay = db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('stock_baseline_day', ?)",
+  );
+  db.transaction(() => {
+    for (const p of products) {
+      const m = mov[p.id] || { in: 0, out: 0, dev: 0 };
+      const ts = sold[p.id] || 0;
+      const baseline = (p.stock || 0) - m.in - m.dev + m.out + ts;
+      // Sólo escribe filas que cambiaron: los productos quietos conservan su
+      // baseline (igual a su stock) y no ensucian el change_log.
+      if (p.day_open_stock !== baseline) upBaseline.run(baseline, p.id);
+      if ((p.day_sold || 0) !== ts) upSold.run(ts, p.id);
+    }
+    setDay.run(today);
+  })();
+  stockBaselineDay = today;
+};
+
+// `startOfDay` (referencia de la barra de stock): SIEMPRE hay referencia.
+// Preferencia al dato compartido `day_open_stock` (lo fija el Host y se
+// replica a las cajas → multicaja); si aún no existe, la fórmula local de
+// SIEMPRE — así la barra NUNCA cae al respaldo de "stock mínimo".
+// `todaySold`: contador compartido `day_sold` si > 0; si no, el vivo local.
 const attachDaySummary = (products) => {
   if (!products || !products.length) return products;
+  ensureStockBaseline();
   const ids = products.map((p) => p.id);
   const placeholders = ids.map(() => "?").join(",");
   const { start, end } = toUTCDateRange(mxToday());
@@ -657,8 +782,8 @@ const attachDaySummary = (products) => {
     const td = todayDev[p.id] || 0;
     const ts = todaySold[p.id] || 0;
     p.todayIn = ti;
-    p.todaySold = ts;
-    p.startOfDay = (p.stock || 0) - ti - td + to + ts;
+    p.todaySold = p.day_sold || ts;
+    p.startOfDay = p.day_open_stock ?? (p.stock || 0) - ti - td + to + ts;
   }
   return products;
 };
@@ -1352,8 +1477,9 @@ ipcMain.handle("get-products-by-ids", async (event, ids) => {
   }
 });
 
-ipcMain.handle("get-top-products", async () => {
+ipcMain.handle("get-top-products", async (event, { deviceId } = {}) => {
   try {
+    const dev = deviceWhere(deviceId, "s");
     return db
       .prepare(
         `
@@ -1364,7 +1490,7 @@ ipcMain.handle("get-top-products", async () => {
         COALESCE(SUM(CASE WHEN s.id IS NOT NULL THEN si.quantity ELSE 0 END),0) as total_sold
       FROM products p
       LEFT JOIN sale_items si ON p.id = si.product_id
-      LEFT JOIN sales s ON si.sale_id = s.id AND (s.status IS NULL OR s.status != 'cancelado')
+      LEFT JOIN sales s ON si.sale_id = s.id AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE p.is_active = 1
       GROUP BY p.id
@@ -1372,7 +1498,7 @@ ipcMain.handle("get-top-products", async () => {
       LIMIT 20
     `,
       )
-      .all();
+      .all(...dev.args);
   } catch (error) {
     return [];
   }
@@ -1695,6 +1821,123 @@ ipcMain.handle(
   },
 );
 
+// ─── BLOQUE 4/E · CONFLICTOS DE STOCK ───────────────────────────────────────
+// Una venta NUNCA se rechaza por stock; si deja inventario negativo queda
+// marcada (`stock_conflict`) para que el admin revise. La resolución es
+// idempotente por venta: reintentar con la misma venta devuelve la primera
+// respuesta y no vuelve a ajustar el inventario.
+ipcMain.handle("get-stock-conflicts", async () => {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT s.id, s.folio, s.created_at, s.total, s.device_id,
+                s.conflict_detail, s.cashier_name,
+                pd.device_code, pd.name AS device_name
+         FROM sales s
+         LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+         WHERE s.stock_conflict = 1 AND COALESCE(s.conflict_resolved, 0) = 0
+         ORDER BY s.created_at DESC, s.id DESC
+         LIMIT 500`,
+      )
+      .all();
+    return {
+      success: true,
+      conflicts: rows.map((r) => {
+        let detail = [];
+        try {
+          detail = JSON.parse(r.conflict_detail || "[]");
+        } catch (err) {}
+        return { ...r, conflict_detail: detail };
+      }),
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle(
+  "resolve-stock-conflict",
+  async (event, { saleId, adjustments, note, cashierId, resolvedBy } = {}) => {
+    try {
+      const prev = db
+        .prepare(
+          "SELECT response_json FROM stock_conflict_resolutions WHERE sale_id = ?",
+        )
+        .get(Number(saleId));
+      if (prev) {
+        return { ...JSON.parse(prev.response_json), idempotent: true };
+      }
+      const txn = db.transaction(() => {
+        const sale = db
+          .prepare(
+            "SELECT id, folio, stock_conflict FROM sales WHERE id = ?",
+          )
+          .get(Number(saleId));
+        if (!sale) throw new Error("Venta no encontrada");
+        if (!sale.stock_conflict) throw new Error("La venta no tiene conflicto de stock");
+        const applied = [];
+        for (const adj of Array.isArray(adjustments) ? adjustments : []) {
+          const pid = Number(adj.product_id);
+          const product = db
+            .prepare("SELECT id, name, stock FROM products WHERE id = ?")
+            .get(pid);
+          if (!product) throw new Error(`Producto ${pid} no encontrado`);
+          const target =
+            adj.new_stock != null
+              ? Number(adj.new_stock)
+              : Number(product.stock) + Number(adj.delta || 0);
+          if (!Number.isFinite(target) || target < 0) {
+            throw new Error(`Stock inválido para ${product.name}`);
+          }
+          if (target !== Number(product.stock)) {
+            db.prepare("UPDATE products SET stock = ? WHERE id = ?").run(
+              target,
+              pid,
+            );
+            db.prepare(
+              "INSERT INTO stock_movements (product_id, type, quantity, notes, cashier_id) VALUES (?, ?, ?, ?, ?)",
+            ).run(
+              pid,
+              target >= Number(product.stock) ? "in" : "out",
+              Math.abs(target - Number(product.stock)),
+              note ||
+                `Revisión de conflicto · venta ${sale.folio || sale.id}`,
+              cashierId || null,
+            );
+          }
+          applied.push({
+            product_id: pid,
+            name: product.name,
+            before: product.stock,
+            after: target,
+          });
+        }
+        const response = {
+          success: true,
+          saleId: Number(saleId),
+          applied,
+          resolvedAt: new Date().toISOString(),
+        };
+        db.prepare(
+          "INSERT INTO stock_conflict_resolutions (sale_id, payload_json, response_json, resolved_by) VALUES (?, ?, ?, ?)",
+        ).run(
+          Number(saleId),
+          JSON.stringify({ adjustments, note }),
+          JSON.stringify(response),
+          resolvedBy || (cashierId ? `cashier:${cashierId}` : "host"),
+        );
+        db.prepare(
+          "UPDATE sales SET conflict_resolved = 1 WHERE id = ?",
+        ).run(Number(saleId));
+        return response;
+      });
+      return txn();
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
+
 ipcMain.handle(
   "remove-stock",
   async (event, { productId, quantity, notes, role, cashierId }) => {
@@ -1982,7 +2225,11 @@ ipcMain.handle(
     );
 
     try {
-      return recordSale();
+      const out = recordSale();
+      // Aviso a Transacciones/Reportes: la venta ya quedó escrita (el envío
+      // lo coalesce emitDbChanged; cada pantalla filtra por tabla).
+      if (out && out.success !== false) emitDbChanged(["sales"], {});
+      return out;
     } catch (error) {
       const failure = { success: false, error: error.message };
       if (error.code) {
@@ -2006,9 +2253,22 @@ ipcMain.handle(
 
       const reg = sale.register_id
         ? db
-            .prepare("SELECT status, closed_at FROM cash_register WHERE id = ?")
+            .prepare("SELECT status, closed_at, device_id FROM cash_register WHERE id = ?")
             .get(sale.register_id)
         : null;
+      // Bloque 4/A · una caja remota solo cancela SUS ventas. El Host local
+      // (callerDeviceId() === null) conserva la capacidad de administrarlas.
+      const caller = callerDeviceId();
+      if (caller) {
+        const owner = sale.device_id || (reg && reg.device_id) || null;
+        if (owner !== caller) {
+          return {
+            success: false,
+            code: "SALE_NOT_OWNED",
+            error: "Esa venta pertenece a otra caja y no se puede cancelar desde aquí",
+          };
+        }
+      }
       const canCancel =
         role === "admin" ||
         (reg && reg.status === "open") ||
@@ -2021,25 +2281,25 @@ ipcMain.handle(
 
       const doCancel = db.transaction(() => {
         db.prepare(
-          "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=? WHERE id=?",
-        ).run(cashierName || null, saleId);
+          "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
+        ).run(cashierName || null, caller || null, saleId);
         db.prepare(
-          "UPDATE sale_items SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=? WHERE sale_id=? AND (status IS NULL OR status != 'cancelado')",
-        ).run(cashierName || null, saleId);
+          "UPDATE sale_items SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE sale_id=? AND (status IS NULL OR status != 'cancelado')",
+        ).run(cashierName || null, caller || null, saleId);
         const items = db
           .prepare(
             "SELECT product_id, stock_deducted FROM sale_items WHERE sale_id = ?",
           )
           .all(saleId);
         const restoreStmt = db.prepare(
-          "UPDATE products SET stock = stock + ? WHERE id = ?",
+          "UPDATE products SET stock = stock + ?, day_sold = MAX(COALESCE(day_sold, 0) - ?, 0) WHERE id = ?",
         );
         const movStmt = db.prepare(
           "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
         );
         for (const it of items) {
           if (it.product_id && (it.stock_deducted || 0) > 0) {
-            restoreStmt.run(it.stock_deducted, it.product_id);
+            restoreStmt.run(it.stock_deducted, it.stock_deducted, it.product_id);
             movStmt.run(
               it.product_id,
               it.stock_deducted,
@@ -2051,6 +2311,7 @@ ipcMain.handle(
         }
       });
       doCancel();
+      emitDbChanged(["sales"], {});
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -2081,9 +2342,21 @@ ipcMain.handle(
 
       const reg = sale.register_id
         ? db
-            .prepare("SELECT status, closed_at FROM cash_register WHERE id = ?")
+            .prepare("SELECT status, closed_at, device_id FROM cash_register WHERE id = ?")
             .get(sale.register_id)
         : null;
+      // Bloque 4/A · misma regla que cancel-sale: la caja solo toca lo suyo.
+      const caller = callerDeviceId();
+      if (caller) {
+        const owner = sale.device_id || (reg && reg.device_id) || null;
+        if (owner !== caller) {
+          return {
+            success: false,
+            code: "SALE_NOT_OWNED",
+            error: "Esa venta pertenece a otra caja y no se puede cancelar desde aquí",
+          };
+        }
+      }
       const canCancel =
         role === "admin" ||
         (reg && reg.status === "open") ||
@@ -2128,19 +2401,18 @@ ipcMain.handle(
       const doCancel = db.transaction(() => {
         if (newReturned + 0.0001 >= itemQuantity) {
           db.prepare(
-            "UPDATE sale_items SET status='cancelado', returned_qty=?, cancelled_at=CURRENT_TIMESTAMP, cancelled_by=? WHERE id=?",
-          ).run(newReturned, cashierName || null, itemId);
+            "UPDATE sale_items SET status='cancelado', returned_qty=?, cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
+          ).run(newReturned, cashierName || null, caller || null, itemId);
         } else {
           db.prepare(
-            "UPDATE sale_items SET status='parcial', returned_qty=?, cancelled_at=CURRENT_TIMESTAMP, cancelled_by=? WHERE id=?",
-          ).run(newReturned, cashierName || null, itemId);
+            "UPDATE sale_items SET status='parcial', returned_qty=?, cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
+          ).run(newReturned, cashierName || null, caller || null, itemId);
         }
 
         if (item.product_id && restoreStock > 0) {
-          db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(
-            restoreStock,
-            item.product_id,
-          );
+          db.prepare(
+            "UPDATE products SET stock = stock + ?, day_sold = MAX(COALESCE(day_sold, 0) - ?, 0) WHERE id = ?",
+          ).run(restoreStock, restoreStock, item.product_id);
           db.prepare(
             "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
           ).run(
@@ -2161,8 +2433,8 @@ ipcMain.handle(
         if (activeCount === 0) {
           saleCancelled = true;
           db.prepare(
-            "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=? WHERE id=?",
-          ).run(cashierName || null, saleId);
+            "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
+          ).run(cashierName || null, caller || null, saleId);
         } else {
           db.prepare(
             "UPDATE sales SET total = MAX(0, ROUND(total - ?, 2)) WHERE id = ?",
@@ -2170,6 +2442,7 @@ ipcMain.handle(
         }
       });
       doCancel();
+      emitDbChanged(["sales"], {});
       return {
         success: true,
         refundAmount: Number(refundAmount.toFixed(2)),
@@ -2207,6 +2480,18 @@ function findOpenRegister(cashierId, role) {
   return salesCore.findOpenRegister(db, cashierId, role, callerDeviceId());
 }
 
+// Bloque 5 · filtro por caja para reportes/cortes. `deviceId` vacío = todas;
+// "__host__" = las ventas locales del Host (device_id NULL).
+const deviceWhere = (deviceId, alias = "") => {
+  const col = alias ? `${alias}.device_id` : "device_id";
+  if (!deviceId || deviceId === "all") return { sql: "", args: [] };
+  // Las ventas nuevas del Host llevan su `host_device_id`, no NULL: el filtro
+  // "Host" debe incluir ambas (NULL = ventas anteriores a la 3g/C).
+  if (deviceId === "__host__")
+    return { sql: ` AND (${col} IS NULL OR ${col} = ?)`, args: [hostDeviceId] };
+  return { sql: ` AND ${col} = ?`, args: [deviceId] };
+};
+
 function isWithinCancelWindow(closedAt) {
   if (!closedAt) return false;
   const closedDateStr = new Date(
@@ -2226,37 +2511,45 @@ function isWithinCancelWindow(closedAt) {
 
 ipcMain.handle(
   "get-sales-for-today",
-  async (event, { date, registerId } = {}) => {
+  async (event, { date, registerId, deviceId } = {}) => {
     try {
       const today = date || mxToday();
       const { start, end } = toUTCDateRange(today);
+      const dev = deviceWhere(deviceId, "s");
+      // Con turno asignado, el corte se amarra al TURNO y no al calendario:
+      // con la caja abierta varios días, la ventana de "hoy" escondía las
+      // ventas de los días anteriores del MISMO turno (lista, total y
+      // conteo), mientras `currentCash` y el cierre sí sumaban todo el turno.
+      // Sin turno se conserva la vista "del día". Único cliente: EndOfDay.
       let sales;
       if (registerId) {
         sales = db
           .prepare(
-            `SELECT s.*, 
+            `SELECT s.*, pd.device_code, pd.device_name,
               CASE WHEN cr.status = 'open' THEN 1 
                    WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
                    ELSE 0 END as can_cancel
             FROM sales s 
             LEFT JOIN cash_register cr ON s.register_id = cr.id
-            WHERE s.created_at >= ? AND s.created_at < ? AND s.register_id = ?
+            LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+            WHERE s.register_id = ?
             ORDER BY s.created_at DESC`,
           )
-          .all(today, start, end, registerId);
+          .all(today, registerId);
       } else {
         sales = db
           .prepare(
-            `SELECT s.*, 
+            `SELECT s.*, pd.device_code, pd.device_name,
               CASE WHEN cr.status = 'open' THEN 1 
                    WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
                    ELSE 0 END as can_cancel
             FROM sales s 
             LEFT JOIN cash_register cr ON s.register_id = cr.id
-            WHERE s.created_at >= ? AND s.created_at < ?
+            LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+            WHERE s.created_at >= ? AND s.created_at < ?${dev.sql}
             ORDER BY s.created_at DESC`,
           )
-          .all(today, start, end);
+          .all(today, start, end, ...dev.args);
       }
       const itemRows = db
         .prepare(
@@ -2266,12 +2559,11 @@ ipcMain.handle(
            FROM sale_items si
            JOIN sales s ON si.sale_id = s.id
            LEFT JOIN products p ON si.product_id = p.id
-           WHERE s.created_at >= ? AND s.created_at < ?
-           ${registerId ? "AND s.register_id = ?" : ""}
+           WHERE ${registerId ? "s.register_id = ?" : `s.created_at >= ? AND s.created_at < ?${dev.sql}`}
            GROUP BY si.sale_id, name
            ORDER BY name ASC`,
         )
-        .all(...(registerId ? [start, end, registerId] : [start, end]));
+        .all(...(registerId ? [registerId] : [start, end, ...dev.args]));
       const bySale = {};
       itemRows.forEach((r) => {
         (bySale[r.sale_id] = bySale[r.sale_id] || []).push({
@@ -2290,11 +2582,10 @@ ipcMain.handle(
            FROM sale_items si
            JOIN sales s ON si.sale_id = s.id
            LEFT JOIN products p ON si.product_id = p.id
-           WHERE s.created_at >= ? AND s.created_at < ?
-           ${registerId ? "AND s.register_id = ?" : ""}
+           WHERE ${registerId ? "s.register_id = ?" : `s.created_at >= ? AND s.created_at < ?${dev.sql}`}
            ORDER BY si.id ASC`,
         )
-        .all(...(registerId ? [start, end, registerId] : [start, end]));
+        .all(...(registerId ? [registerId] : [start, end, ...dev.args]));
       const itemsBySale = {};
       itemDetail.forEach((i) => {
         (itemsBySale[i.sale_id] = itemsBySale[i.sale_id] || []).push(i);
@@ -2321,11 +2612,14 @@ ipcMain.handle("get-outside-register-sales", async () => {
     ).padStart(2, "0")}-${String(yesterdayDt.getUTCDate()).padStart(2, "0")}`;
     const { start } = toUTCDateRange(yesterday);
     const { end } = toUTCDateRange(today);
+    // Bloque 4/A · una caja remota solo ve SUS ventas fuera de caja; el Host
+    // local (callerDeviceId() === null) sigue viendo todas.
+    const dev = callerDeviceId();
     const sales = db
       .prepare(
-        "SELECT * FROM sales WHERE register_id IS NULL AND (status IS NULL OR status != 'cancelado') AND created_at >= ? AND created_at < ? ORDER BY created_at DESC",
+        "SELECT * FROM sales WHERE register_id IS NULL AND (status IS NULL OR status != 'cancelado') AND created_at >= ? AND created_at < ? AND (? IS NULL OR device_id = ?) ORDER BY created_at DESC",
       )
-      .all(start, end);
+      .all(start, end, dev || null, dev || null);
     const itemRows = db
       .prepare(
         `SELECT si.sale_id, COALESCE(p.name, si.product_name) AS name,
@@ -2335,10 +2629,11 @@ ipcMain.handle("get-outside-register-sales", async () => {
          JOIN sales s ON si.sale_id = s.id
          LEFT JOIN products p ON si.product_id = p.id
          WHERE s.register_id IS NULL AND s.created_at >= ? AND s.created_at < ?
+           AND (? IS NULL OR s.device_id = ?)
          GROUP BY si.sale_id, name
          ORDER BY name ASC`,
       )
-      .all(start, end);
+      .all(start, end, dev || null, dev || null);
     const bySale = {};
     itemRows.forEach((r) => {
       (bySale[r.sale_id] = bySale[r.sale_id] || []).push({
@@ -2356,38 +2651,64 @@ ipcMain.handle("get-outside-register-sales", async () => {
   }
 });
 
-ipcMain.handle("get-sales-by-range", async (event, { startDate, endDate }) => {
+ipcMain.handle("get-sales-by-range", async (event, { startDate, endDate, deviceId } = {}) => {
   try {
     const { start } = toUTCDateRange(startDate);
     const { end } = toUTCDateRange(endDate);
+    const dev = deviceWhere(deviceId, "s");
     const sales = db
       .prepare(
-        "SELECT * FROM sales WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 500",
+        `SELECT s.*, pd.device_code, pd.device_name
+         FROM sales s
+         LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+         WHERE s.created_at >= ? AND s.created_at < ?${dev.sql}
+         ORDER BY s.created_at DESC LIMIT 500`,
       )
-      .all(start, end);
+      .all(start, end, ...dev.args);
     const total = db
       .prepare(
-        "SELECT COALESCE(SUM(total),0) as total FROM sales WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')",
+        `SELECT COALESCE(SUM(total),0) as total FROM sales s WHERE s.created_at >= ? AND s.created_at < ? AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}`,
       )
-      .get(start, end).total;
+      .get(start, end, ...dev.args).total;
     const count = db
       .prepare(
-        "SELECT COUNT(*) as c FROM sales WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')",
+        `SELECT COUNT(*) as c FROM sales s WHERE s.created_at >= ? AND s.created_at < ? AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}`,
       )
-      .get(start, end).c;
+      .get(start, end, ...dev.args).c;
     const byMethod = db
       .prepare(
-        "SELECT payment_method, COUNT(*) as count, SUM(total) as total FROM sales WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
+        `SELECT s.payment_method, COUNT(*) as count, SUM(s.total) as total FROM sales s WHERE s.created_at >= ? AND s.created_at < ? AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql} GROUP BY s.payment_method`,
       )
-      .all(start, end);
+      .all(start, end, ...dev.args);
     return { success: true, sales, total, count, byMethod };
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle("get-sale-details", async (event, saleId) => {
+// Bloque 5 · catálogo de cajas para el filtro de reportes y cortes.
+ipcMain.handle("list-sale-devices", async () => {
   try {
+    const devices = db
+      .prepare(
+        `SELECT device_id, device_code, device_name, pending_sync, last_seen_at
+         FROM paired_devices
+         WHERE device_type = 'desktop_box' AND COALESCE(revoked, 0) = 0
+         ORDER BY device_code, device_name`,
+      )
+      .all();
+    const hasHost = !!db
+      .prepare(
+        "SELECT 1 FROM sales WHERE (device_id IS NULL OR device_id = ?) LIMIT 1",
+      )
+      .get(hostDeviceId);
+    return { success: true, devices, hasHost };
+  } catch (error) {
+    return { success: false, error: error.message, devices: [], hasHost: false };
+  }
+});
+
+ipcMain.handle("get-sale-details", async (event, saleId) => {  try {
     const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
     const items = db
       .prepare(
@@ -2404,33 +2725,35 @@ ipcMain.handle("get-sale-details", async (event, saleId) => {
   }
 });
 
-ipcMain.handle("get-sales-by-date", async (event, { date }) => {
+ipcMain.handle("get-sales-by-date", async (event, { date, deviceId } = {}) => {
   try {
     const { start, end } = toUTCDateRange(date);
     const today = mxToday();
+    const dev = deviceWhere(deviceId, "s");
     const sales = db
       .prepare(
-        `SELECT s.*,
+        `SELECT s.*, pd.device_code, pd.device_name,
           CASE WHEN cr.status = 'open' THEN 1 
                WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
                ELSE 0 END as can_cancel
         FROM sales s 
         LEFT JOIN cash_register cr ON s.register_id = cr.id
-        WHERE s.created_at >= ? AND s.created_at < ?
+        LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+        WHERE s.created_at >= ? AND s.created_at < ?${dev.sql}
         ORDER BY s.created_at DESC`,
       )
-      .all(today, start, end);
+      .all(today, start, end, ...dev.args);
     const total = db
       .prepare(
-        "SELECT COALESCE(SUM(total),0) as total FROM sales WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')",
+        `SELECT COALESCE(SUM(total),0) as total FROM sales s WHERE s.created_at >= ? AND s.created_at < ? AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}`,
       )
-      .get(start, end).total;
+      .get(start, end, ...dev.args).total;
     const count = sales.filter((s) => s.status !== "cancelado").length;
     const byMethod = db
       .prepare(
-        "SELECT payment_method, COUNT(*) as count, SUM(total) as total FROM sales WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
+        `SELECT s.payment_method, COUNT(*) as count, SUM(s.total) as total FROM sales s WHERE s.created_at >= ? AND s.created_at < ? AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql} GROUP BY s.payment_method`,
       )
-      .all(start, end);
+      .all(start, end, ...dev.args);
     return { success: true, sales, total, count, byMethod };
   } catch (error) {
     return { success: false, error: error.message };
@@ -2439,10 +2762,12 @@ ipcMain.handle("get-sales-by-date", async (event, { date }) => {
 
 ipcMain.handle(
   "get-expenses-by-range",
-  async (event, { startDate, endDate }) => {
+  async (event, { startDate, endDate, deviceId } = {}) => {
     try {
       const { start } = toUTCDateRange(startDate);
       const { end } = toUTCDateRange(endDate);
+      // Bloque 5 · el gasto pertenece a la caja que abrió el turno.
+      const dev = deviceWhere(deviceId, "cr");
       const expenses = db
         .prepare(
           `
@@ -2450,11 +2775,11 @@ ipcMain.handle(
       FROM cash_register_expenses e
       LEFT JOIN cash_register cr ON e.register_id = cr.id
       LEFT JOIN cashiers opener ON cr.opened_by = opener.id
-      WHERE e.created_at >= ? AND e.created_at < ?
+      WHERE e.created_at >= ? AND e.created_at < ?${dev.sql}
       ORDER BY e.created_at DESC
     `,
         )
-        .all(start, end);
+        .all(start, end, ...dev.args);
       const activeExpenses = expenses.filter((e) => e.status !== "cancelado");
       const totalExpenses = activeExpenses.reduce(
         (sum, e) => sum + e.amount,
@@ -2472,9 +2797,10 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("get-expenses-by-date", async (event, { date }) => {
+ipcMain.handle("get-expenses-by-date", async (event, { date, deviceId } = {}) => {
   try {
     const { start, end } = toUTCDateRange(date);
+    const dev = deviceWhere(deviceId, "cr");
     const expenses = db
       .prepare(
         `
@@ -2482,11 +2808,11 @@ ipcMain.handle("get-expenses-by-date", async (event, { date }) => {
       FROM cash_register_expenses e
       LEFT JOIN cash_register cr ON e.register_id = cr.id
       LEFT JOIN cashiers opener ON cr.opened_by = opener.id
-      WHERE e.created_at >= ? AND e.created_at < ?
+      WHERE e.created_at >= ? AND e.created_at < ?${dev.sql}
       ORDER BY e.created_at DESC
     `,
       )
-      .all(start, end);
+      .all(start, end, ...dev.args);
     const activeExpenses = expenses.filter((e) => e.status !== "cancelado");
     const totalExpenses = activeExpenses.reduce((sum, e) => sum + e.amount, 0);
     return {
@@ -2572,6 +2898,7 @@ const getActivationStatus = () => {
     deviceCode: d.device_code || null,
     protocolVersion: d.protocol_version || null,
     approved: d.approved === 1,
+    pendingSync: Number(d.pending_sync) || 0,
     cashierName: d.cashier_name || null,
     activatedAt: d.activated_at,
     lastSeenAt: d.last_seen_at,
@@ -2627,6 +2954,24 @@ ipcMain.handle("revoke-device", async (event, deviceId) => {
   return activation.revokeDevice(db, deviceId);
 });
 
+// Bloque 5 · administración de cajas: renombrar sin re-emparejar.
+ipcMain.handle("rename-device", async (event, { deviceId, name } = {}) => {
+  try {
+    const id = String(deviceId || "").trim();
+    const nextName = String(name || "").trim();
+    if (!id) return { success: false, error: "Dispositivo inválido" };
+    if (!nextName) return { success: false, error: "El nombre no puede estar vacío" };
+    if (nextName.length > 80)
+      return { success: false, error: "El nombre es demasiado largo" };
+    const info = db
+      .prepare("UPDATE paired_devices SET device_name = ? WHERE device_id = ?")
+      .run(nextName, id);
+    return { success: info.changes > 0, status: getActivationStatus() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Entrega 2b: aprobar/rechazar un dispositivo pendiente (p.ej. una caja
 // desktop_box auto-declarada). Aprobar asigna el set de scopes de su tipo.
 ipcMain.handle("approve-device", async (event, deviceId) => {
@@ -2679,9 +3024,64 @@ ipcMain.handle("box-link-status", async (event, opts) =>
 
 ipcMain.handle("box-get-settings", async () => clientLink.getSettings(db));
 
-ipcMain.handle("box-save-settings", async (event, patch) =>
-  clientLink.saveSettings(db, patch || {}),
+ipcMain.handle("box-save-settings", async (event, patch) => {
+  // Bloque 4/A · una instalación Host con operación real NO puede convertirse
+  // en caja por accidente al actualizar. Solo una PC nueva (sin ventas ni
+  // cortes) puede adoptar el rol cliente.
+  if (patch && patch.device_role === ipcScopes.ROLES.CLIENT) {
+    const hasSales = db.prepare("SELECT COUNT(*) AS c FROM sales").get().c;
+    const hasRegisters = db.prepare("SELECT COUNT(*) AS c FROM cash_register").get().c;
+    if (deviceRole === ipcScopes.ROLES.HOST && (hasSales > 0 || hasRegisters > 0)) {
+      return {
+        success: false,
+        code: "HOST_HAS_DATA",
+        error:
+          "Esta instalación ya tiene ventas o cortes y es el Host del negocio. No puede convertirse en caja. Usa otra PC para una caja adicional.",
+      };
+    }
+  }
+  const out = clientLink.saveSettings(db, patch || {});
+  // Conversión en caliente a caja: esta PC deja de ser Host YA — servidor
+  // local y anuncio UDP apagados — y el guard IPC aplica el rol cliente de
+  // inmediato (así ninguna otra caja la descubre como Host).
+  if (patch && patch.device_role === ipcScopes.ROLES.CLIENT) {
+    deviceRole = ipcScopes.ROLES.CLIENT;
+    try {
+      apiServer.stopServer();
+    } catch (err) {}
+    try {
+      discovery.stopDiscovery();
+    } catch (err) {}
+    startOfflineQueueSync();
+  }
+  return out;
+});
+
+// ─── COLA OFFLINE (Bloque 4) ────────────────────────────────────────────────
+// Estos canales son del aparato (SYSTEM): listan/cancelan/sincronizan la cola
+// local. La venta en sí viaja al Host cuando hay red.
+ipcMain.handle("pending-sales-summary", async () => boxRpc.pendingSummary(db));
+ipcMain.handle("pending-sales-list", async (event, statuses) =>
+  boxRpc.pendingList(db, Array.isArray(statuses) ? statuses : null),
 );
+ipcMain.handle("pending-sales-cancel", async (event, id) => boxRpc.pendingCancel(db, Number(id)));
+ipcMain.handle("pending-sales-retry", async () => boxRpc.pendingRetry(db));
+ipcMain.handle("pending-sales-sync-now", async () => boxRpc.syncPending(db));
+
+let offlineQueueTimer = null;
+function startOfflineQueueSync() {
+  if (deviceRole !== ipcScopes.ROLES.CLIENT) return;
+  if (offlineQueueTimer) return;
+  // Reintento sin límite (decisión del dueño): cada 15 s mientras haya cola.
+  offlineQueueTimer = setInterval(() => {
+    try {
+      const pending = boxRpc.pendingSummary(db);
+      if (pending.count > 0) boxRpc.syncPending(db).catch(() => {});
+    } catch (err) {}
+  }, 15000);
+  offlineQueueTimer.unref?.();
+}
+
 
 // ─── RÉPLICA EN LA CAJA (Entrega 3d) ───────────────────────
 // El motor escribe en las MISMAS tablas que el Host, por una ruta interna:
@@ -2751,6 +3151,8 @@ ipcMain.handle("replica-sync-now", async (event, opts) => {
       emitDbChanged(result.tables || [], {});
       // De aquí en adelante la caja sigue sola: los deltas ya no pide nada.
       startLiveReplica();
+      // Y si quedaron ventas de una caída anterior, se suben ahora.
+      boxRpc.syncPending(db).catch(() => {});
     }
     return result;
   }
@@ -2761,11 +3163,28 @@ ipcMain.handle("replica-reset", async () => replicaEngine.resetSync(db));
 
 ipcMain.handle("get-server-status", () => {
   const api = apiServer.getStatus();
-  const out = { running: api.running, port: api.port || 3456 };
+  const out = { running: api.running, port: api.port || 3456, role: deviceRole };
   // 3g/F · en la caja el estado que importa es el Host al que sirve: el
   // encabezado lo enseña como "conectado/desconectado" en vez del servidor local.
   if (deviceRole === ipcScopes.ROLES.CLIENT) {
     out.host = replicaLive.hostOkInfo(db);
+    // Bloque 5 · aviso de versión menor distinta (nunca bloquea).
+    out.protocolWarning =
+      activation.getSetting(db, "protocol_warning") || "";
+    // Bloque 4/D · ventas pendientes y antigüedad de la réplica.
+    try {
+      out.pending = boxRpc.pendingSummary(db);
+    } catch (err) {
+      out.pending = { count: 0 };
+    }
+    const st = replicaEngine.state(db);
+    const syncedAt = Number(st.synced_at || 0) || null;
+    out.replica = {
+      synced_at: syncedAt,
+      stale_ms: syncedAt ? Date.now() - syncedAt : null,
+      state: st.state,
+      sync_completed: !!st.sync_completed,
+    };
   }
   return out;
 });
@@ -2778,6 +3197,9 @@ ipcMain.handle("get-cashiers", async () => {
       .prepare("SELECT id, name, role, is_active FROM cashiers ORDER BY name")
       .all();
   } catch (error) {
+    // No se traga el error en silencio: una lista vacía por fallo de lectura
+    // es indistinguible de "no hay cajeros" y parece que no conectó.
+    console.error("[get-cashiers]", error && error.message);
     return [];
   }
 });
@@ -2891,6 +3313,7 @@ ipcMain.handle(
         return newExpenses;
       });
       const newExpenses = registerExpense();
+      emitDbChanged(["cash_register", "cash_register_expenses"], {});
       return { success: true, expenses: newExpenses };
     } catch (error) {
       return { success: false, error: error.message };
@@ -2983,6 +3406,7 @@ ipcMain.handle(
       db.prepare(
         "INSERT INTO cash_register (date, opening_balance, cashier_id, opened_by, device_id) VALUES (?, ?, ?, ?, ?)",
       ).run(today, openingBalance || 0, cashierId || null, cashierId || null, callerDeviceId());
+      emitDbChanged(["cash_register"], {});
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -3069,6 +3493,11 @@ ipcMain.handle(
         register.id,
       );
 
+      emitDbChanged(["cash_register"], {});
+      // Bloque 6 · cada cierre de caja deja su respaldo (sólo en el Host).
+      if (deviceRole === ipcScopes.ROLES.HOST) {
+        runHostBackup("close").catch(() => {});
+      }
       return { success: true, expectedClose, difference };
     } catch (error) {
       return { success: false, error: error.message };
@@ -3082,12 +3511,14 @@ ipcMain.handle(
     try {
       let query = `
       SELECT cr.*,
+        pd.device_code, pd.device_name,
         opener.name AS opener_name,
         closer.name AS closer_name,
         (SELECT COUNT(*) FROM sales WHERE register_id = cr.id AND (status IS NULL OR status != 'cancelado')) as sale_count,
         (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE s.register_id = cr.id AND (s.status IS NULL OR s.status != 'cancelado') AND (si.status IS NULL OR si.status != 'cancelado')) as total_items,
         (SELECT COALESCE(SUM(s.total), 0) FROM sales s WHERE s.register_id = cr.id AND (s.status IS NULL OR s.status != 'cancelado')) as total_sales
       FROM cash_register cr
+      LEFT JOIN paired_devices pd ON pd.device_id = cr.device_id
       LEFT JOIN cashiers opener ON cr.opened_by = opener.id
       LEFT JOIN cashiers closer ON cr.closed_by = closer.id
       WHERE cr.status = 'closed'
@@ -3224,6 +3655,7 @@ ipcMain.handle(
         return newExpenses;
       });
       const expenses = doCancel();
+      emitDbChanged(["cash_register", "cash_register_expenses"], {});
       return { success: true, expenses };
     } catch (error) {
       return { success: false, error: error.message };
@@ -3614,21 +4046,22 @@ ipcMain.handle("run-weekly-pulse", async () => {
 // ─── VENTAS DIARIAS POR SEMANA ──────────────────────────────
 ipcMain.handle(
   "get-daily-sales-week",
-  async (event, { startDate, endDate }) => {
+  async (event, { startDate, endDate, deviceId } = {}) => {
     try {
       const { start, end } = toUTCDateRange(startDate);
       const { end: endE } = toUTCDateRange(endDate);
+      const dev = deviceWhere(deviceId, "sales");
       const rows = db
         .prepare(
           `SELECT DATE(created_at, '-6 hours') as date,
                 SUM(total) as total,
                 COUNT(*) as count
          FROM sales
-         WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')
+         WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')${dev.sql}
          GROUP BY DATE(created_at, '-6 hours')
          ORDER BY date ASC`,
         )
-        .all(start, endE);
+        .all(start, endE, ...dev.args);
       return { success: true, rows };
     } catch (error) {
       return { success: false, error: error.message };
@@ -3639,8 +4072,9 @@ ipcMain.handle(
 // ─── VENTAS SEMANALES POR MES ───────────────────────────────
 ipcMain.handle(
   "get-weekly-sales-range",
-  async (event, { startDate, endDate }) => {
+  async (event, { startDate, endDate, deviceId } = {}) => {
     try {
+      const dev = deviceWhere(deviceId, "sales");
       const rows = db
         .prepare(
           `SELECT strftime('%Y-%W', created_at, '-6 hours') as week_key,
@@ -3648,11 +4082,11 @@ ipcMain.handle(
                 SUM(total) as total,
                 COUNT(*) as count
          FROM sales
-         WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')
+         WHERE created_at >= ? AND created_at < ? AND (status IS NULL OR status != 'cancelado')${dev.sql}
          GROUP BY week_key
          ORDER BY week_key ASC`,
         )
-        .all(startDate, endDate);
+        .all(startDate, endDate, ...dev.args);
       return { success: true, rows };
     } catch (error) {
       return { success: false, error: error.message };
@@ -3712,8 +4146,142 @@ const migrateLegacyBackups = () => {
   }
 };
 
-const migrateRegisterContinuity = () => {
+// ─── BLOQUE 6 · RESPALDOS AUTOMÁTICOS Y RECEPCIÓN ───────────────────────────
+const getReceivedBackupDir = () => {
+  const dir = path.join(app.getPath("documents"), "POSBackups", "Recibidos");
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
+function getLatestBackupPayload() {
   try {
+    const latest = backupService.latestBackup(getBackupDir());
+    if (!latest) return null;
+    return { name: latest.name, buffer: fs.readFileSync(latest.path) };
+  } catch (err) {
+    return null;
+  }
+}
+
+const getBackupConfig = () => ({  externalDir: activation.getSetting(db, "backup_external_dir") || "",
+  receiverDeviceId:
+    activation.getSetting(db, "backup_receiver_device_id") || "",
+  lastRun: Number(activation.getSetting(db, "backup_last_run") || 0) || 0,
+});
+
+// Crea la copia del Host y la replica a la carpeta externa. `kind` puede ser
+// "auto" (cada 15 min), "close" (al cerrar caja) o "manual".
+const runHostBackup = async (kind = "auto") => {
+  if (deviceRole !== ipcScopes.ROLES.HOST) {
+    return {
+      success: false,
+      code: "HOST_ONLY",
+      error: "Los respaldos se generan en el Host",
+    };
+  }
+  try {
+    const dir = getBackupDir();
+    const cfg = getBackupConfig();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const base = kind === "close" ? "pos-close" : "pos-auto";
+    const name = `${base}-${stamp}.db`;
+    const filePath = uniqueFilePath(path.join(dir, name));
+    await db.backup(filePath);
+    const external = backupService.copyExternal(filePath, cfg.externalDir);
+
+    // Copia diaria (se conserva como "semanal", 8 máximo).
+    const today = mxToday();
+    const weeklyPath = path.join(dir, `pos-weekly-${today}.db`);
+    let weekly = null;
+    if (!fs.existsSync(weeklyPath)) {
+      await db.backup(weeklyPath);
+      weekly = path.basename(weeklyPath);
+      backupService.copyExternal(weeklyPath, cfg.externalDir);
+    }
+    backupService.applyRetention(dir);
+    activation.setSetting(db, "backup_last_run", String(Date.now()));
+    activation.setSetting(db, "backup_last_day", today);
+    return {
+      success: true,
+      name: path.basename(filePath),
+      weekly,
+      external,
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// La caja designada jala la copia más reciente. No hay push desde el Host
+// porque éste no guarda el token en claro de la caja.
+const pullHostBackup = async () => {
+  if (deviceRole !== ipcScopes.ROLES.CLIENT) {
+    return { success: false, code: "BOX_ONLY", error: "Sólo en una caja" };
+  }
+  const cfg = getBackupConfig();
+  const url = String(
+    activation.getSetting(db, clientLink.SETTINGS.HOST_URL) || "",
+  ).replace(/\/+$/, "");
+  const deviceId = activation.getSetting(
+    db,
+    clientLink.SETTINGS.BOX_DEVICE_ID,
+  );
+  const token = clientLink.readPairedToken(db);
+  if (!url || !deviceId || !token) {
+    return {
+      success: false,
+      code: "NOT_PAIRED",
+      error: "La caja no está emparejada con el Host",
+    };
+  }
+  let res;
+  try {
+    res = await fetch(`${url}/api/backup/latest`, {
+      headers: {
+        "x-device-id": deviceId,
+        "x-device-token": token,
+        "x-protocol-version": protocol.PROTOCOL_VERSION,
+      },
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (err) {
+    return { success: false, code: "HOST_UNREACHABLE", error: err.message };
+  }
+  if (res.status === 204) {
+    return { success: true, skipped: true, reason: "El Host no tiene respaldos" };
+  }
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (err) {}
+  if (!data || data.success !== true || !data.contentBase64) {
+    return {
+      success: false,
+      code: data?.code || `HTTP_${res.status}`,
+      error: data?.error || "El Host no entregó el respaldo",
+    };
+  }
+  return backupService.receiveBackup({
+    dir: getReceivedBackupDir(),
+    externalDir: cfg.externalDir,
+    name: data.name,
+    buffer: Buffer.from(data.contentBase64, "base64"),
+  });
+};
+
+let backupPullInFlight = null;
+const maybePullBackup = async () => {
+  if (deviceRole !== ipcScopes.ROLES.CLIENT) return;
+  if (backupPullInFlight) return backupPullInFlight;
+  backupPullInFlight = pullHostBackup()
+    .catch(() => null)
+    .finally(() => {
+      backupPullInFlight = null;
+    });
+  return backupPullInFlight;
+};
+
+const migrateRegisterContinuity = () => {  try {
     // 1) Close old open registers, keeping only the most recent one
     const openRegs = db
       .prepare(
@@ -3818,8 +4386,185 @@ ipcMain.handle("get-backups", async () => {
   }
 });
 
-ipcMain.handle("restore-backup", async (event, backupPath) => {
+// Bloque 6 · configuración de respaldos (carpeta externa y caja designada).
+ipcMain.handle("get-backup-config", async () => {
+  const cfg = getBackupConfig();
+  let received = [];
   try {
+    received = fs
+      .readdirSync(getReceivedBackupDir())
+      .filter((f) => f.endsWith(".db"))
+      .map((f) => {
+        const fp = path.join(getReceivedBackupDir(), f);
+        const stats = fs.statSync(fp);
+        let meta = null;
+        try {
+          meta = JSON.parse(
+            fs.readFileSync(`${fp}.sha256.json`, "utf8"),
+          );
+        } catch (err) {}
+        return {
+          name: f,
+          path: fp,
+          size: stats.size,
+          date: stats.mtime,
+          sha256: meta?.sha256 || null,
+        };
+      })
+      .sort((a, b) => b.date - a.date);
+  } catch (err) {}
+  return { success: true, ...cfg, received };
+});
+
+ipcMain.handle("save-backup-config", async (event, patch = {}) => {
+  try {
+    if (patch.externalDir !== undefined) {
+      const dir = String(patch.externalDir || "").trim();
+      if (dir) fs.mkdirSync(dir, { recursive: true });
+      activation.setSetting(db, "backup_external_dir", dir);
+    }
+    if (patch.receiverDeviceId !== undefined) {
+      const id = String(patch.receiverDeviceId || "").trim();
+      if (id) {
+        const dev = db
+          .prepare(
+            "SELECT 1 FROM paired_devices WHERE device_id = ? AND device_type = 'desktop_box'",
+          )
+          .get(id);
+        if (!dev) {
+          return {
+            success: false,
+            error: "Esa caja no está emparejada como caja adicional",
+          };
+        }
+      }
+      activation.setSetting(db, "backup_receiver_device_id", id);
+    }
+    return { success: true, config: getBackupConfig() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("pull-backup-now", async () => {
+  const res = await pullHostBackup();
+  return res;
+});
+
+// Bloque 6 · promoción manual de una caja a Host. Restaura el último respaldo
+// recibido (que trae host_device_id, código de activación y paired_devices),
+// fuerza el rol host y reinicia la app para arrancar el servidor del Host.
+ipcMain.handle("promote-to-host", async (event, { backupPath, confirm } = {}) => {
+  try {
+    if (deviceRole !== ipcScopes.ROLES.CLIENT) {
+      return {
+        success: false,
+        code: "NOT_A_BOX",
+        error: "Esta instalación ya es el Host",
+      };
+    }
+    if (!confirm) {
+      return {
+        success: false,
+        code: "CONFIRM_REQUIRED",
+        error: "La promoción requiere confirmación explícita",
+      };
+    }
+    const receivedDir = path.resolve(getReceivedBackupDir());
+    let resolved = null;
+    if (backupPath) {
+      const candidate = path.resolve(String(backupPath));
+      if (
+        candidate.startsWith(receivedDir + path.sep) &&
+        candidate.endsWith(".db")
+      ) {
+        resolved = candidate;
+      }
+    } else {
+      resolved = backupService.latestBackup(receivedDir)?.path || null;
+    }
+    if (!resolved || !fs.existsSync(resolved)) {
+      return {
+        success: false,
+        error:
+          "No hay un respaldo recibido. Configura esta caja como receptora y espera la copia del Host.",
+      };
+    }
+    const check = backupService.verifyDbFile(resolved, {
+      requireIdentity: true,
+    });
+    if (!check.ok) {
+      return {
+        success: false,
+        error: `El respaldo no es válido: ${check.error}`,
+      };
+    }
+    // La identidad del negocio DEBE venir del respaldo, no de esta caja.
+    let hostDeviceId = null;
+    let activationCode = null;
+    const src = new Database(resolved, { readonly: true, fileMustExist: true });
+    try {
+      hostDeviceId =
+        src
+          .prepare("SELECT value FROM settings WHERE key = 'host_device_id'")
+          .get()?.value || null;
+      activationCode =
+        src
+          .prepare("SELECT value FROM settings WHERE key = 'activation_code'")
+          .get()?.value || null;
+    } finally {
+      src.close();
+    }
+    if (!hostDeviceId) {
+      return {
+        success: false,
+        error:
+          "El respaldo no contiene host_device_id: no puede reemplazar al Host.",
+      };
+    }
+
+    // Copia de seguridad de esta caja antes de convertirla.
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safetyPath = uniqueFilePath(
+      path.join(getBackupDir(), `pos-pre-promotion-${stamp}.db`),
+    );
+    await db.backup(safetyPath);
+    const fromDeviceId =
+      activation.getSetting(db, clientLink.SETTINGS.BOX_DEVICE_ID) || null;
+
+    // Reemplaza el contenido de la base viva conservando el esquema actual.
+    backupService.restoreIntoLiveDb(db, resolved);
+    runMigrations(db);
+    activation.ensureSchema(db);
+    // El respaldo ya trae host_device_id / activation_code / paired_devices.
+    // Sólo se fuerza el rol y se deja rastro de la promoción.
+    activation.setSetting(db, "device_role", "host");
+    activation.setSetting(db, "promoted_at", new Date().toISOString());
+    if (fromDeviceId) {
+      activation.setSetting(db, "promoted_from_device_id", fromDeviceId);
+    }
+    activation.setSetting(db, "backup_last_run", String(Date.now()));
+
+    setImmediate(() => {
+      try {
+        app.relaunch();
+      } finally {
+        app.exit(0);
+      }
+    });
+    return {
+      success: true,
+      hostDeviceId,
+      activationCode,
+      safetyBackup: path.basename(safetyPath),
+      restarting: true,
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("restore-backup", async (event, backupPath) => {  try {
     const resolved = resolveBackupPath(backupPath);
     if (!resolved)
       return { success: false, error: "Ruta de respaldo no válida" };
@@ -3843,7 +4588,16 @@ ipcMain.handle("restore-backup", async (event, backupPath) => {
           .all()
           .map((r) => r.name),
       );
-      const required = ["products", "sales", "settings"];
+      const required = [
+        "products",
+        "sales",
+        "settings",
+        // Bloque 6 · tablas de identidad: sin ellas el respaldo no puede
+        // gobernar el negocio ni reconectar a las cajas ya emparejadas.
+        "cashiers",
+        "cash_register",
+        "paired_devices",
+      ];
       const missing = required.filter((t) => !tables.has(t));
       if (missing.length) {
         return {
@@ -3869,15 +4623,8 @@ ipcMain.handle("restore-backup", async (event, backupPath) => {
     await db.backup(safetyPath);
 
     // 3) Reemplazar la base viva con el respaldo ya validado.
-    const source = new Database(resolved, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    try {
-      source.backup(db);
-    } finally {
-      source.close();
-    }
+    // Reemplaza el contenido de la base viva conservando el esquema actual.
+    backupService.restoreIntoLiveDb(db, resolved);
 
     runMigrations(db);
 
@@ -3933,35 +4680,15 @@ const WEEKLY_BACKUP_RETAIN = 8;
 const isWeeklyBackup = (name) => /^pos-weekly-.*\.db$/.test(name);
 
 const maybeRunAutoBackup = async () => {
+  if (deviceRole !== ipcScopes.ROLES.HOST) return;
   try {
-    const today = mxToday();
-    const row = db
-      .prepare("SELECT value FROM settings WHERE key = 'auto_backup_last'")
-      .get();
-    const last = row ? row.value : null;
-    if (last) {
-      const days = Math.floor(
-        (new Date(`${today}T00:00:00Z`) - new Date(`${last}T00:00:00Z`)) /
-          86400000,
-      );
-      if (days >= 0 && days < 7) return;
-    }
-    const backupDir = getBackupDir();
-    await db.backup(path.join(backupDir, `pos-weekly-${today}.db`));
-    db.prepare(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES ('auto_backup_last', ?)",
-    ).run(today);
-    const weekly = fs
-      .readdirSync(backupDir)
-      .filter((f) => isWeeklyBackup(f))
-      .map((f) => {
-        const fp = path.join(backupDir, f);
-        return { file: f, mtime: fs.statSync(fp).mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-    weekly
-      .slice(WEEKLY_BACKUP_RETAIN)
-      .forEach((x) => fs.unlinkSync(path.join(backupDir, x.file)));
+    const last = Number(
+      activation.getSetting(db, "backup_last_run") || 0,
+    );
+    // Cada 15 min como máximo; la copia diaria la resuelve runHostBackup.
+    if (last && Date.now() - last < 15 * 60 * 1000) return;
+    await runHostBackup("auto");
+    backupService.applyRetention(getBackupDir());
   } catch (error) {
     console.error("Auto-backup failed:", error.message);
   }
@@ -4214,7 +4941,9 @@ ipcMain.handle("select-import-file", async () => {
   }
 });
 
-ipcMain.handle("import-products-data", async (event, filePath) => {
+// Bloque 5 · el mismo trabajo sirve para un archivo local del Host y para el
+// contenido que manda una caja (que leyó SU archivo y no tiene la ruta aquí).
+const runImportProductsFile = async (filePath) => {
   try {
     if (!filePath || !fs.existsSync(filePath))
       return { success: false, error: "Archivo no encontrado" };
@@ -4381,6 +5110,63 @@ ipcMain.handle("import-products-data", async (event, filePath) => {
     }
 
     return { success: true, imported, skipped, errors };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+ipcMain.handle("import-products-data", async (event, filePath) =>
+  runImportProductsFile(filePath),
+);
+
+// Bloque 5 · una caja lee el archivo en SU disco y manda el contenido al Host.
+ipcMain.handle(
+  "import-products-content",
+  async (event, { filename, contentBase64 } = {}) => {
+    try {
+      if (!contentBase64)
+        return { success: false, error: "El archivo llegó vacío" };
+      const buf = Buffer.from(String(contentBase64), "base64");
+      if (buf.length > 80 * 1024 * 1024)
+        return { success: false, error: "El archivo supera 80 MB" };
+      const ext =
+        path.extname(String(filename || "")).toLowerCase() === ".db" ||
+        path.extname(String(filename || "")).toLowerCase() === ".sqlite" ||
+        path.extname(String(filename || "")).toLowerCase() === ".sqlite3"
+          ? ".db"
+          : ".csv";
+      const tmp = path.join(
+        app.getPath("temp"),
+        `jrp-import-${Date.now()}-${process.pid}${ext}`,
+      );
+      fs.writeFileSync(tmp, buf);
+      try {
+        return await runImportProductsFile(tmp);
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch (err) {}
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
+
+// Bloque 5 · leer el archivo que la caja eligió con el diálogo local.
+ipcMain.handle("read-import-file", async (event, filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath))
+      return { success: false, error: "Archivo no encontrado" };
+    const stat = fs.statSync(filePath);
+    if (stat.size > 80 * 1024 * 1024)
+      return { success: false, error: "El archivo supera 80 MB" };
+    const contentBase64 = fs.readFileSync(filePath).toString("base64");
+    return {
+      success: true,
+      fileName: path.basename(filePath),
+      contentBase64,
+    };
   } catch (error) {
     return { success: false, error: error.message };
   }

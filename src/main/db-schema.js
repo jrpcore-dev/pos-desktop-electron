@@ -71,6 +71,10 @@ const createTables = (db) => {
     cashier_name TEXT DEFAULT 'Usuario Principal',
     customer_id INTEGER,
     device_id TEXT,
+    folio TEXT,
+    synced_at DATETIME,
+    client_created_at DATETIME,
+    conflict_resolved INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -236,6 +240,57 @@ const createTables = (db) => {
   // ventas hechas en otra. Las filas antiguas quedan a NULL, que es lo que
   // significa "no sabido"; los filtros de más abajo las tratan como ajenas.
   ensureColumn("sales", "device_id", "TEXT");
+  // Bloque 4/5 · folio continuo por dispositivo y sincronización offline.
+  // El folio lo asigna la caja (o el Host para ventas locales) y el índice
+  // UNIQUE es la última defensa contra duplicados al sincronizar.
+  ensureColumn("sales", "folio", "TEXT");
+  ensureColumn("sales", "synced_at", "DATETIME");
+  ensureColumn("sales", "client_created_at", "DATETIME");
+  ensureColumn("sales", "conflict_resolved", "INTEGER DEFAULT 0");
+  ensureColumn("sales", "cancelled_by_device", "TEXT");
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_folio ON sales(folio) WHERE folio IS NOT NULL`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sales_device ON sales(device_id)`,
+  );
+  // Contador de folios por dispositivo. `device_key` es el device_id de la
+  // caja o "host" para el Host. La secuencia nunca se reinicia.
+  db.exec(`CREATE TABLE IF NOT EXISTS folio_counters (
+    device_key TEXT PRIMARY KEY,
+    next_seq INTEGER NOT NULL DEFAULT 1
+  )`);
+  // Cola de ventas de la caja. Vive también en el Host (vacía) para que el
+  // mismo esquema sirva en ambos roles sin migraciones condicionales.
+  db.exec(`CREATE TABLE IF NOT EXISTS pending_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folio TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    register_id INTEGER,
+    cashier_id INTEGER,
+    cashier_name TEXT,
+    local_created_at DATETIME NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    synced_at DATETIME
+  )`);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_sales_folio ON pending_sales(folio)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_pending_sales_status ON pending_sales(status, id)`,
+  );
+  // Resolución idempotente de conflictos de stock: una fila por venta.
+  db.exec(`CREATE TABLE IF NOT EXISTS stock_conflict_resolutions (
+    sale_id INTEGER PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    resolved_by TEXT,
+    resolved_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
   // Make product_id nullable (recreate table) using a fresh PRAGMA check
   const siColsFresh = db.prepare("PRAGMA table_info(sale_items)").all();
   const pcol = siColsFresh.find((c) => c.name === "product_id");
@@ -288,6 +343,7 @@ const createTables = (db) => {
   ensureColumn("sale_items", "status", "TEXT DEFAULT 'activo'");
   ensureColumn("sale_items", "cancelled_at", "DATETIME");
   ensureColumn("sale_items", "cancelled_by", "TEXT");
+  ensureColumn("sale_items", "cancelled_by_device", "TEXT");
   ensureColumn("sale_items", "returned_qty", "REAL DEFAULT 0");
 
   // ─── CUSTOMERS / TIERS ─────────────────────────────────────
@@ -577,6 +633,14 @@ const runMigrations = (db) => {
   // Vigencia única global para toda la promoción del producto
   ensureColumn("products", "promo_start_date", "TEXT DEFAULT ''");
   ensureColumn("products", "promo_end_date", "TEXT DEFAULT ''");
+  // Línea base de stock COMPARTIDA (multicaja): el Host fija cada día MX
+  // `day_open_stock` (stock a la medianoche) y mantiene `day_sold` (vendido
+  // de hoy) con cada venta. Ambas columnas viajan con `products` y se
+  // replican a las cajas. Sin ellas, cada equipo calculaba el "inicial del
+  // día" con SUS ventas locales y una caja mostraba "17 de 17" en vez de
+  // "17 de 18".
+  ensureColumn("products", "day_open_stock", "REAL");
+  ensureColumn("products", "day_sold", "REAL DEFAULT 0");
   // Precio fijo de promoción (excluyente con % automático). >0 = aplica a
   // cualquier cantidad.
   ensureColumn("products", "promo_fixed_price", "REAL DEFAULT 0");
@@ -734,7 +798,7 @@ const UPDATED_AT_TABLES = REPLICATED_TABLES.filter((t) => t !== "settings");
 // A diferencia de `change_log` no se compacta, así que aunque la caja pierda
 // el evento `delete` le sigue quedando de dónde reconciliar.
 const TOMBSTONE_TABLE = "replica_tombstones";
-const REPLICATED_CASHIER_COLUMNS = ["id", "name", "role", "is_active"]; // sin PINs
+const REPLICATED_CASHIER_COLUMNS = ["id", "name", "role", "is_active", "pin_hash", "pin_salt"]; // PIN cacheado (solo cajas aprobadas)
 // Subconjunto de `settings` que la caja necesita para vender/mostrar tickets.
 const REPLICATED_SETTINGS_KEYS = [
   "store_name",

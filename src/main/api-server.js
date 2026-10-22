@@ -6,6 +6,7 @@ const scopeDefs = require("./scopes");
 const salesCore = require("./sales-core");
 const dbSchema = require("./db-schema");
 const protocol = require("./protocol");
+const backupService = require("./backup-service");
 const { createChangeStream } = require("./change-stream");
 // 3g/C · puerta única: los handlers IPC del Host, su lista blanca y el
 // contexto de quién llama.
@@ -118,11 +119,35 @@ const makeRequireScope = (db) => (scope) => (req, res, next) => {
   return next();
 };
 
-const startServer = async (db, port = 3456, { appVersion } = {}) => {
+const startServer = async (
+  db,
+  port = 3456,
+  { appVersion, onDataChanged, getLatestBackup } = {},
+) => {
   if (server) return { success: true, port };
 
   const app = express();
   app.use(express.json());
+  // Bloque 5 · versión de protocolo en CADA llamada de la caja. Distinto major
+  // bloquea escrituras con mensaje claro; distinto minor solo viaja como aviso
+  // en `x-protocol-warning`. El Host se actualiza primero (electron-updater).
+  app.use((req, res, next) => {
+    const check = protocol.checkProtocol(req.headers["x-protocol-version"]);
+    req.protocolCheck = check;
+    if (check.warning) res.setHeader("x-protocol-warning", check.warning);
+    next();
+  });
+  const requireProtocolWrite = (req, res, next) => {
+    const check = req.protocolCheck || protocol.checkProtocol(null);
+    if (!check.ok) {
+      return res.status(409).json({
+        success: false,
+        code: check.code || "PROTOCOL_MISMATCH",
+        error: check.error,
+      });
+    }
+    next();
+  };
   // 3c · versión del build, para /api/activation/info.
   const APP_VERSION = appVersion || process.env.npm_package_version || "0.0.0";
 
@@ -237,6 +262,7 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     if (!scopeDefs.scopeAllowed(req.deviceScopes || [], scope)) {
       return res.status(403).json({
         success: false,
+        code: "SCOPE_MISSING",
         scopeRequired: scope,
         error: "El dispositivo no tiene el scope necesario",
       });
@@ -246,7 +272,7 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
 
   const protectBox = (scope) => [requirePairedApproved, requireDeviceScope(scope)];
 
-  app.post("/api/auth", requirePairedExceptProbe, safe((req, res) => {
+  app.post("/api/auth", requirePairedExceptProbe, requireProtocolWrite, safe((req, res) => {
     const { id, pin } = req.body;
 
     // Ping de descubrimiento/reconexión del móvil: SOLO comprueba conectividad.
@@ -527,6 +553,13 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
         error: "Este dispositivo no está activado para este negocio",
       });
     }
+    // Bloque 5 · administración de cajas: la caja reporta su cola pendiente.
+    const pendingReported = Number(req.headers["x-pending-sales"]);
+    if (Number.isFinite(pendingReported) && pendingReported >= 0) {
+      db.prepare(
+        "UPDATE paired_devices SET pending_sync = ? WHERE device_id = ?",
+      ).run(Math.floor(pendingReported), deviceId);
+    }
     res.json({
       success: true,
       approved: Number(row.approved) === 1,
@@ -708,6 +741,42 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     });
   }));
 
+  // Bloque 6 · una caja designada recibe el respaldo más reciente del Host.
+  // Sólo el dispositivo configurado (`backup_receiver_device_id`) puede
+  // bajarlo, y debe tener el scope backup:receive (cajas desktop_box).
+  app.get(
+    "/api/backup/latest",
+    protectBox(scopeDefs.SCOPE.BACKUP_RECEIVE),
+    safe((req, res) => {
+      const receiver =
+        activation.getSetting(db, "backup_receiver_device_id") || "";
+      if (!receiver) {
+        return res.status(409).json({
+          success: false,
+          code: "NO_BACKUP_RECEIVER",
+          error: "El Host no tiene una caja designada para respaldos",
+        });
+      }
+      if (String(req.deviceId) !== String(receiver)) {
+        return res.status(403).json({
+          success: false,
+          code: "NOT_BACKUP_RECEIVER",
+          error: "Esta caja no es la designada para recibir respaldos",
+        });
+      }
+      const latest =
+        typeof getLatestBackup === "function" ? getLatestBackup() : null;
+      if (!latest) return res.status(204).end();
+      return res.json({
+        success: true,
+        name: latest.name,
+        size: latest.buffer.length,
+        sha256: backupService.sha256Buffer(latest.buffer),
+        contentBase64: latest.buffer.toString("base64"),
+      });
+    }),
+  );
+
   // 3e · Túnel de eventos. La caja se conecta una vez y recibe el pulso del
   // Host sin sondear; si se cae, `EventSource` reconecta solo y reenvía
   // `Last-Event-ID`, que es todo el estado que hace falta para reanudar.
@@ -865,7 +934,7 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     requireDeviceScope(scopeDefs.SCOPE.REGISTER_ALL),
   ];
 
-  app.post("/api/rpc", protectRpc, safe(async (req, res) => {
+  app.post("/api/rpc", protectRpc, requireProtocolWrite, safe(async (req, res) => {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const channel = String(body.channel || "");
     const args = Array.isArray(body.args) ? body.args : [];
@@ -915,7 +984,7 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     }
   }));
 
-  app.post("/api/sales", protect(scopeDefs.SCOPE.SALES_WRITE), safe(async (req, res) => {
+  app.post("/api/sales", protect(scopeDefs.SCOPE.SALES_WRITE), requireProtocolWrite, safe(async (req, res) => {
     const key = String(req.headers["idempotency-key"] || "").trim();
     if (!key)
       return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", error: "Cabecera Idempotency-Key requerida" });
@@ -926,7 +995,17 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
     if (Buffer.byteLength(JSON.stringify(body), "utf8") > 256 * 1024)
       return res.status(413).json({ success: false, error: "Payload demasiado grande" });
 
-    const cashier = db.prepare("SELECT id, name, role FROM cashiers WHERE id = ?").get(req.cashierId);
+    // Bloque 4 · sincronización de la cola offline. La venta conserva al
+    // cajero que la hizo y la caja que estaba abierta; la hora de negocio es
+    // la del Host (`synced_at`) y la local queda como referencia.
+    const offline = body.offline === true;
+    let cashier = db.prepare("SELECT id, name, role FROM cashiers WHERE id = ?").get(req.cashierId);
+    if (offline && body.cashier_id != null) {
+      const claimed = db
+        .prepare("SELECT id, name, role FROM cashiers WHERE id = ? AND is_active = 1")
+        .get(Number(body.cashier_id));
+      if (claimed) cashier = claimed;
+    }
 
 
     const rawCid = body.customer_id;
@@ -938,6 +1017,8 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
       total: body.total,
       paymentMethod: body.paymentMethod,
       discountTotal: body.discountTotal,
+      folio: body.folio || null,
+      ...(offline ? { register_id: body.register_id || null } : {}),
       ...(cidHash !== undefined ? { customer_id: cidHash } : {}),
     };
     const payload = {
@@ -951,7 +1032,11 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
       customerId: rawCid,
       // 3a.i · la caja es la del dispositivo verificado, nunca del body.
       deviceId: req.deviceId,
-      requireRegister: true,
+      requireRegister: !(offline && body.register_id),
+      folio: body.folio || undefined,
+      registerId: offline ? body.register_id || undefined : undefined,
+      syncedAt: offline ? new Date().toISOString() : undefined,
+      clientCreatedAt: offline ? body.client_created_at || undefined : undefined,
     };
     const requestHash = sha256(canonicalStringify(clientFields));
 
@@ -970,7 +1055,13 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
         return { conflict: true };
       }
       const result = salesCore.createSaleTx(db, payload);
-      const responseBody = { success: true, saleId: result.saleId, warnings: result.warnings || [] };
+      const responseBody = {
+        success: true,
+        saleId: result.saleId,
+        folio: result.folio,
+        warnings: result.warnings || [],
+        ...(offline ? { synced_at: payload.syncedAt } : {}),
+      };
       setKey.run(req.deviceId, key, requestHash, JSON.stringify(responseBody), 200);
       return { created: true, body: responseBody };
     });
@@ -990,6 +1081,10 @@ const startServer = async (db, port = 3456, { appVersion } = {}) => {
         code: "IDEMPOTENCY_CONFLICT",
         error: "Idempotency-Key ya usada con un payload diferente",
       });
+    // Venta recién creada (un replay no cambió datos): avisa a las pantallas
+    // del Host para el chip "Hay datos nuevos".
+    if (outcome.created && typeof onDataChanged === "function")
+      onDataChanged(["sales"], {});
     return res.status(outcome.replay ? outcome.statusCode : 200).json(outcome.body);
   }));
 

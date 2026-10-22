@@ -95,6 +95,7 @@ import {
 } from "./ui/tooltip";
 import { Spinner } from "./ui/spinner";
 import { cn } from "@/lib/utils";
+import { useDbChanges } from "../lib/useDbChanges";
 applyPlugin(jsPDF);
 
 import PageHeader from "./PageHeader";
@@ -211,6 +212,18 @@ const RegisterRow = memo(function RegisterRow({
         </div>
       </ShTableCell>
       <ShTableCell className="px-4 py-3">
+        <p className="whitespace-nowrap text-sm font-medium text-foreground">
+          {cr.device_code ||
+            cr.device_name ||
+            (!cr.device_id || String(cr.device_id).startsWith("host-")
+              ? "Host"
+              : String(cr.device_id).slice(0, 8))}
+        </p>
+        {cr.device_code && cr.device_name && (
+          <p className="truncate text-xs text-muted-foreground">{cr.device_name}</p>
+        )}
+      </ShTableCell>
+      <ShTableCell className="px-4 py-3">
         <div className="leading-tight">
           <p className="whitespace-nowrap text-sm font-medium text-foreground">
             {cr.closed_at
@@ -299,8 +312,9 @@ const RegisterHistory = () => {
     };
   }, []);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  // `silent` → refresco vivo sin skeleton (reglas 1 y 5).
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     const result = await window.api.invoke("get-closed-registers", {
       cashierId: cashier?.id,
@@ -315,12 +329,16 @@ const RegisterHistory = () => {
       const cashiersResult = await window.api.invoke("get-cashiers");
       if (Array.isArray(cashiersResult)) setCashiers(cashiersResult);
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [cashier?.id, cashier?.role, isAdmin]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // In vivo: un cierre/apertura de caja refresca la lista sola. Los cierres
+  // son eventos raros → refresco directo y silencioso, sin chip.
+  useDbChanges(() => fetchData(true), ["cash_register"]);
 
   const filteredRegisters = useMemo(() => {
     const inDateRange = (cr) => {
@@ -929,6 +947,7 @@ const RegisterHistory = () => {
                     <ShTableHeader>
                       <ShTableRow className="bg-muted/40 hover:bg-transparent">
                         <ShTableHead className="px-4 py-3 font-semibold text-foreground/75">Cajero / Turno</ShTableHead>
+                        <ShTableHead className="px-4 py-3 font-semibold text-foreground/75">Caja</ShTableHead>
                         <ShTableHead className="px-4 py-3 font-semibold text-foreground/75">Fecha</ShTableHead>
                         <ShTableHead className="px-4 py-3 text-right font-semibold text-foreground/75">Apertura</ShTableHead>
                         <ShTableHead className="px-4 py-3 font-semibold text-foreground/75">Estado</ShTableHead>

@@ -5,6 +5,7 @@ import React, {
   useMemo,
   memo,
 } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import {
   Search, TrendingUp, TrendingDown, ArrowLeftRight, ArrowDownUp, CalendarDays,
   Store, Undo2, Search as SearchIcon,
@@ -94,8 +95,9 @@ const StockMovements = () => {
   }, []);
 
   const load = useCallback(
-    async (searchOverride) => {
-      setLoading(true);
+    async (searchOverride, opts) => {
+      const silent = Boolean(opts && opts.silent);
+      if (!silent) setLoading(true);
       const params = {};
       const term = searchOverride !== undefined ? searchOverride : debouncedSearch;
       if (term) params.search = term.trim();
@@ -106,8 +108,11 @@ const StockMovements = () => {
       if (cashier?.role) params.role = cashier.role;
       const result = await window.api.invoke("get-stock-movements", params);
       setMovements(result);
-      resetPage();
-      setLoading(false);
+      // En refresco vivo se conserva la página del usuario (regla 1).
+      if (!silent) {
+        resetPage();
+        setLoading(false);
+      }
     },
     [debouncedSearch, type, dateRange, cashier?.id, cashier?.role],
   );
@@ -115,6 +120,18 @@ const StockMovements = () => {
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
+
+  // In vivo: el movimiento nuevo llega señalado por `products` (su stock
+  // cambió en el Host al mismo tiempo); `stock_movements` queda declarado por
+  // semántica (hoy no genera change_log — no se replica —). Nunca cambia el
+  // formulario de filtros ni la página.
+  useDbChanges(
+    () => {
+      load(undefined, { silent: true });
+      fetchProducts();
+    },
+    ["stock_movements", "products"],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 250);

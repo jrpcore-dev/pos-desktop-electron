@@ -6,6 +6,7 @@ import {
   CloudUpload,
   FlaskConical,
   Loader2,
+  Pencil,
   Printer,
   ReceiptText,
   RefreshCw,
@@ -168,6 +169,12 @@ const SELECT_TRIGGER = "h-10 w-full";
 // "" = impresora predeterminada del sistema. Ningún modelo se hardcodea:
 // la selección vive en la setting `printer_name`.
 const PAPER_WIDTH_OPTIONS = [48, 58, 80];
+// Setting `print_mode`; el main valida los mismos valores.
+const PRINT_MODE_OPTIONS = [
+  { value: "auto", label: "Automático" },
+  { value: "escpos", label: "ESC/POS directo" },
+  { value: "driver", label: "Driver de Windows" },
+];
 
 const PRINTER_STATUS = {
   0: "Disponible",
@@ -422,8 +429,14 @@ function ConfigurationScreen() {
   const [activePrinterName, setActivePrinterName] = useState("");
   const [paperWidth, setPaperWidth] = useState("58");
   const [activePaperWidth, setActivePaperWidth] = useState("58");
+  // Modo de impresión: "auto" (detecta por nombre/driver), "escpos" (imagen
+  // ESC/POS en crudo, sin driver) o "driver" (driver de Windows).
+  const [printMode, setPrintMode] = useState("auto");
+  const [activePrintMode, setActivePrintMode] = useState("auto");
   const [savingPrinter, setSavingPrinter] = useState(false);
   const [testingPrint, setTestingPrint] = useState(false);
+  const [testingEscPos, setTestingEscPos] = useState(false);
+  const testReceiptHtmlRef = useRef(null);
 
   useEffect(() => {
     const loadPrinters = async () => {
@@ -447,10 +460,15 @@ function ConfigurationScreen() {
         const name =
           typeof s.printer_name === "string" ? s.printer_name : "";
         const width = s.paper_width_mm ?? "58";
+        const mode = PRINT_MODE_OPTIONS.some((o) => o.value === s.print_mode)
+          ? s.print_mode
+          : "auto";
         setPrinterName(name);
         setActivePrinterName(name);
         setPaperWidth(width);
         setActivePaperWidth(width);
+        setPrintMode(mode);
+        setActivePrintMode(mode);
       } catch (err) {
         console.error("Error loading printer settings:", err);
       }
@@ -477,11 +495,13 @@ function ConfigurationScreen() {
       const results = await Promise.all([
         window.api.invoke("save-setting", "printer_name", printerName),
         window.api.invoke("save-setting", "paper_width_mm", paperWidth),
+        window.api.invoke("save-setting", "print_mode", printMode),
       ]);
       const failed = results.find((r) => r && r.success === false);
       if (failed) throw new Error(failed.error);
       setActivePrinterName(printerName);
       setActivePaperWidth(paperWidth);
+      setActivePrintMode(printMode);
       notify("Configuración de impresora guardada correctamente.", "success");
       reloadPrinters();
     } catch (err) {
@@ -492,49 +512,109 @@ function ConfigurationScreen() {
     }
   };
 
-  const handleTestPrint = async () => {
+  const handleTestPrint = async (variant) => {
     setTestingPrint(true);
     try {
       // Imprime con la selección ACTUAL de la UI (aunque no esté guardada):
       // print-receipt acepta overrides que el main sanitiza antes de usar.
-      const html = buildReceiptHTML({
-        store: { name: storeName || "Vendia" },
-        headerNote: "Prueba de impresión",
-        ticketNum: "PRUEBA",
-        items: [
-          {
-            name: "Artículo de prueba",
-            qtyDisplay: 1,
-            unit: "pza",
-            unitPrice: 10,
-            lineTotal: 10,
-          },
-        ],
-        subtotal: 10,
-        total: 10,
-        methodLabel: "EFECTIVO",
-        footerNote: `${printerName || "Impresora predeterminada"} · ${paperWidth} mm`,
-        paperWidthMm: paperWidth,
-      });
+      const htmlKey = JSON.stringify([storeName, storeLogo, printerName, paperWidth]);
+      if (testReceiptHtmlRef.current?.key !== htmlKey) {
+        testReceiptHtmlRef.current = {
+          key: htmlKey,
+          html: buildReceiptHTML({
+            store: { name: storeName || "Vendia", logo: storeLogo },
+            headerNote: "Prueba de impresión",
+            ticketNum: "PRUEBA",
+            items: [
+              {
+                name: "Artículo de prueba",
+                qtyDisplay: 1,
+                unit: "pza",
+                unitPrice: 10,
+                lineTotal: 10,
+              },
+            ],
+            subtotal: 10,
+            total: 10,
+            methodLabel: "EFECTIVO",
+            footerNote: `${printerName || "Impresora predeterminada"} · ${paperWidth} mm`,
+            paperWidthMm: paperWidth,
+          }),
+        };
+      }
+      const html = testReceiptHtmlRef.current.html;
       const res = await window.api.invoke("print-receipt", html, {
+        printerName,
+        paperWidthMm: Number(paperWidth),
+        printMode,
+        // "PDF" es la variante diagnóstica (siempre por Chromium, sin driver).
+        printVariant: variant === "PDF" ? "PDF" : "ticket",
+      });
+      if (variant === "PDF" && res?.success) {
+        if (!res.pdf) {
+          throw new Error("Electron no devolvió el PDF generado.");
+        }
+        const preview = await window.api.invoke("print-pdf", res.pdf);
+        if (!preview?.success) {
+          throw new Error(preview?.error || "No se pudo abrir la vista previa PDF.");
+        }
+        notify(
+          `PDF generado para «${res.printer}». En la vista previa, imprime con Ctrl+P y selecciona esa impresora.`,
+          "success",
+        );
+        return;
+      }
+      if (res && res.success) {
+        const via =
+          res.mode === "escpos" ? "ESC/POS directo" : "driver de Windows";
+        notify(
+          res.fellBack
+            ? `Prueba enviada (${via}) a «${res.printer}»: la seleccionada no está disponible. Verifica físicamente la impresión.`
+            : `Prueba enviada (${via}) a «${res.printer}». Verifica físicamente el ticket.`,
+          res.fellBack ? "info" : "success",
+        );
+      } else {
+        notify(
+          `Falló la impresión de prueba: ${(res && res.error) || "no se pudo enviar el trabajo."}`,
+          "error",
+        );
+      }
+    } catch (err) {
+      console.error("Error printing test:", err);
+      notify(`Falló la impresión de prueba: ${err.message || "error de impresión."}`, "error");
+    } finally {
+      setTestingPrint(false);
+    }
+  };
+
+  // Prueba ESC/POS en crudo: manda bytes ESC/POS por el spooler SIN pasar por
+  // el driver de render (Unidrv). Discrimina dialecto: si esto imprime y el
+  // ticket HTML no, la impresora habla ESC/POS y el driver emite otra cosa.
+  const handleEscPosTest = async () => {
+    setTestingEscPos(true);
+    try {
+      const res = await window.api.invoke("print-escpos-test", {
         printerName,
         paperWidthMm: Number(paperWidth),
       });
       if (res && res.success) {
         notify(
           res.fellBack
-            ? `Impreso en «${res.printer}»: la seleccionada no está disponible.`
-            : `Ticket de prueba enviado a «${res.printer}».`,
-          res.fellBack ? "info" : "success",
+            ? `Prueba ESC/POS enviada en crudo a «${res.printer}» (la seleccionada no está disponible). Verifica físicamente el papel.`
+            : `Prueba ESC/POS enviada en crudo a «${res.printer}». Verifica físicamente el papel.`,
+          "success",
         );
       } else {
-        notify((res && res.error) || "No se pudo imprimir la prueba.", "error");
+        notify(
+          `Falló la prueba ESC/POS: ${(res && res.error) || "no se pudo enviar el trabajo."}`,
+          "error",
+        );
       }
     } catch (err) {
-      console.error("Error printing test:", err);
-      notify("No se pudo imprimir la prueba.", "error");
+      console.error("Error printing ESC/POS test:", err);
+      notify(`Falló la prueba ESC/POS: ${err.message || "error de impresión."}`, "error");
     } finally {
-      setTestingPrint(false);
+      setTestingEscPos(false);
     }
   };
 
@@ -780,9 +860,26 @@ function ConfigurationScreen() {
     }
   };
 
+  // Bloque 5 · renombrar una caja sin revocar ni re-emparejar.
+  const handleRenameDevice = async (deviceId, currentName) => {
+    const name = window.prompt("Nuevo nombre para esta caja", currentName || "");
+    if (name == null) return;
+    const next = name.trim();
+    if (!next || next === currentName) return;
+    const res = await window.api.invoke("rename-device", {
+      deviceId,
+      name: next,
+    });
+    if (res?.success) {
+      setActivation(res.status);
+      notify("Nombre actualizado.", "success");
+    } else {
+      notify(res?.error || "No se pudo renombrar la caja.", "error");
+    }
+  };
+
   const handleApproveDevice = async (deviceId) => {
-    const res = await window.api.invoke("approve-device", deviceId);
-    if (res.success) {
+    const res = await window.api.invoke("approve-device", deviceId);    if (res.success) {
       setActivation(res.status);
       notify("Dispositivo aprobado.", "success");
     } else {
@@ -1361,6 +1458,14 @@ function ConfigurationScreen() {
                             : ""}
                           {` · Activado el ${fmtDate(d.activatedAt)}`}
                           {d.lastSeenAt && ` · Visto ${fmtDate(d.lastSeenAt)}`}
+                          {d.deviceType === "desktop_box" &&
+                            (d.state === "online"
+                              ? " · En línea"
+                              : d.state === "offline"
+                                ? " · Sin conexión"
+                                : "")}
+                          {d.pendingSync > 0 &&
+                            ` · ${d.pendingSync} venta(s) sin subir`}
                           {d.state === "revoked" && " · Revocado"}
                           {isPending && " · Pendiente de aprobación"}
                         </p>
@@ -1385,8 +1490,21 @@ function ConfigurationScreen() {
                             Rechazar
                           </Button>
                         </div>
-                      ) : (
-                        d.state !== "revoked" && (
+                      ) : d.state !== "revoked" ? (
+                        <div className="flex shrink-0 items-center gap-1">
+                          {d.deviceType === "desktop_box" && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                handleRenameDevice(d.deviceId, d.deviceName)
+                              }
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Renombrar
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             variant="ghost"
@@ -1397,8 +1515,8 @@ function ConfigurationScreen() {
                             <Trash2 className="h-4 w-4" />
                             Revocar
                           </Button>
-                        )
-                      )}
+                        </div>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -1452,7 +1570,19 @@ function ConfigurationScreen() {
       !detectedPrinters.some((p) => p.name === printerName);
     const defaultPrinter = detectedPrinters.find((p) => p.isDefault);
     const hasUnsavedChanges =
-      printerName !== activePrinterName || paperWidth !== activePaperWidth;
+      printerName !== activePrinterName ||
+      paperWidth !== activePaperWidth ||
+      printMode !== activePrintMode;
+    // Lo que haría "Automático" con la impresora que se usaría al imprimir.
+    const effectivePrinter =
+      detectedPrinters.find((p) => p.name === printerName) ||
+      (printerName === "" ? defaultPrinter : null) ||
+      defaultPrinter;
+    const autoModeLabel = effectivePrinter
+      ? effectivePrinter.autoMode === "escpos"
+        ? `ESC/POS directo (detectada como térmica: ${effectivePrinter.displayName || effectivePrinter.name})`
+        : `Driver de Windows (${effectivePrinter.displayName || effectivePrinter.name} no parece térmica)`
+      : null;
     return (
       <>
         <section className="divide-y divide-border/40">
@@ -1549,6 +1679,42 @@ function ConfigurationScreen() {
             </div>
           </FieldRow>
           <FieldRow
+            label="Modo de impresión"
+            description="ESC/POS directo manda el ticket como imagen sin pasar por el driver (recomendado para térmicas: funciona con cualquier driver). Driver de Windows es para impresoras láser o de inyección."
+          >
+            <div className="flex w-full flex-col gap-2">
+              <div
+                role="group"
+                aria-label="Modo de impresión"
+                className="flex w-full gap-1 rounded-lg border border-border bg-background p-1"
+              >
+                {PRINT_MODE_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    aria-pressed={printMode === o.value}
+                    onClick={() => setPrintMode(o.value)}
+                    className={cn(
+                      "h-9 flex-1 cursor-pointer rounded-md border px-2 text-sm font-bold transition-colors duration-150",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                      printMode === o.value
+                        ? "border-primary bg-primary/10 text-primary shadow-sm"
+                        : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              {printMode === "auto" && autoModeLabel && (
+                <p className="text-xs text-muted-foreground">
+                  Se usará: {autoModeLabel}. Si no imprime, elige el modo
+                  manualmente.
+                </p>
+              )}
+            </div>
+          </FieldRow>
+          <FieldRow
             label="Acciones"
             description="Guarda la selección o imprime un ticket de prueba con los ajustes actuales."
           >
@@ -1578,8 +1744,9 @@ function ConfigurationScreen() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={handleTestPrint}
+                  onClick={() => handleTestPrint("ticket")}
                   disabled={testingPrint}
+                  title="Envía este ticket real a la impresora seleccionada con el ancho y el modo de impresión elegidos."
                 >
                   {testingPrint ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1587,6 +1754,32 @@ function ConfigurationScreen() {
                     <Printer className="h-4 w-4" />
                   )}
                   Imprimir prueba
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleTestPrint("PDF")}
+                  disabled={testingPrint}
+                  title="Genera una vista PDF con el ancho seleccionado y el alto medido del HTML."
+                >
+                  {testingPrint ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Printer className="h-4 w-4" />
+                  )}
+                  Vista previa PDF
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleEscPosTest}
+                  disabled={testingEscPos || testingPrint}
+                  title="Envía un ticket de texto ESC/POS en crudo (sin driver). Si esto imprime, la impresora es compatible con el modo ESC/POS directo."
+                >
+                  {testingEscPos ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Printer className="h-4 w-4" />
+                  )}
+                  Prueba ESC/POS
                 </Button>
                 <Button onClick={handleSavePrinter} disabled={savingPrinter}>
                   {savingPrinter ? (

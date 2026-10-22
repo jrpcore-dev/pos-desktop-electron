@@ -19,6 +19,91 @@
 const MAX_CART_LINES = 500;
 const KNOWN_UNITS = ["piece", "weight", "box", "package", "boxpack"];
 
+// Bloque 5 · folio continuo por dispositivo: H-000001 para el Host, A-000001
+// para la caja A, etc. La letra sale del `device_code` que el Host ya asigna al
+// aprobar la caja; si no existe se usa "X" para no romper el formato.
+const FOLIO_RE = /^([A-Z])-(\d{6,})$/;
+
+const folioLetter = (db, deviceId) => {
+  if (!deviceId) return "H";
+  let row = null;
+  try {
+    // El Host vende con su `host_device_id`, que NO está en paired_devices:
+    // sin esta comparación sus ventas saldrían con "X" y chocarían con las de
+    // una caja sin código.
+    const host = db
+      .prepare("SELECT value FROM settings WHERE key = 'host_device_id'")
+      .get();
+    if (host && host.value === deviceId) return "H";
+    row = db
+      .prepare("SELECT device_code FROM paired_devices WHERE device_id = ?")
+      .get(deviceId);
+  } catch (err) {
+    row = null;
+  }
+  const m = /^([A-Z])/.exec(String((row && row.device_code) || ""));
+  return m ? m[1] : "X";
+};
+
+const formatFolio = (letter, seq) =>
+  `${letter}-${String(Math.max(1, Number(seq) || 1)).padStart(6, "0")}`;
+
+// Reserva el siguiente folio. El llamador SIEMPRE corre dentro de una
+// transacción (createSaleTx o el wrapper de /api/sales), así que el
+// SELECT+UPDATE es atómico frente a otras ventas del mismo dispositivo.
+// El Host puede llegar con `host_device_id` o sin device_id (venta local
+// histórica). Ambos deben compartir el MISMO contador "host"; si no, dos
+// ventas del Host sacarían H-000001 dos veces.
+const folioKey = (db, deviceId) => {
+  if (!deviceId) return "host";
+  try {
+    const host = db
+      .prepare("SELECT value FROM settings WHERE key = 'host_device_id'")
+      .get();
+    if (host && host.value === deviceId) return "host";
+  } catch (err) {}
+  return String(deviceId);
+};
+
+const nextFolio = (db, deviceId) => {
+  const key = folioKey(db, deviceId);
+  db.prepare(
+    "INSERT OR IGNORE INTO folio_counters (device_key, next_seq) VALUES (?, 1)",
+  ).run(key);
+  const row = db
+    .prepare("SELECT next_seq FROM folio_counters WHERE device_key = ?")
+    .get(key);
+  const seq = Number(row && row.next_seq) || 1;
+  db.prepare("UPDATE folio_counters SET next_seq = ? WHERE device_key = ?").run(
+    seq + 1,
+    key,
+  );
+  return formatFolio(folioLetter(db, deviceId), seq);
+};
+
+// El Host valida el folio que manda la caja y adelanta su contador para que
+// una asignación futura del Host no choque. No reescribe el folio recibido.
+const acceptFolio = (db, deviceId, folio) => {
+  const value = String(folio || "").trim().toUpperCase();
+  if (!FOLIO_RE.test(value)) {
+    throw fail("FOLIO_INVALID", `Folio inválido: ${folio}`);
+  }
+  const key = folioKey(db, deviceId);
+  const seq = Number(value.split("-")[1]);
+  db.prepare(
+    "INSERT OR IGNORE INTO folio_counters (device_key, next_seq) VALUES (?, 1)",
+  ).run(key);
+  const row = db
+    .prepare("SELECT next_seq FROM folio_counters WHERE device_key = ?")
+    .get(key);
+  if (!row || Number(row.next_seq) <= seq) {
+    db.prepare(
+      "UPDATE folio_counters SET next_seq = ? WHERE device_key = ?",
+    ).run(seq + 1, key);
+  }
+  return value;
+};
+
 // 3a.i · deviceId filtra por dispositivo y quita el fallback a caja ajena.
 const findOpenRegister = (db, cashierId, role, deviceId) => {
   const dev = deviceId ? " AND device_id = ?" : "";
@@ -67,6 +152,12 @@ const createSaleTx = (
     customerId,
     deviceId,
     requireRegister,
+    // Bloque 4/5 · venta de la cola offline: la caja manda el folio, la caja
+    // abierta que dio el Host y la hora local; el Host pone `synced_at`.
+    folio,
+    registerId,
+    syncedAt,
+    clientCreatedAt,
   },
 ) => {
   if (!Array.isArray(cart) || cart.length === 0) {
@@ -97,32 +188,53 @@ const createSaleTx = (
 
   const openReg = findOpenRegister(db, cashierId, role, deviceId);
   // 3a.i · la caja exige caja propia; el Host local vende también fuera de caja.
-  if (requireRegister && !openReg) {
+  if (requireRegister && !openReg && !registerId) {
     throw fail("NO_OPEN_REGISTER", "Abra caja para vender");
   }
-  const registerId = openReg ? openReg.id : null;
+  // Venta sincronizada desde la cola: se conserva la caja que estaba abierta
+  // cuando se vendió, aunque ya se haya cerrado. Se valida que sea de la caja.
+  let registerIdFinal = openReg ? openReg.id : null;
+  if (registerId) {
+    const row = db
+      .prepare("SELECT id, device_id FROM cash_register WHERE id = ?")
+      .get(registerId);
+    if (!row) throw fail("REGISTER_NOT_FOUND", "La caja de la venta no existe");
+    if (deviceId && row.device_id && row.device_id !== deviceId) {
+      throw fail("REGISTER_NOT_OWNED", "La caja de la venta pertenece a otro dispositivo");
+    }
+    registerIdFinal = row.id;
+  }
+  const folioFinal = folio
+    ? acceptFolio(db, deviceId, folio)
+    : nextFolio(db, deviceId);
 
   const saleStmt = db.prepare(
     // 3g/C · `device_id` deja constancia de qué aparato hizo la venta: sin él,
     // una venta sin caja abierta no se puede atribuir a nadie.
-    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id, device_id, folio, synced_at, client_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const saleInfo = saleStmt.run(
     total,
     paymentMethod || "cash",
     discountTotal || 0,
-    registerId,
+    registerIdFinal,
     cashierName || "Usuario Principal",
     resolvedCustomerId,
     deviceId || null,
+    folioFinal,
+    syncedAt || null,
+    clientCreatedAt || null,
   );
   const saleId = saleInfo.lastInsertRowid;
 
   const itemStmt = db.prepare(
     "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
+  // `day_sold` mantiene el contador "vendido hoy" de la línea base compartida:
+  // se escribe junto al stock, así que la fila cambia igual que antes y viaja
+  // a las cajas sin tráfico de réplica extra.
   const stockStmt = db.prepare(
-    "UPDATE products SET stock = stock - ? WHERE id = ?",
+    "UPDATE products SET stock = stock - ?, day_sold = COALESCE(day_sold, 0) + ? WHERE id = ?",
   );
   const getProductStmt = db.prepare(
     "SELECT name, stock, sale_unit, box_qty, pack_qty FROM products WHERE id = ?",
@@ -200,7 +312,7 @@ const createSaleTx = (
     const stockBefore = product.stock;
     // Descuento atómico SIN condición de stock: la venta nunca se rechaza por
     // stock insuficiente.
-    stockStmt.run(stockDeducted, item.id);
+    stockStmt.run(stockDeducted, stockDeducted, item.id);
     const stockAfter = getStockStmt.get(item.id).stock;
 
     itemStmt.run(
@@ -241,7 +353,14 @@ const createSaleTx = (
     warnings.push(customerWarning);
   }
 
-  return { success: true, saleId, warnings };
+  return { success: true, saleId, folio: folioFinal, warnings };
 };
 
-module.exports = { findOpenRegister, createSaleTx, MAX_CART_LINES };
+module.exports = {
+  findOpenRegister,
+  createSaleTx,
+  nextFolio,
+  acceptFolio,
+  formatFolio,
+  MAX_CART_LINES,
+};

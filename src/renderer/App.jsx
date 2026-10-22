@@ -12,6 +12,7 @@ import { Spinner } from "./components/ui/spinner";
 const Layout = React.lazy(() => import("./components/Layout"));
 const SalesTerminal = React.lazy(() => import("./components/SalesTerminal"));
 const Inventory = React.lazy(() => import("./components/Inventory"));
+const StockConflicts = React.lazy(() => import("./components/StockConflicts"));
 const EndOfDay = React.lazy(() => import("./components/EndOfDay"));
 const RegisterHistory = React.lazy(() => import("./components/RegisterHistory"));
 const Suppliers = React.lazy(() => import("./components/Suppliers"));
@@ -279,6 +280,7 @@ const AppInner = () => {
           <Route path="/" element={<Layout />}>
             <Route index element={<SalesTerminal />} />
             <Route path="inventory" element={<Inventory />} />
+            <Route path="stock-conflicts" element={<StockConflicts />} />
             <Route path="catalog-reference" element={<Catalog />} />
             <Route path="catalog" element={<Navigate to="catalog-reference" replace />} />
             <Route path="suppliers" element={<Suppliers />} />

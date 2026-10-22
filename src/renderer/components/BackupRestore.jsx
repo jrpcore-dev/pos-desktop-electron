@@ -47,6 +47,112 @@ const BackupRestore = () => {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  // Bloque 6 · durabilidad: copia externa, caja receptora y promoción.
+  const [role, setRole] = useState("host");
+  const [config, setConfig] = useState({
+    externalDir: "",
+    receiverDeviceId: "",
+    received: [],
+  });
+  const [devices, setDevices] = useState([]);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [pulling, setPulling] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+
+  const fetchConfig = useCallback(async () => {
+    try {
+      const [cfg, status] = await Promise.all([
+        window.api.invoke("get-backup-config"),
+        window.api.invoke("get-server-status"),
+      ]);
+      setRole(status?.role === "client" ? "client" : "host");
+      if (cfg?.success) {
+        setConfig({
+          externalDir: cfg.externalDir || "",
+          receiverDeviceId: cfg.receiverDeviceId || "",
+          received: Array.isArray(cfg.received) ? cfg.received : [],
+        });
+      }
+      const act = await window.api.invoke("get-activation-status");
+      setDevices(
+        (act?.devices || []).filter((d) => d.deviceType === "desktop_box"),
+      );
+    } catch (err) {}
+  }, []);
+
+  const saveConfig = async () => {
+    setSavingConfig(true);
+    try {
+      const res = await window.api.invoke("save-backup-config", {
+        externalDir: config.externalDir,
+        receiverDeviceId: config.receiverDeviceId,
+      });
+      if (res?.success) {
+        setMessage({ type: "success", text: "Configuración de respaldos guardada." });
+        await fetchConfig();
+      } else {
+        setMessage({ type: "error", text: res?.error || "No se pudo guardar" });
+      }
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const pullNow = async () => {
+    setPulling(true);
+    try {
+      const res = await window.api.invoke("pull-backup-now");
+      if (res?.success) {
+        setMessage({
+          type: "success",
+          text: res.skipped
+            ? res.reason || "No hay respaldo nuevo"
+            : `Respaldo recibido y verificado: ${res.name}`,
+        });
+        await fetchConfig();
+      } else {
+        setMessage({ type: "error", text: res?.error || "No se pudo recibir" });
+      }
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  const promote = async () => {
+    const latest = config.received?.[0];
+    if (!latest) {
+      setMessage({
+        type: "error",
+        text: "Primero recibe un respaldo del Host.",
+      });
+      return;
+    }
+    if (
+      !window.confirm(
+        "Convertir esta caja en el Host restaura el último respaldo recibido y reinicia la app. Se conservan el código de activación, la identidad del negocio y las cajas emparejadas. ¿Continuar?",
+      )
+    )
+      return;
+    setPromoting(true);
+    try {
+      const res = await window.api.invoke("promote-to-host", {
+        backupPath: latest.path,
+        confirm: true,
+      });
+      if (res?.success) {
+        setMessage({
+          type: "success",
+          text: "Promoción lista. La app se reiniciará como Host…",
+        });
+      } else {
+        setMessage({ type: "error", text: res?.error || "No se pudo promover" });
+        setPromoting(false);
+      }
+    } catch (err) {
+      setMessage({ type: "error", text: err.message });
+      setPromoting(false);
+    }
+  };
 
   const fetchBackups = useCallback(async () => {
     setLoading(true);
@@ -55,7 +161,10 @@ const BackupRestore = () => {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchBackups(); }, [fetchBackups]);
+  useEffect(() => {
+    fetchBackups();
+    fetchConfig();
+  }, [fetchBackups, fetchConfig]);
 
   const createBackup = async () => {
     const result = await window.api.invoke("create-backup");
@@ -112,7 +221,23 @@ const BackupRestore = () => {
         setMessage({ type: "error", text: sel.error });
         return;
       }
-      const result = await window.api.invoke("import-products-data", sel.path);
+      // Bloque 5 · si esta PC es caja, el archivo se lee AQUÍ y sólo el
+      // contenido viaja al Host. En el Host se conserva el camino de siempre.
+      const status = await window.api.invoke("get-server-status");
+      let result;
+      if (status?.role === "client") {
+        const file = await window.api.invoke("read-import-file", sel.path);
+        if (!file.success) {
+          setMessage({ type: "error", text: file.error });
+          return;
+        }
+        result = await window.api.invoke("import-products-content", {
+          filename: file.fileName,
+          contentBase64: file.contentBase64,
+        });
+      } else {
+        result = await window.api.invoke("import-products-data", sel.path);
+      }
       if (result.success) {
         setImportResult(result);
       } else {
@@ -257,6 +382,106 @@ const BackupRestore = () => {
           })}
         </section>
       )}
+
+      {/* Bloque 6 · durabilidad: copia externa, caja designada y promoción */}
+      <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Durabilidad</p>
+            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+              Respaldos cada 15 min, al cerrar caja y diarios. Se conservan 24
+              copias recientes y 8 diarias. Una copia viaja a la caja designada
+              y, si configuras una carpeta externa, también se guarda ahí.
+            </p>
+          </div>
+          <Badge variant={role === "client" ? "secondary" : "default"}>
+            {role === "client" ? "Esta PC es caja" : "Esta PC es el Host"}
+          </Badge>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="block">
+            <span className="text-xs font-medium text-foreground">
+              Carpeta externa (opcional)
+            </span>
+            <input
+              type="text"
+              value={config.externalDir}
+              onChange={(e) =>
+                setConfig((c) => ({ ...c, externalDir: e.target.value }))
+              }
+              placeholder="Ej. D:\\RespaldosVendia"
+              className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </label>
+          {role === "host" && (
+            <label className="block">
+              <span className="text-xs font-medium text-foreground">
+                Caja designada para recibir respaldos
+              </span>
+              <select
+                value={config.receiverDeviceId}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, receiverDeviceId: e.target.value }))
+                }
+                className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="">Ninguna</option>
+                {devices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {(d.deviceCode || d.deviceName || d.deviceId) +
+                      (d.deviceName && d.deviceCode ? ` · ${d.deviceName}` : "")}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={saveConfig} disabled={savingConfig}>
+            {savingConfig ? "Guardando…" : "Guardar configuración"}
+          </Button>
+          {role === "client" && (
+            <>
+              <Button size="sm" variant="secondary" onClick={pullNow} disabled={pulling}>
+                {pulling ? "Buscando…" : "Buscar respaldo ahora"}
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={promote}
+                disabled={promoting || !config.received?.length}
+                title="Restaura el último respaldo recibido y convierte esta caja en Host"
+              >
+                {promoting ? "Promoviendo…" : "Promover esta caja a Host"}
+              </Button>
+            </>
+          )}
+        </div>
+
+        {config.received?.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Respaldos recibidos
+            </p>
+            <ul className="mt-2 space-y-1.5">
+              {config.received.slice(0, 8).map((r) => (
+                <li
+                  key={r.name}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/50 px-3 py-2 text-xs"
+                >
+                  <span className="font-medium text-foreground">{r.name}</span>
+                  <span className="text-muted-foreground">
+                    {formatMXDate(r.date)} {formatMXTime(r.date)}
+                    {r.sha256 ? ` · sha256 ${r.sha256.slice(0, 12)}…` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
 
       {loading && (
         <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">

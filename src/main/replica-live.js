@@ -26,6 +26,7 @@
 
 const activation = require("./activation");
 const clientLink = require("./client-link");
+const protocol = require("./protocol");
 const replicaEngine = require("./replica-engine");
 
 const KEYS = Object.freeze({
@@ -33,6 +34,10 @@ const KEYS = Object.freeze({
   ERROR: "replica_live_error",
   AT: "replica_live_at",
   RECONNECTS: "replica_live_reconnects",
+  // Bloque 4/D · Host ocupado (import masivo) vs Host caído. `busy` no es una
+  // falsa alarma de red: el Host contesta, pero no conviene escribirle encima.
+  BUSY: "host_busy",
+  BUSY_AT: "host_busy_at",
 });
 
 const DEFAULT_PAGE = 2000;
@@ -53,6 +58,13 @@ const setLive = (ctx, state, error) => {
   activation.setSetting(ctx.db, KEYS.STATE, state);
   activation.setSetting(ctx.db, KEYS.ERROR, error ? String(error) : "");
   activation.setSetting(ctx.db, KEYS.AT, String(Date.now()));
+};
+
+// Bloque 4/D · el Host avisa `busy` al empezar un import y `ready` al cerrarlo;
+// también se limpia al reconectar. Así "ocupado" nunca se confunde con "caído".
+const setBusy = (db, busy) => {
+  activation.setSetting(db, KEYS.BUSY, busy ? "1" : "0");
+  activation.setSetting(db, KEYS.BUSY_AT, String(Date.now()));
 };
 
 // Lee en cada intento, no una sola vez: si el usuario relinkeó la caja, el
@@ -159,6 +171,7 @@ const handleFrame = async (ctx, frame) => {
     case "ready":
       // `ready` manda aunque el seq no avance: cierra un import masivo y puede
       // traer un hueco que sólo se ve al reanudar.
+      if (frame.event === "ready") setBusy(ctx.db, false);
       if (frame.event === "ready" || seq > replicaEngine.state(ctx.db).last_seq) {
         await pullDelta(ctx);
       }
@@ -167,6 +180,8 @@ const handleFrame = async (ctx, frame) => {
       // Import masivo: los triggers están apagados, así que no hay delta que
       // perseguir. Se espera al `ready`, que ya trae por dónde reanudar.
       setLive(ctx, "busy", null);
+      markHostOk();
+      setBusy(ctx.db, true);
       break;
     case "resync":
       await handleResync(ctx, d.reason || "LOG_COMPACTED");
@@ -176,6 +191,7 @@ const handleFrame = async (ctx, frame) => {
       // flujo) no llegará ningún `changes` nuevo, pero el seq del latido sigue
       // avanzando. El latido tardío es lo que repara el hueco.
       if (!d.busy && seq > replicaEngine.state(ctx.db).last_seq) await pullDelta(ctx);
+      if (!d.busy) setBusy(ctx.db, false);
       break;
     default:
       break;
@@ -231,6 +247,7 @@ const connectOnce = async (ctx) => {
     headers: {
       "x-device-id": creds.deviceId,
       "x-device-token": creds.token,
+      "x-protocol-version": protocol.PROTOCOL_VERSION,
       accept: "text/event-stream",
     },
     signal: ctx.abort.signal,
@@ -239,6 +256,7 @@ const connectOnce = async (ctx) => {
   if (!res.ok || !res.body) throw new Error(`El Host respondió HTTP ${res.status}`);
 
   setLive(ctx, "connected", null);
+  setBusy(ctx.db, false);
   markHostOk();
   // Conectado: por si el cursor se quedó atrás de lo que ya se aplicó.
   await pullDelta(ctx);
@@ -252,7 +270,10 @@ const connectOnce = async (ctx) => {
     buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
     const parsed = parseFrames(buffer);
     buffer = parsed.buffer;
-    for (const frame of parsed.frames) await handleFrame(ctx, frame);
+    for (const frame of parsed.frames) {
+      markHostOk();
+      await handleFrame(ctx, frame);
+    }
   }
   if (ctx.running) throw new Error("El Host cerró el flujo de eventos");
 };
@@ -327,12 +348,29 @@ const liveState = (db) => ({
 
 // 3g/F · ¿el Host está vivo? Un SSE conectado lo prueba; con el flujo en
 // reconstrucción manda la huella del último HTTP bueno (< 15 s = vivo).
-const hostOkInfo = (db) => ({
-  reachable:
-    liveState(db).state === "connected" ||
-    (lastHostOkAt > 0 && Date.now() - lastHostOkAt < 15000),
-  okAt: lastHostOkAt || null,
-});
+const hostOkInfo = (db) => {
+  const ls = liveState(db);
+  const busy = activation.getSetting(db, KEYS.BUSY) === "1";
+  const busyAt = Number(activation.getSetting(db, KEYS.BUSY_AT) || 0) || 0;
+  const busyFresh = busy && (ls.state === "busy" || Date.now() - busyAt < 120000);
+  return {
+    reachable:
+      ls.state === "connected" ||
+      busyFresh ||
+      (lastHostOkAt > 0 && Date.now() - lastHostOkAt < 15000) ||
+      // Descarga inicial activa: cada página del snapshot ES tráfico HTTP bueno
+      // contra el Host aunque el flujo en vivo todavía no arrancó. Sin ésto el
+      // badge decía "Host desconectado" durante la primera sincronización.
+      replicaEngine.state(db).state === "downloading",
+    okAt: lastHostOkAt || null,
+    // Bloque 4/D · ocupado ≠ caído. El renderer muestra un aviso distinto.
+    busy: busyFresh,
+    busyAt: busyAt || null,
+    liveState: ls.state,
+    liveError: ls.error,
+    lastFrameAt: ls.at,
+  };
+};
 
 module.exports = {
   KEYS,

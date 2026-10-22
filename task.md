@@ -7,6 +7,63 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 
 ---
 
+## Ejecución multicaja v2.1 — fases A–H (2026-10)
+
+### Fase A — Correcciones previas ✅
+- [x] Clave de idempotencia estable (hash del carrito) + comentario de `rpc-channels.js`.
+- [x] Cancelación de venta/línea con comprobación de dueño y reglas de caja cerrada; `cancelled_by_device`.
+- [x] Guarda `HOST_HAS_DATA` al convertir Host→caja.
+- [x] `ReauthModal` montado en `Layout` ante `session-expired`, sin desmontar el carrito.
+
+### Fase B — Folios ✅
+- [x] `sales.folio` único + `folio_counters` por dispositivo.
+- [x] Formato `A-000123`; el Host usa `H`; secuencia continua por equipo, nunca reinicia.
+- [x] Host valida unicidad y `createSaleTx` asigna folio.
+- [x] Folio visible en ticket, historial y detalle de ticket.
+
+### Fase C — Cola offline ✅
+- [x] `pending_sales` persistente + máquina de estados (`pending/syncing/synced/conflict/cancelled`).
+- [x] Reintento ordenado sin límite, subida automática al reconectar; conflictos de stock se marcan, nunca se rechazan.
+- [x] Cancelación de ventas en cola y bloqueo de cierre de caja con cola pendiente.
+- [x] PIN y caja cacheados para vender sin Host (PIN válido 24 h desde la última sincronización, aviso fuerte después).
+- [x] Prueba obligatoria `scripts/check-4c-offline-queue.cjs`: **19/19**.
+
+### Fase D — Host ocupado vs. caído ✅
+- [x] `host_busy` en `/api/health` + SSE; la caja distingue ocupado de caído.
+- [x] Banner con ventas pendientes (listar/cancelar/sincronizar), aviso a 30 min / 4 h y a administrador con pendientes > 1 h.
+- [x] Indicador compacto en la barra superior (`SystemStatus`).
+- [x] Nada de esto bloquea vender.
+
+### Fase E — Conflictos de stock ✅
+- [x] `get-stock-conflicts` y `resolve-stock-conflict` idempotente en el Host.
+- [x] Pantalla `StockConflicts` (ruta `/stock-conflicts`, entrada de menú) para revisar y ajustar inventario.
+
+### Fase F — Protocolo, dispositivos y reportes ✅
+- [x] Protocolo `2.1`, mínimo `2.0`; cabeceras en llamadas de la caja; bloqueo de escrituras incompatible y aviso menor guardado en `protocol_warning`.
+- [x] `pending_sync` reportado al Host; renombrar dispositivo; revocar/aprobar/activar sólo en Host.
+- [x] Filtro por caja en Reportes (consolidado / Host / caja) y columna Caja en cortes.
+- [x] Importación de catálogo desde la caja (lectura local del archivo + contenido por RPC).
+- [x] `rename-device`, `list-sale-devices`, allowlist IPC regenerado.
+
+### Fase G — Respaldos y promoción ✅
+- [x] `backup-service.js`: SHA-256, `integrity_check`, validación de tablas de identidad, retención 24 horarios + 8 semanales, copia externa.
+- [x] Respaldo automático cada 15 min, al cerrar caja y diario; la caja designada jala la copia cada 15 min.
+- [x] Restauración con `restoreIntoLiveDb` (ATTACH + copia por tabla en transacción) y `promote-to-host` manual con respaldo de seguridad y relanzamiento.
+- [x] Prueba obligatoria `scripts/check-6g-promotion.cjs`: **20/20** (identidad/emparejamiento preservados; cola sin duplicados ni pérdidas).
+
+### Fase H — Verificación final
+- [x] `node --check` de los módulos principales.
+- [x] Pruebas existentes: 2d núcleo/API, 3a IPC/registro, 3b, 3d, 3e, 3f, 4c, 6g, harness 2b/2c, scopes IPC.
+- [~] `check-3c-link.cjs`: no puede completarse mientras la app real esté abierta (ocupa TCP 3456 y UDP 3457); el resto 67/67.
+- [ ] `npm run package` (se ejecuta al cierre de la fase H).
+- [ ] `check-build-requires` / `check-asar-modules`.
+
+> **NO VERIFICADO:** la UI nueva (banners, filtros, conflictos, durabilidad, promoción) no se ha visto en pantalla; la app no se abrió en esta ejecución. Se validó sintaxis, handlers, allowlist y pruebas headless.
+>
+> **NO VERIFICADO:** `check-3c-link.cjs` falla sólo por el puerto UDP 3457/TCP 3456 ocupado por una instancia abierta (PID 6432); no por un cambio de código.
+
+---
+
 ## Bloque 1 — Guarda atómica de stock  ✅ HECHO
 - [x] Guarda atómica en `record-sale`
 - [x] Guarda atómica en `remove-stock`
@@ -81,42 +138,43 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 ---
 
 ## Bloque 3 — Caja por dispositivo + operación online
-- [ ] 3a `device_id` en `cash_register` + folios con letra automática y secuencia continua
-- [ ] 3b Sesiones persistidas (`box_sessions`, SHA-256, TTL 10 h, una por caja) + `safeStorage`
-- [ ] 3b `ReauthModal` (solo bloquea escrituras al Host) + carrito persistido
-- [ ] 3c Discovery cliente (UDP + IP manual) + UI de primer arranque (rol, buscar, código)
-- [ ] 3d Descarga inicial con progreso real (staging + swap, reanudar/reiniciar, resync 24 h)
-- [ ] 3e host-busy + `runBatched`/`yieldToLoop` · **Worker thread DIFERIDO**: no hace falta para la primera prueba con 2 PCs (decisión de la línea); `runBatched` basta para los imports. Revísalo si un import llega a congelar la app.
-- [ ] 3f Réplica incremental en tiempo real: SSE delta, tombstones, `updated_at`, `change_log`, evento `db-changed`, `useDbChanges` (sin reescribir pantallas)
-- [ ] 3f `db-changed` agregado al allowlist de preload
+- [x] 3a `device_id` en `cash_register` + folios con letra automática y secuencia continua
+- [x] 3b Sesiones persistidas (`box_sessions`, SHA-256, TTL 10 h, una por caja) + `safeStorage`
+- [x] 3b `ReauthModal` (solo bloquea escrituras al Host) + carrito persistido
+- [x] 3c Discovery cliente (UDP + IP manual) + UI de primer arranque (rol, buscar, código)
+- [x] 3d Descarga inicial con progreso real (staging + swap, reanudar/reiniciar, resync 24 h)
+- [x] 3e host-busy + `runBatched`/`yieldToLoop` · **Worker thread DIFERIDO** (decisión de la línea).
+- [x] 3f Réplica incremental en tiempo real: SSE delta, tombstones, `updated_at`, `change_log`, evento `db-changed`, `useDbChanges`.
+- [x] 3f `db-changed` agregado al allowlist de preload
 
 ---
 
 ## Bloque 6 — Backups (versión mínima)
-- [ ] Replicar respaldos a una caja designada + copia externa
-- [ ] Restauración manual documentada
+- [x] Replicar respaldos a una caja designada + copia externa (cada 15 min, cierre y diario; 24 + 8)
+- [x] Restauración manual documentada (valida `integrity_check` y tablas de identidad)
 - [ ] (Fase 2) Cifrado de backups, salvo carpeta de nube
+- [x] Promoción manual de una caja a Host (`promote-to-host`)
 
 ---
 
 ## Bloque 4 — Resiliencia
-- [ ] Tolerancia a host-busy en el cliente (liveness por SSE, banner)
-- [ ] Reconexión + reintentos
-- [ ] Cola de ventas offline (solo desde este bloque) + reconciliación
-- [ ] UI de resolución de conflictos (stock/folios)
-- [ ] Login offline con PINs cacheados (hash replicado, umbral 4 h)
+- [x] Tolerancia a host-busy en el cliente (liveness por SSE, banner)
+- [x] Reconexión + reintentos (sin límite, ordenados)
+- [x] Cola de ventas offline + reconciliación (conflictos se marcan, no se rechazan)
+- [x] UI de resolución de conflictos de stock
+- [x] Login offline con PINs cacheados (24 h desde la última sincronización; aviso, nunca bloqueo)
 
 ---
 
 ## Bloque 5 — Gobernanza
-- [ ] Handshake `protocol_version` (major bloquea, minor avisa) + bloqueo de escrituras
-- [ ] Tareas compartidas vía Host
-- [ ] Reportes consolidados
+- [x] Handshake `protocol_version` (major bloquea, minor avisa) + bloqueo de escrituras
+- [x] Tareas compartidas vía RPC al Host
+- [x] Reportes consolidados con filtro por caja
 
 ---
 
 ## Transversal
-- [ ] Harness "baseline dorado" versionado
-- [ ] CI/manual: `gen-ipc-allowlist --check` + build EXIT=0
+- [x] Harness "baseline dorado" versionado
+- [~] CI/manual: `gen-ipc-allowlist --check` + build EXIT=0 (allowlist regenerado; build en fase H)
 - [x] Arranque real obligatorio en CADA entrega: `node scripts/check-build-requires.mjs` (requires relativos de `.vite/build` + asar completo con renderer) y lanzar `out/…/JRP POS.exe` confirmando ventana y log sin `Cannot find module` ni `ERR_FILE_NOT_FOUND` (EXIT=0 no los detecta).
-- [ ] `docs/plan-multicaja-v2.1.md` actualizado (hecho)
+- [x] `docs/plan-multicaja-v2.1.md` actualizado

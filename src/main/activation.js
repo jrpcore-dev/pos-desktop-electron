@@ -78,7 +78,8 @@ const ensureSchema = (db) => {
     device_type TEXT DEFAULT 'mobile',
     scopes TEXT,
     protocol_version TEXT,
-    approved INTEGER DEFAULT 1
+    approved INTEGER DEFAULT 1,
+    pending_sync INTEGER DEFAULT 0
   )`);
   // Reparación de BDs cuya tabla vino de otra versión sin device_id: sin esto
   // el Host truena en la sección de activación y rechaza a toda caja con
@@ -97,6 +98,8 @@ const ensureSchema = (db) => {
   ensureColumn(db, "paired_devices", "scopes", "TEXT");
   ensureColumn(db, "paired_devices", "protocol_version", "TEXT");
   ensureColumn(db, "paired_devices", "approved", "INTEGER DEFAULT 1");
+  // Bloque 5 · la caja reporta cuántas ventas le faltan por subir.
+  ensureColumn(db, "paired_devices", "pending_sync", "INTEGER DEFAULT 0");
   if (!getSetting(db, "activation_code")) {
     setSetting(db, "activation_code", generateCode());
   }
@@ -259,6 +262,7 @@ const listDevices = (db) =>
     .prepare(`
       SELECT d.device_id, d.device_name, d.cashier_id, d.activated_at, d.last_seen_at, d.revoked,
              d.device_code, d.device_type, d.scopes, d.protocol_version, d.approved,
+             d.pending_sync,
              c.name AS cashier_name
       FROM paired_devices d
       LEFT JOIN cashiers c ON c.id = d.cashier_id

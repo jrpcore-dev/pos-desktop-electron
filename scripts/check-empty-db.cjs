@@ -109,6 +109,7 @@ check(
       "status",
       "cancelled_at",
       "cancelled_by",
+      "cancelled_by_device",
       "returned_qty",
     ]),
   "sale_items en su forma final (columnas y orden)",

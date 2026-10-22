@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { useDbChanges } from "../lib/useDbChanges";
 import { Flame, PackagePlus, Zap, Plus, X } from "lucide-react";
 
 import { Skeleton } from "./ui/skeleton";
@@ -74,10 +75,12 @@ const QuickProductsGrid = React.memo(
       writeFavorites(next);
     };
 
-    useEffect(() => {
+    // Carga/reaúsela de los accesos rápidos: también la dispara db-changed
+    // (precio, stock o nombre cambiado en el Host) sin volver a la esqueleto.
+    const loadFavorites = useCallback(() => {
       if (favorites.length === 0) {
         setProducts([]);
-        return;
+        return undefined;
       }
       let cancelled = false;
       (async () => {
@@ -95,6 +98,12 @@ const QuickProductsGrid = React.memo(
       })();
       return () => { cancelled = true; };
     }, [favorites]);
+
+    useEffect(() => loadFavorites(), [loadFavorites]);
+
+    // In vivo: precios/stock al día; el carrito en curso queda intacto
+    // (reglas 1 y 3).
+    useDbChanges(() => loadFavorites(), ["products", "product_prices"]);
 
     useEffect(() => {
       if (!pickerOpen || query.trim().length < 1) { setResults([]); return; }
