@@ -55,8 +55,10 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 - [x] `node --check` de los módulos principales.
 - [x] Pruebas existentes: 2d núcleo/API, 3a IPC/registro, 3b, 3d, 3e, 3f, 4c, 6g, harness 2b/2c, scopes IPC.
 - [~] `check-3c-link.cjs`: no puede completarse mientras la app real esté abierta (ocupa TCP 3456 y UDP 3457); el resto 67/67.
-- [ ] `npm run package` (se ejecuta al cierre de la fase H).
-- [ ] `check-build-requires` / `check-asar-modules`.
+- [x] `gen-ipc-allowlist.mjs --check`: mismatches=0.
+- [x] `npm run package`: EXIT=0. Se ejecutó en una copia temporal con `node_modules` en junction porque la app abierta (PID 6432) mantiene bloqueado `.vite/build/node_modules/better-sqlite3`; el paquete final se copió a `out/Vendia-win32-x64`.
+- [x] `check-build-requires.mjs`: 60 requires relativos + asar completo, OK.
+- [x] `check-asar-modules.mjs`: OK con `ELECTRON_RUN_AS_NODE=1` (122 módulos, `db/database.js` carga con ABI de Electron).
 
 > **NO VERIFICADO:** la UI nueva (banners, filtros, conflictos, durabilidad, promoción) no se ha visto en pantalla; la app no se abrió en esta ejecución. Se validó sintaxis, handlers, allowlist y pruebas headless.
 >
@@ -175,6 +177,6 @@ Leyenda: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 
 ## Transversal
 - [x] Harness "baseline dorado" versionado
-- [~] CI/manual: `gen-ipc-allowlist --check` + build EXIT=0 (allowlist regenerado; build en fase H)
+- [x] CI/manual: `gen-ipc-allowlist --check` (mismatches=0) + `npm run package` EXIT=0
 - [x] Arranque real obligatorio en CADA entrega: `node scripts/check-build-requires.mjs` (requires relativos de `.vite/build` + asar completo con renderer) y lanzar `out/…/JRP POS.exe` confirmando ventana y log sin `Cannot find module` ni `ERR_FILE_NOT_FOUND` (EXIT=0 no los detecta).
 - [x] `docs/plan-multicaja-v2.1.md` actualizado
