@@ -41,6 +41,25 @@ const ensureHostDeviceId = (db) => {
   return value;
 };
 
+// Fase 3 · época de la base del Host: cambia cuando su contenido se reemplaza
+// entero (una caja promovida a Host, un respaldo restaurado). Las cajas la
+// guardan con su snapshot; si no coincide, su cursor del change_log ya no
+// significa nada y el Host les pide resync.
+const HOST_EPOCH_KEY = "host_epoch";
+const ensureHostEpoch = (db) => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(HOST_EPOCH_KEY);
+  if (row && row.value) return row.value;
+  return renewHostEpoch(db);
+};
+const renewHostEpoch = (db) => {
+  const value = crypto.randomUUID();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+    HOST_EPOCH_KEY,
+    value,
+  );
+  return value;
+};
+
 const createTables = (db) => {
   const ensureColumn = (table, column, definition) => ensureColumnOn(db, table, column, definition);
 
@@ -1216,6 +1235,9 @@ const replicaPlan = (db) => {
 module.exports = {
   ensureColumn: ensureColumnOn,
   ensureHostDeviceId,
+  ensureHostEpoch,
+  renewHostEpoch,
+  HOST_EPOCH_KEY,
   HOST_DEVICE_ID_KEY,
   createTables,
   runMigrations,

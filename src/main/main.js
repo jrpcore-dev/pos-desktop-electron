@@ -32,6 +32,7 @@ const rpcContext = require("./rpc-context");
 // 3g/D · puente IPC→HTTP de la caja: el rol cliente manda al Host los
 // canales con scope `rpc` en lugar de ejecutarlos aquí.
 const boxRpc = require("./box-rpc-client");
+const offlineQueue = require("./offline-queue");
 // Bloque 6 · respaldos verificados y retención (24 + 8).
 const backupService = require("./backup-service");
 
@@ -536,11 +537,13 @@ app.on("ready", async () => {
     migrateRegisterContinuity();
     maybeRunAutoBackup();
     setInterval(maybeRunAutoBackup, 15 * 60 * 1000);
-    // Bloque 6 · la caja designada revisa si hay respaldo nuevo.
-    if (deviceRole === ipcScopes.ROLES.CLIENT) {
-      maybePullBackup();
-      setInterval(maybePullBackup, 15 * 60 * 1000);
-    }
+  }
+  // Bloque 6 · la caja designada revisa si hay respaldo nuevo. Fase 3 · va
+  // FUERA del bloque anterior: una caja siempre es `boxDevice`, así que ahí
+  // dentro nunca corría y la promoción usaba la última copia bajada a mano.
+  if (deviceRole === ipcScopes.ROLES.CLIENT) {
+    maybePullBackup();
+    setInterval(maybePullBackup, 15 * 60 * 1000);
   }
 
   // 3e · se espera dentro de `ready` a propósito: el orden de arranque es el
@@ -4426,6 +4429,7 @@ const pullHostBackup = async () => {
     externalDir: cfg.externalDir,
     name: data.name,
     buffer: Buffer.from(data.contentBase64, "base64"),
+    expectedSha256: data.sha256 || null,
   });
 };
 
@@ -4683,6 +4687,33 @@ ipcMain.handle("promote-to-host", async (event, { backupPath, confirm } = {}) =>
       };
     }
 
+    // Fase 3 · dos Hosts a la vez parten el negocio en dos (ventas que una
+    // base no ve, folios que retroceden). Si el Host actual todavía responde,
+    // la promoción no procede: primero hay que apagarlo.
+    const oldHostUrl = String(
+      activation.getSetting(db, clientLink.SETTINGS.HOST_URL) || "",
+    ).replace(/\/+$/, "");
+    if (oldHostUrl) {
+      let alive = null;
+      try {
+        const res = await fetch(`${oldHostUrl}/api/health`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.ok) alive = data;
+      } catch (err) {
+        alive = null;
+      }
+      if (alive && (!alive.host_device_id || alive.host_device_id === hostDeviceId)) {
+        return {
+          success: false,
+          code: "HOST_STILL_ALIVE",
+          error:
+            "El Host actual sigue respondiendo en la red. Apágalo (o desconéctalo) antes de promover esta caja; si no, habría dos Hosts con datos distintos.",
+        };
+      }
+    }
+
     // Copia de seguridad de esta caja antes de convertirla.
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const safetyPath = uniqueFilePath(
@@ -4691,11 +4722,17 @@ ipcMain.handle("promote-to-host", async (event, { backupPath, confirm } = {}) =>
     await db.backup(safetyPath);
     const fromDeviceId =
       activation.getSetting(db, clientLink.SETTINGS.BOX_DEVICE_ID) || null;
+    // Fase 3 · la cola de esta caja se lee ANTES de restaurar: el respaldo
+    // la reemplazaría y sus ventas sólo quedarían en la copia de seguridad.
+    const unsynced = offlineQueue.unsyncedRows(db);
 
     // Reemplaza el contenido de la base viva conservando el esquema actual.
     backupService.restoreIntoLiveDb(db, resolved);
     runMigrations(db);
     activation.ensureSchema(db);
+    const absorbed = offlineQueue.absorbIntoHost(db, unsynced, fromDeviceId);
+    // Base nueva para las cajas: su cursor del change_log ya no aplica.
+    dbSchema.renewHostEpoch(db);
     // El respaldo ya trae host_device_id / activation_code / paired_devices.
     // Sólo se fuerza el rol y se deja rastro de la promoción.
     activation.setSetting(db, "device_role", "host");
@@ -4717,6 +4754,8 @@ ipcMain.handle("promote-to-host", async (event, { backupPath, confirm } = {}) =>
       hostDeviceId,
       activationCode,
       safetyBackup: path.basename(safetyPath),
+      pendingAbsorbed: absorbed.absorbed,
+      pendingKept: absorbed.kept,
       restarting: true,
     };
   } catch (error) {
@@ -4791,6 +4830,16 @@ ipcMain.handle("restore-backup", async (event, backupPath) => {  try {
     // Candado de activación por negocio: tabla de dispositivos emparejados +
     // settings mínimos (el código se genera una sola vez en el primer arranque).
     activation.ensureSchema(db);
+
+    // Fase 3 · las cajas tienen datos posteriores al respaldo y un cursor
+    // que no corresponde a este log: época nueva (resync para las que la
+    // conocen) y marca de lote que adelanta change_log_first_seq (para las
+    // de versiones anteriores).
+    if (deviceRole !== ipcScopes.ROLES.CLIENT) {
+      dbSchema.renewHostEpoch(db);
+      dbSchema.beginBulk(db);
+      dbSchema.endBulk(db);
+    }
 
     return { success: true, safetyBackup: path.basename(safetyPath) };
   } catch (error) {

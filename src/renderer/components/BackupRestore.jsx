@@ -140,9 +140,15 @@ const BackupRestore = () => {
         confirm: true,
       });
       if (res?.success) {
+        const queued = res.pendingAbsorbed
+          ? ` Se registraron ${res.pendingAbsorbed} venta(s) que estaban pendientes en esta caja.`
+          : "";
+        const review = res.pendingKept
+          ? ` ${res.pendingKept} venta(s) quedaron por revisar en la cola.`
+          : "";
         setMessage({
           type: "success",
-          text: "Promoción lista. La app se reiniciará como Host…",
+          text: `Promoción lista.${queued}${review} La app se reiniciará como Host…`,
         });
       } else {
         setMessage({ type: "error", text: res?.error || "No se pudo promover" });

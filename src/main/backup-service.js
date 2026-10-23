@@ -18,6 +18,9 @@ const Database = require("better-sqlite3");
 
 const HOURLY_KEEP = 24;
 const WEEKLY_KEEP = 8;
+// Fase 3 · las copias al cerrar caja no tenían retención y crecían sin fin.
+// 60 cubre unos dos meses de cortes con dos turnos al día.
+const CLOSE_KEEP = 60;
 const IDENTITY_TABLES = Object.freeze([
   "settings",
   "cashiers",
@@ -29,6 +32,7 @@ const IDENTITY_TABLES = Object.freeze([
 
 const isAutoBackup = (name) => /^pos-auto-.*\.db$/.test(name);
 const isWeeklyBackup = (name) => /^pos-weekly-.*\.db$/.test(name);
+const isCloseBackup = (name) => /^pos-close-.*\.db$/.test(name);
 
 const sha256File = (filePath) => {
   const hash = crypto.createHash("sha256");
@@ -101,10 +105,12 @@ const pruneDir = (dir, match, keep) => {
   } catch (err) {}
 };
 
-// Retención 24 auto + 8 semanales. No toca las copias manuales.
+// Retención 24 auto + 8 semanales + 60 de cierre. No toca las copias
+// manuales ni las de seguridad (pre-restore / pre-promotion).
 const applyRetention = (dir) => {
   pruneDir(dir, isAutoBackup, HOURLY_KEEP);
   pruneDir(dir, isWeeklyBackup, WEEKLY_KEEP);
+  pruneDir(dir, isCloseBackup, CLOSE_KEEP);
 };
 
 const copyExternal = (filePath, externalDir) => {
@@ -114,17 +120,27 @@ const copyExternal = (filePath, externalDir) => {
     fs.mkdirSync(dir, { recursive: true });
     const dest = path.join(dir, path.basename(filePath));
     fs.copyFileSync(filePath, dest);
+    // Fase 3 · la carpeta externa sigue la misma retención y la copia se
+    // comprueba: un USB lleno o dañado no debe pasar por respaldo válido.
+    if (sha256File(dest) !== sha256File(filePath)) {
+      return { copied: false, error: "La copia externa no coincide con el original" };
+    }
+    applyRetention(dir);
     return { copied: true, path: dest };
   } catch (error) {
     return { copied: false, error: error.message };
   }
 };
 
-const receiveBackup = ({ dir, externalDir, name, buffer }) => {
+const receiveBackup = ({ dir, externalDir, name, buffer, expectedSha256 }) => {
   const safe = safeBackupName(name);
   if (!safe) return { success: false, error: "Nombre de respaldo inválido" };
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     return { success: false, error: "Respaldo vacío" };
+  }
+  // Fase 3 · extremo a extremo: lo que llegó es lo que el Host hasheó.
+  if (expectedSha256 && sha256Buffer(buffer) !== String(expectedSha256).toLowerCase()) {
+    return { success: false, code: "BACKUP_CHECKSUM_MISMATCH", error: "El respaldo llegó dañado (SHA-256 distinto al del Host)" };
   }
   fs.mkdirSync(dir, { recursive: true });
   const finalPath = path.join(dir, safe);

@@ -73,7 +73,8 @@ const credentials = (db) => {
   const hostUrl = String(activation.getSetting(db, clientLink.SETTINGS.HOST_URL) || "").replace(/\/+$/, "");
   const deviceId = activation.getSetting(db, clientLink.SETTINGS.BOX_DEVICE_ID);
   const token = clientLink.readPairedToken(db);
-  return { hostUrl, deviceId, token };
+  const epoch = activation.getSetting(db, replicaEngine.KEYS.HOST_EPOCH) || "";
+  return { hostUrl, deviceId, token, epoch };
 };
 
 // Un frame SSE son líneas `campo: valor` separadas por una línea en blanco.
@@ -248,6 +249,7 @@ const connectOnce = async (ctx) => {
       "x-device-id": creds.deviceId,
       "x-device-token": creds.token,
       "x-protocol-version": protocol.PROTOCOL_VERSION,
+      ...(creds.epoch ? { "x-host-epoch": creds.epoch } : {}),
       accept: "text/event-stream",
     },
     signal: ctx.abort.signal,

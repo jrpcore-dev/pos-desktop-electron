@@ -14,6 +14,8 @@
 //   synced     → aceptada por el Host (se conserva para auditoría)
 //   cancelled  → el usuario la quitó antes de subir
 
+const salesCore = require("./sales-core");
+
 const STATUS = Object.freeze({
   PENDING: "pending",
   SYNCING: "syncing",
@@ -159,6 +161,79 @@ const recoverStale = (db) => {
   return { recovered: info.changes };
 };
 
+// Fase 3 · al promover una caja a Host su BD se reemplaza por el respaldo y
+// su cola (`pending_sales`) desaparecía con ella. Antes de restaurar se leen
+// las filas aún no subidas; después se registran como ventas del nuevo Host
+// (misma caja, folio, turno y cajero). Lo que no se pueda registrar vuelve a
+// `pending_sales` como `conflict`: nunca se pierde una venta.
+const unsyncedRows = (db) =>
+  list(db, [STATUS.PENDING, STATUS.SYNCING, STATUS.NEEDS_AUTH, STATUS.CONFLICT]);
+
+const absorbIntoHost = (db, rows, deviceId) => {
+  let absorbed = 0;
+  let kept = 0;
+  for (const row of rows || []) {
+    const p = row.payload || {};
+    // Ya estaba en el Host (la subió antes del respaldo y la respuesta se
+    // perdió): está registrada, no se duplica.
+    const exists = db
+      .prepare("SELECT id FROM sales WHERE folio = ?")
+      .get(String(row.folio || "").toUpperCase());
+    if (exists) {
+      absorbed += 1;
+      continue;
+    }
+    try {
+      db.transaction(() => {
+        const cashier = row.cashierId
+          ? db.prepare("SELECT id, name, role FROM cashiers WHERE id = ?").get(row.cashierId)
+          : null;
+        const register = row.registerId
+          ? db.prepare("SELECT id FROM cash_register WHERE id = ?").get(row.registerId)
+          : null;
+        salesCore.createSaleTx(db, {
+          cart: p.cart,
+          total: p.total,
+          paymentMethod: p.paymentMethod,
+          discountTotal: p.discountTotal,
+          customerId: p.customerId == null ? undefined : p.customerId,
+          cashierId: cashier ? cashier.id : null,
+          cashierName: (cashier && cashier.name) || row.cashierName || "Usuario Principal",
+          role: cashier ? cashier.role : "cashier",
+          deviceId,
+          // El turno puede no estar en el respaldo (se abrió después): la
+          // venta queda fuera de turno en vez de perderse.
+          registerId: register ? register.id : undefined,
+          requireRegister: false,
+          folio: row.folio,
+          syncedAt: nowIso(),
+          clientCreatedAt: row.localCreatedAt || undefined,
+        });
+      })();
+      absorbed += 1;
+    } catch (err) {
+      enqueue(db, {
+        folio: row.folio,
+        payload: p,
+        idempotencyKey: row.idempotencyKey,
+        registerId: row.registerId,
+        cashierId: row.cashierId,
+        cashierName: row.cashierName,
+        localCreatedAt: row.localCreatedAt,
+      });
+      _set(
+        db,
+        db.prepare("SELECT id FROM pending_sales WHERE idempotency_key = ? ORDER BY id DESC LIMIT 1")
+          .get(String(row.idempotencyKey)).id,
+        STATUS.CONFLICT,
+        `no se pudo registrar al promover: ${(err && err.message) || err}`,
+      );
+      kept += 1;
+    }
+  }
+  return { absorbed, kept };
+};
+
 const TRANSIENT = new Set(["HOST_UNREACHABLE", "NO_HOST_LINKED", "HOST_ERROR"]);
 
 // Sube la cola en orden. `send(row)` debe devolver el JSON del Host con
@@ -229,4 +304,6 @@ module.exports = {
   summary,
   recoverStale,
   sync,
+  unsyncedRows,
+  absorbIntoHost,
 };

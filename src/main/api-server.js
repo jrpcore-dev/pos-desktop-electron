@@ -542,6 +542,11 @@ const startServer = async (
       ok: true,
       protocol_version: protocol.PROTOCOL_VERSION,
       min_supported: protocol.MIN_SUPPORTED,
+      // Fase 3 · la caja que va a promoverse lo usa para saber si el Host
+      // sigue vivo; también sirve para diagnosticar la versión instalada.
+      host_device_id: hostDeviceId,
+      host_epoch: dbSchema.ensureHostEpoch(db),
+      app_version: APP_VERSION,
     });
   }));
 
@@ -609,6 +614,14 @@ const startServer = async (
   };
   const maxSeq = () =>
     db.prepare(`SELECT COALESCE(MAX(seq),0) s FROM ${dbSchema.CHANGE_LOG_TABLE}`).get().s;
+  // Fase 3 · identidad de ESTA base. Se renueva al promover una caja o
+  // restaurar un respaldo (ver dbSchema.renewHostEpoch): el log y los
+  // cursores de las cajas dejan de corresponder y se les pide resync.
+  const hostEpoch = () => dbSchema.ensureHostEpoch(db);
+  const epochChanged = (req) => {
+    const theirs = String(req.headers["x-host-epoch"] || "");
+    return theirs !== "" && theirs !== hostEpoch();
+  };
   // Primer seq que aún existe en el log. Sólo la compactación crea un hueco:
   // el marker `change_log_first_seq` es lo único que puede hacer que un `since`
   // legítimo (p. ej. 0 en una BD recién instalada) ya no sea servible.
@@ -704,6 +717,7 @@ const startServer = async (
       table,
       columns: cols,
       snapshot_seq: snapshotSeq,
+      host_epoch: hostEpoch(),
       total,
       rows,
       next_cursor: next,
@@ -717,6 +731,14 @@ const startServer = async (
     const since = Number(req.query.since) || 0;
     const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
     const boundary = firstSeq();
+    if (epochChanged(req)) {
+      return res.json({
+        success: false,
+        code: "HOST_EPOCH_CHANGED",
+        resync: true,
+        error: "La base del Host cambió (promoción o respaldo restaurado): hay que volver a descargar el snapshot",
+      });
+    }
     if (since < boundary) {
       return res.json({
         success: false,
@@ -842,7 +864,12 @@ const startServer = async (
     // `Last-Event-ID` es la forma estándar; `?since=` cubre a los clientes que
     // no sean EventSource (una caja que quiera apuntarlo a mano).
     const lastEventId = req.headers["last-event-id"];
-    changeStream.subscribe({ res, lastEventId, since: req.query.since });
+    changeStream.subscribe({
+      res,
+      lastEventId,
+      since: req.query.since,
+      forceResync: epochChanged(req) ? "HOST_EPOCH_CHANGED" : null,
+    });
     // Importante: Express no debe cerrar la petición al terminar el handler.
     // No llamamos a res.json ni a next(): el flujo vive hasta que la caja se
     // desconecta (dispara `close` y el cliente sale del conjunto).

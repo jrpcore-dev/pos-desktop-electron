@@ -23,6 +23,10 @@ const RESYNC_AFTER_MS = 24 * 60 * 60 * 1000; // resync completo cada 24 h
 const KEYS = Object.freeze({
   LAST_SEQ: "replica_last_seq",
   SNAPSHOT_SEQ: "replica_snapshot_seq",
+  // Fase 3 · identidad de la BD del Host con la que se bajó el snapshot.
+  // Cambia al promover una caja o restaurar un respaldo: entonces el cursor
+  // ya no significa nada y el Host pide resync.
+  HOST_EPOCH: "replica_host_epoch",
   SYNCED_AT: "replica_synced_at",
   STATE: "replica_state",
   MODE: "replica_mode",
@@ -45,7 +49,7 @@ const fail = (code, error, extra = {}) => ({ success: false, code, error, ...ext
 const trimUrl = (u) => String(u || "").replace(/\/+$/, "");
 const cursorKey = (table) => `replica_cursor_${table}`;
 
-const getJson = async (url, { deviceId, token, timeoutMs = 15000 }) => {
+const getJson = async (url, { deviceId, token, epoch, timeoutMs = 15000 }) => {
   let res;
   try {
     res = await fetch(url, {
@@ -53,6 +57,7 @@ const getJson = async (url, { deviceId, token, timeoutMs = 15000 }) => {
         "x-device-id": deviceId,
         "x-device-token": token,
         "x-protocol-version": protocol.PROTOCOL_VERSION,
+        ...(epoch ? { "x-host-epoch": epoch } : {}),
       },
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -186,6 +191,7 @@ const downloadSnapshot = async (db, opts = {}) => {
   setState(db, { [KEYS.STATE]: "downloading", [KEYS.ERROR]: null });
 
   let snapshotSeq = Number(activation.getSetting(db, KEYS.SNAPSHOT_SEQ) || 0) || 0;
+  let hostEpoch = null;
   let done = 0;
   const totals = {};
 
@@ -211,6 +217,7 @@ const downloadSnapshot = async (db, opts = {}) => {
         return fail(r.code, r.error, { table, scopeRequired: r.scopeRequired });
       }
       if (!snapshotSeq) snapshotSeq = Number(r.data.snapshot_seq) || 0;
+      if (r.data.host_epoch) hostEpoch = String(r.data.host_epoch);
       if (!totals[table]) totals[table] = Number(r.data.total) || 0;
 
       const rows = r.data.rows || [];
@@ -251,6 +258,8 @@ const downloadSnapshot = async (db, opts = {}) => {
     setState(db, {
       [KEYS.LAST_SEQ]: String(snapshotSeq),
       [KEYS.SNAPSHOT_SEQ]: String(snapshotSeq),
+      // Sin epoch (Host anterior a la fase 3) se conserva el que hubiera.
+      [KEYS.HOST_EPOCH]: hostEpoch || undefined,
       [KEYS.SYNCED_AT]: String(Date.now()),
       [KEYS.STATE]: "synced",
       [KEYS.MODE]: "online",

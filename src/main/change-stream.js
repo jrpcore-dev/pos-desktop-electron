@@ -155,7 +155,7 @@ const createChangeStream = ({
   // Alta de una caja. `lastEventId` viene de la cabecera `Last-Event-ID`, que
   // `EventSource` reenvía solo al reconectar: no hace falta cookie ni
   // mecanismo propio de recuperación de sesión.
-  const subscribe = ({ res, lastEventId, since }) => {
+  const subscribe = ({ res, lastEventId, since, forceResync = null }) => {
     const now = maxSeq();
     const boundary = firstSeq();
     let cursor = Number(lastEventId);
@@ -168,10 +168,15 @@ const createChangeStream = ({
     clients.add(client);
     res.on("close", () => clients.delete(client));
 
-    if (cursor < boundary) {
+    if (forceResync || cursor < boundary) {
       // Lo que traía de donde se quedó ya no está servible: se lo decimos ya,
       // sin esperar al primer tick.
-      write(client, "resync", { reason: "LOG_COMPACTED", first_seq: boundary }, now);
+      write(
+        client,
+        "resync",
+        { reason: forceResync || "LOG_COMPACTED", first_seq: boundary },
+        now,
+      );
       client.cursor = now;
     } else {
       write(client, "hello", { seq: now, first_seq: boundary, busy: busyReason }, cursor);
