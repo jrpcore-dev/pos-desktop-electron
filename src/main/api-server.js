@@ -430,7 +430,7 @@ const startServer = async (
     res.json({ success: true, product });
   }));
 
-  app.post("/api/products", protect(scopeDefs.SCOPE.CATALOG_WRITE), safe((req, res) => {
+  app.post("/api/products", protect(scopeDefs.SCOPE.CATALOG_WRITE), requireProtocolWrite, safe((req, res) => {
     const { barcode, name, cost_price, price, sale_unit, category_id, min_stock, stock, box_qty, box_price } = req.body;
     if (!name) return res.status(400).json({ success: false, error: "Nombre requerido" });
 
@@ -463,7 +463,7 @@ const startServer = async (
     res.json({ success: true, product, message: "Producto registrado correctamente" });
   }));
 
-  app.patch("/api/products/:id/stock", protect(scopeDefs.SCOPE.STOCK_WRITE), safe((req, res) => {
+  app.patch("/api/products/:id/stock", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe((req, res) => {
     const { quantity, notes, cost, supplierId, registerExpense, updateCostPrice } = req.body;
     const id = parseInt(req.params.id);
 
@@ -547,6 +547,8 @@ const startServer = async (
       host_device_id: hostDeviceId,
       host_epoch: dbSchema.ensureHostEpoch(db),
       app_version: APP_VERSION,
+      // Fase 4 · ocupado (import masivo) ≠ caído.
+      host_busy: changeStream ? changeStream.stats().busy || null : null,
     });
   }));
 
@@ -869,6 +871,7 @@ const startServer = async (
       lastEventId,
       since: req.query.since,
       forceResync: epochChanged(req) ? "HOST_EPOCH_CHANGED" : null,
+      deviceId: req.deviceId || null,
     });
     // Importante: Express no debe cerrar la petición al terminar el handler.
     // No llamamos a res.json ni a next(): el flujo vive hasta que la caja se
@@ -894,7 +897,7 @@ const startServer = async (
   }));
 
   // Deshacer un movimiento de recepción hecho desde el móvil.
-  app.delete("/api/stock/movements/:movementId", protect(scopeDefs.SCOPE.STOCK_WRITE), safe((req, res) => {
+  app.delete("/api/stock/movements/:movementId", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe((req, res) => {
     const id = parseInt(req.params.movementId);
     const movement = db
       .prepare("SELECT id, product_id, quantity, type, reference, cashier_id FROM stock_movements WHERE id = ?")
@@ -918,7 +921,7 @@ const startServer = async (
   }));
 
   // Recepción en lote desde la app móvil: aplica varios productos en una transacción.
-  app.post("/api/products/stock/batch", protect(scopeDefs.SCOPE.STOCK_WRITE), safe((req, res) => {
+  app.post("/api/products/stock/batch", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe((req, res) => {
     const items = Array.isArray(req.body.items) ? req.body.items : null;
     if (!items || items.length === 0)
       return res.status(400).json({ success: false, error: "La lista de productos está vacía" });
@@ -1396,6 +1399,8 @@ const getStatus = () => ({
 // no corre, para que el resto del código no tenga que comprobarlo.
 const hostBusy = (reason) => changeStream?.hostBusy(reason);
 const hostReady = (reason) => changeStream?.hostReady(reason);
+// Fase 4 · corta el flujo SSE de una caja (al revocarla).
+const closeDeviceStreams = (deviceId) => changeStream?.closeDevice(deviceId) || 0;
 const replicaStreamStats = () => (changeStream ? changeStream.stats() : null);
 
 module.exports = {
@@ -1405,5 +1410,6 @@ module.exports = {
   makeRequireScope,
   hostBusy,
   hostReady,
+  closeDeviceStreams,
   replicaStreamStats,
 };

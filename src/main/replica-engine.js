@@ -28,6 +28,10 @@ const KEYS = Object.freeze({
   // ya no significa nada y el Host pide resync.
   HOST_EPOCH: "replica_host_epoch",
   SYNCED_AT: "replica_synced_at",
+  // Fase 4 · último momento en que la caja confirmó ir al día con el Host
+  // (snapshot o delta aplicado). `SYNCED_AT` sigue siendo el del snapshot y
+  // decide el resync de 24 h; éste decide los avisos de "datos viejos".
+  FRESH_AT: "replica_fresh_at",
   STATE: "replica_state",
   MODE: "replica_mode",
   ERROR: "replica_error",
@@ -88,10 +92,12 @@ const getJson = async (url, { deviceId, token, epoch, timeoutMs = 15000 }) => {
 const state = (db) => {
   const lastSeq = Number(activation.getSetting(db, KEYS.LAST_SEQ) || 0);
   const syncedAt = Number(activation.getSetting(db, KEYS.SYNCED_AT) || 0);
+  const freshAt = Number(activation.getSetting(db, KEYS.FRESH_AT) || 0) || syncedAt;
   return {
     last_seq: lastSeq,
     snapshot_seq: Number(activation.getSetting(db, KEYS.SNAPSHOT_SEQ) || 0),
     synced_at: syncedAt || null,
+    fresh_at: freshAt || null,
     sync_completed: activation.getSetting(db, clientLink.SETTINGS.SYNC_COMPLETED) === "1",
     state: activation.getSetting(db, KEYS.STATE) || "idle",
     mode: activation.getSetting(db, KEYS.MODE) || "offline",
@@ -261,6 +267,7 @@ const downloadSnapshot = async (db, opts = {}) => {
       // Sin epoch (Host anterior a la fase 3) se conserva el que hubiera.
       [KEYS.HOST_EPOCH]: hostEpoch || undefined,
       [KEYS.SYNCED_AT]: String(Date.now()),
+      [KEYS.FRESH_AT]: String(Date.now()),
       [KEYS.STATE]: "synced",
       [KEYS.MODE]: "online",
       [KEYS.ERROR]: null,
@@ -317,10 +324,19 @@ const applyChanges = (db, changes = []) => {
   // y el orden de los cambios no siempre respeta padres/hijos de la caja
   // (p. ej. `products.supplier_id` apunta a `suppliers`, que NO se replica).
   // El pragma sólo aplica FUERA de transacción → el OFF rodea el bucle.
+  // Fase 4 · un cambio que no se puede aplicar (esquema distinto, dato
+  // corrupto) detiene el lote SIN avanzar el cursor más allá: saltarlo
+  // dejaría un hueco silencioso. Quien llama decide reintentar o resync.
+  let failed = null;
   db.pragma("foreign_keys = OFF");
   try {
     for (const c of changes) {
-      if (applyOne(c)) applied++;
+      try {
+        if (applyOne(c)) applied++;
+      } catch (err) {
+        failed = { seq: Number(c.seq), tbl: c.tbl, error: (err && err.message) || String(err) };
+        break;
+      }
       if (Number(c.seq) > lastSeq) lastSeq = Number(c.seq);
     }
   } finally {
@@ -330,6 +346,7 @@ const applyChanges = (db, changes = []) => {
   if (lastSeq) activation.setSetting(db, KEYS.LAST_SEQ, String(lastSeq));
   return {
     applied,
+    failed,
     last_seq: lastSeq,
     tables: [...tables],
     ids: Object.fromEntries(Object.entries(ids).map(([t, s]) => [t, [...s]])),
@@ -338,12 +355,19 @@ const applyChanges = (db, changes = []) => {
 
 // Resync completo: borra el estado de descarga para empezar de cero y deja la
 // caja en "sin vender" hasta que el swap se aplique otra vez.
-const resetSync = (db) => {
+// `keepSelling` (Fase 4 · resync periódico): los datos actuales son buenos,
+// sólo se renuevan. Se reinicia la descarga pero la caja sigue vendiendo con
+// lo que tiene hasta el swap atómico del final.
+const resetSync = (db, { keepSelling = false } = {}) => {
   const plan = dbSchema.replicaPlan(db);
   const reset = db.transaction(() => {
     for (const table of Object.keys(plan)) {
       activation.setSetting(db, cursorKey(table), "");
       db.exec(`DROP TABLE IF EXISTS ${STAGING_PREFIX}${table}`);
+    }
+    if (keepSelling) {
+      activation.setSetting(db, KEYS.SNAPSHOT_SEQ, "0");
+      return;
     }
     clientLink.markSyncCompleted(db, false);
     setState(db, {
@@ -361,6 +385,9 @@ const resetSync = (db) => {
 // ¿Hay que volver a descargar el snapshot completo? (resync cada 24 h)
 const isStale = (db) => state(db).stale;
 
+// La caja confirmó con el Host que va al día (aunque no hubiera cambios).
+const markFresh = (db) => activation.setSetting(db, KEYS.FRESH_AT, String(Date.now()));
+
 module.exports = {
   STAGING_PREFIX,
   KEYS,
@@ -376,4 +403,5 @@ module.exports = {
   applyChanges,
   resetSync,
   isStale,
+  markFresh,
 };

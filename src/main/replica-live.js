@@ -130,12 +130,28 @@ const pullDelta = async (ctx, opts = {}) => {
         if (applied.applied && typeof ctx.onChanged === "function") {
           ctx.onChanged(applied.tables, applied.ids, applied);
         }
+        if (applied.failed) {
+          const key = applied.failed.seq;
+          ctx.applyFailures = ctx.applyFailures && ctx.applyFailures.seq === key
+            ? { seq: key, count: ctx.applyFailures.count + 1 }
+            : { seq: key, count: 1 };
+          if (ctx.applyFailures.count >= APPLY_FAILURES_BEFORE_RESYNC) {
+            ctx.applyFailures = null;
+            await handleResync(ctx, "APPLY_FAILED");
+            return;
+          }
+          throw new Error(
+            `No se pudo aplicar el cambio ${key} (${applied.failed.tbl}): ${applied.failed.error}`,
+          );
+        }
+        ctx.applyFailures = null;
       }
       if (!r.data.has_more) break;
       const next = Number(r.data.next_seq);
       if (!Number.isFinite(next) || next <= since) break; // nada que avanzar
       since = next;
     }
+    replicaEngine.markFresh(ctx.db);
     // B8 · durante la espera de reconexión se sondea SIN pisar el estado: el
     // flujo sigue caído aunque el HTTP conteste, y enseñar "conectado" mientras
     // pasa eso engaña a quien esté mirando `replica-status`.
@@ -151,7 +167,8 @@ const handleResync = async (ctx, reason) => {
   if (ctx.resyncing) return;
   ctx.resyncing = true;
   try {
-    replicaEngine.resetSync(ctx.db);
+    // El resync de 24 h no viene de un hueco: se renueva sin dejar de vender.
+    replicaEngine.resetSync(ctx.db, { keepSelling: reason === "PERIODIC" });
     if (typeof ctx.onResync === "function") ctx.onResync(reason);
     const r = await replicaEngine.downloadSnapshot(ctx.db);
     if (r && r.success && typeof ctx.onChanged === "function") {
@@ -188,6 +205,11 @@ const handleFrame = async (ctx, frame) => {
       await handleResync(ctx, d.reason || "LOG_COMPACTED");
       break;
     case "heartbeat":
+      // Fase 4 · resync completo cada 24 h aunque el flujo nunca se corte.
+      if (!d.busy && replicaEngine.isStale(ctx.db)) {
+        await handleResync(ctx, "PERIODIC");
+        break;
+      }
       // Red de seguridad: si un pull se cayó en seco (sin que se cerrara el
       // flujo) no llegará ningún `changes` nuevo, pero el seq del latido sigue
       // avanzando. El latido tardío es lo que repara el hueco.
@@ -210,6 +232,13 @@ const handleFrame = async (ctx, frame) => {
 // · El estado no se toca (`quiet`): sigue habiendo una caída que arreglar, y
 //   `replica-status` tiene que poder verla.
 const POLL_MS = 4000;
+
+// Fase 4 · el Host late cada 5 s. Sin ningún frame en este tiempo el TCP está
+// medio caído (cable, Wi-Fi que cambió de AP): se corta y se reconecta en vez
+// de quedarse "conectado" con datos que ya no llegan.
+const WATCHDOG_MS = 15000;
+// Fase 4 · un mismo cambio que falla estas veces seguidas → resync completo.
+const APPLY_FAILURES_BEFORE_RESYNC = 3;
 
 // 3g/F · huella de "el Host contesta": el badge de la caja y la venta viven
 // del HTTP, no del SSE (que puede estar en reconstrucción con el flujo caído).
@@ -244,40 +273,73 @@ const connectOnce = async (ctx) => {
   // `since` es el punto exacto en el que se quedó; el Host lo usa de cursor
   // inicial y si ya no está servible responde `resync` en vez de `hello`.
   const url = `${creds.hostUrl}/api/events?since=${replicaEngine.state(ctx.db).last_seq}`;
-  const res = await fetch(url, {
-    headers: {
-      "x-device-id": creds.deviceId,
-      "x-device-token": creds.token,
-      "x-protocol-version": protocol.PROTOCOL_VERSION,
-      ...(creds.epoch ? { "x-host-epoch": creds.epoch } : {}),
-      accept: "text/event-stream",
-    },
-    signal: ctx.abort.signal,
-  });
-  if (res.status === 403) throw new Error("El Host rechazó el emparejamiento de esta caja");
-  if (!res.ok || !res.body) throw new Error(`El Host respondió HTTP ${res.status}`);
-
-  setLive(ctx, "connected", null);
-  setBusy(ctx.db, false);
-  markHostOk();
-  // Conectado: por si el cursor se quedó atrás de lo que ya se aplicó.
-  await pullDelta(ctx);
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    const parsed = parseFrames(buffer);
-    buffer = parsed.buffer;
-    for (const frame of parsed.frames) {
-      markHostOk();
-      await handleFrame(ctx, frame);
+  // Fase 4 · cada conexión tiene su propio corte (watchdog) además del
+  // global de `stop()`.
+  const conn = new AbortController();
+  const signal = AbortSignal.any([ctx.abort.signal, conn.signal]);
+  let lastFrameAt = Date.now();
+  const watchdog = setInterval(() => {
+    // Mientras se aplica un delta o se rehace el snapshot no llegan frames
+    // porque no se leen: eso no es una caída.
+    if (ctx.pulling || ctx.resyncing) {
+      lastFrameAt = Date.now();
+      return;
     }
+    if (Date.now() - lastFrameAt > WATCHDOG_MS) conn.abort();
+  }, 2500);
+  watchdog.unref?.();
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "x-device-id": creds.deviceId,
+        "x-device-token": creds.token,
+        "x-protocol-version": protocol.PROTOCOL_VERSION,
+        ...(creds.epoch ? { "x-host-epoch": creds.epoch } : {}),
+        accept: "text/event-stream",
+      },
+      signal,
+    });
+    if (res.status === 403) throw new Error("El Host rechazó el emparejamiento de esta caja");
+    if (!res.ok || !res.body) throw new Error(`El Host respondió HTTP ${res.status}`);
+
+    setLive(ctx, "connected", null);
+    setBusy(ctx.db, false);
+    markHostOk();
+    lastFrameAt = Date.now();
+    // Fase 4 · conectado: la espera de la próxima caída vuelve a empezar corta.
+    ctx.backoff = 0;
+    // Fase 4 · si el último snapshot tiene más de 24 h, se rehace entero.
+    if (replicaEngine.isStale(ctx.db)) {
+      await handleResync(ctx, "PERIODIC");
+    } else {
+      // Conectado: por si el cursor se quedó atrás de lo que ya se aplicó.
+      await pullDelta(ctx);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      const parsed = parseFrames(buffer);
+      buffer = parsed.buffer;
+      for (const frame of parsed.frames) {
+        markHostOk();
+        lastFrameAt = Date.now();
+        await handleFrame(ctx, frame);
+      }
+    }
+    if (ctx.running) throw new Error("El Host cerró el flujo de eventos");
+  } catch (err) {
+    if (conn.signal.aborted && !ctx.abort.signal.aborted) {
+      throw new Error("Sin latidos del Host: se reconecta");
+    }
+    throw err;
+  } finally {
+    clearInterval(watchdog);
   }
-  if (ctx.running) throw new Error("El Host cerró el flujo de eventos");
 };
 
 // Arranca el bucle. Devuelve `stop()`. Si ya había uno vivo para esta BD, la
@@ -296,6 +358,8 @@ const startLiveSync = (opts = {}) => {
     pulling: false,
     resyncing: false,
     retry: 0,
+    backoff: 0,
+    applyFailures: null,
     abort: new AbortController(),
     timer: null,
   };
@@ -318,7 +382,8 @@ const startLiveSync = (opts = {}) => {
       } catch (err) {
         if (!ctx.running) return;
         setLive(ctx, "reconnecting", (err && err.message) || String(err));
-        const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.retry, 5));
+        const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.backoff, 5));
+        ctx.backoff += 1;
         ctx.retry += 1;
         activation.setSetting(ctx.db, KEYS.RECONNECTS, String(ctx.retry));
         await sleepWhilePolling(ctx, wait);
@@ -326,7 +391,8 @@ const startLiveSync = (opts = {}) => {
       }
       if (!ctx.running) return;
       // El flujo se cerró sin error: se trata igual que una caída.
-      const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.retry, 5));
+      const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.backoff, 5));
+      ctx.backoff += 1;
       ctx.retry += 1;
       activation.setSetting(ctx.db, KEYS.RECONNECTS, String(ctx.retry));
       await sleepWhilePolling(ctx, wait);

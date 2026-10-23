@@ -32,6 +32,9 @@
 
 const DEFAULT_COALESCE_MS = 150; // dentro del rango pedido (100-250 ms)
 const DEFAULT_HEARTBEAT_MS = 5000;
+// Fase 4 · una caja que no lee (TCP medio caído) no puede acumular frames en
+// la memoria del Host: pasado este búfer se la desconecta y reconectará sola.
+const MAX_CLIENT_BUFFER = 256 * 1024;
 const CHANGE_LOG_FIRST_SEQ_KEY = "change_log_first_seq";
 
 const createChangeStream = ({
@@ -49,6 +52,9 @@ const createChangeStream = ({
   // la BD cuando no hay nada nuevo: la verdad la manda `change_log`.
   let lastSeen = 0;
   let busyReason = null;
+  // Fase 4 · lotes anidados: el primer `hostReady` no debe soltar el `busy`
+  // de otro lote que sigue abierto.
+  let busyDepth = 0;
   let pollTimer = null;
   let beatTimer = null;
   // Cada cliente guarda SU cursor: dos cajas pueden estar a distinto punto.
@@ -59,17 +65,36 @@ const createChangeStream = ({
   // Primer seq todavía servible. Sólo la compactación lo sube.
   const firstSeq = () => Number(getSetting(CHANGE_LOG_FIRST_SEQ_KEY) || 0);
 
+  const drop = (client) => {
+    clients.delete(client);
+    try {
+      client.res.end();
+    } catch (err) {
+      /* ya cerrado */
+    }
+  };
+
   const write = (client, event, data, id) => {
-    if (client.res.writableEnded) return;
+    if (client.res.writableEnded) {
+      clients.delete(client);
+      return;
+    }
     let frame = "";
     if (id !== undefined && id !== null) frame += `id: ${id}\n`;
     frame += `event: ${event}\n`;
     frame += `data: ${JSON.stringify(data)}\n\n`;
-    client.res.write(frame);
+    try {
+      const flushed = client.res.write(frame);
+      if (!flushed && client.res.writableLength > MAX_CLIENT_BUFFER) drop(client);
+    } catch (err) {
+      drop(client);
+    }
   };
 
-  const writeAll = (event, data, id) => {
-    for (const c of clients) write(c, event, data, id);
+  // `id` por cliente: es SU cursor. Mandar el seq máximo del Host haría que
+  // un `Last-Event-ID` al reconectar saltara cambios que nunca se avisaron.
+  const writeAll = (event, data) => {
+    for (const c of [...clients]) write(c, event, data, c.cursor);
   };
 
   // Tablas tocadas en el tramo (desde, hasta]. Se consulta sólo para darle a la
@@ -84,6 +109,16 @@ const createChangeStream = ({
         .map((r) => r.tbl);
     } catch (err) {
       return [];
+    }
+  };
+
+  // Fase 4 · un error de BD (cierre, restauración) dentro de un setInterval
+  // tumbaría el proceso main: se registra y se espera al siguiente tick.
+  const guarded = (fn) => () => {
+    try {
+      fn();
+    } catch (err) {
+      console.error("[change-stream]", err && err.message);
     }
   };
 
@@ -123,13 +158,15 @@ const createChangeStream = ({
 
   const beat = () => {
     const seq = maxSeq();
-    for (const client of clients) write(client, "heartbeat", { seq, busy: busyReason }, seq);
+    for (const client of [...clients]) {
+      write(client, "heartbeat", { seq, busy: busyReason }, client.cursor);
+    }
   };
 
   const start = () => {
     if (pollTimer || beatTimer) return;
-    pollTimer = setInterval(poll, coalesceMs);
-    beatTimer = setInterval(beat, heartbeatMs);
+    pollTimer = setInterval(guarded(poll), coalesceMs);
+    beatTimer = setInterval(guarded(beat), heartbeatMs);
     // No retienen el proceso: los harness tienen que poder salir limpios.
     pollTimer.unref?.();
     beatTimer.unref?.();
@@ -150,12 +187,13 @@ const createChangeStream = ({
     clients.clear();
     lastSeen = 0;
     busyReason = null;
+    busyDepth = 0;
   };
 
   // Alta de una caja. `lastEventId` viene de la cabecera `Last-Event-ID`, que
   // `EventSource` reenvía solo al reconectar: no hace falta cookie ni
   // mecanismo propio de recuperación de sesión.
-  const subscribe = ({ res, lastEventId, since, forceResync = null }) => {
+  const subscribe = ({ res, lastEventId, since, forceResync = null, deviceId = null }) => {
     const now = maxSeq();
     const boundary = firstSeq();
     let cursor = Number(lastEventId);
@@ -164,7 +202,12 @@ const createChangeStream = ({
     // tiene por qué recibir todo el histórico, ya bajará el snapshot.
     if (!Number.isFinite(cursor) || cursor < 0) cursor = now;
 
-    const client = { res, cursor };
+    // Un flujo por caja: si reconecta sin que el anterior se haya cerrado
+    // (TCP medio caído), el viejo sobra.
+    if (deviceId) {
+      for (const c of [...clients]) if (c.deviceId === deviceId) drop(c);
+    }
+    const client = { res, cursor, deviceId };
     clients.add(client);
     res.on("close", () => clients.delete(client));
 
@@ -187,16 +230,32 @@ const createChangeStream = ({
   // Host ocupado (import masivo). Las cajas dejan de perseguir deltas y
   // esperan el `ready`, que ya trae el seq desde el que reanudar.
   const hostBusy = (reason = "bulk") => {
+    busyDepth += 1;
     busyReason = reason;
-    writeAll("busy", { reason }, maxSeq());
+    writeAll("busy", { reason });
   };
 
   const hostReady = (reason = "bulk") => {
+    busyDepth = Math.max(0, busyDepth - 1);
+    if (busyDepth > 0) return;
     const seq = maxSeq();
     busyReason = null;
     // Al terminar el lote no sabemos qué tramos pudieron quedar sin registrar,
     // así que el `ready` es además una orden de reanudar desde `seq`.
-    writeAll("ready", { reason, seq, first_seq: firstSeq() }, seq);
+    writeAll("ready", { reason, seq, first_seq: firstSeq() });
+  };
+
+  // Fase 4 · al revocar una caja se le corta el flujo (la autenticación sólo
+  // se comprobaba al conectar).
+  const closeDevice = (deviceId) => {
+    let closed = 0;
+    for (const c of [...clients]) {
+      if (c.deviceId === deviceId) {
+        drop(c);
+        closed += 1;
+      }
+    }
+    return closed;
   };
 
   const stats = () => ({
@@ -207,7 +266,7 @@ const createChangeStream = ({
     heartbeat_ms: heartbeatMs,
   });
 
-  return { start, stop, subscribe, hostBusy, hostReady, stats, poll };
+  return { start, stop, subscribe, hostBusy, hostReady, closeDevice, stats, poll };
 };
 
 module.exports = { createChangeStream, DEFAULT_COALESCE_MS, DEFAULT_HEARTBEAT_MS };

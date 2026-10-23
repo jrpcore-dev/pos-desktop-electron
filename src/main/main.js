@@ -3073,7 +3073,10 @@ ipcMain.handle("set-activation-grace", async (event, mode) => {
 });
 
 ipcMain.handle("revoke-device", async (event, deviceId) => {
-  return activation.revokeDevice(db, deviceId);
+  const out = activation.revokeDevice(db, deviceId);
+  // El flujo de eventos sólo se autentica al conectar: se corta aquí.
+  apiServer.closeDeviceStreams(deviceId);
+  return out;
 });
 
 // Bloque 5 · administración de cajas: renombrar sin re-emparejar.
@@ -3318,9 +3321,13 @@ ipcMain.handle("get-server-status", () => {
     }
     const st = replicaEngine.state(db);
     const syncedAt = Number(st.synced_at || 0) || null;
+    // Fase 4 · la antigüedad se mide desde el último delta confirmado, no
+    // desde el snapshot: una caja al día no debe mostrar "datos de hace 4 h".
+    const freshAt = Number(st.fresh_at || 0) || syncedAt;
     out.replica = {
       synced_at: syncedAt,
-      stale_ms: syncedAt ? Date.now() - syncedAt : null,
+      fresh_at: freshAt,
+      stale_ms: freshAt ? Date.now() - freshAt : null,
       state: st.state,
       sync_completed: !!st.sync_completed,
     };

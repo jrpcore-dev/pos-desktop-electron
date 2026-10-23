@@ -17,11 +17,10 @@
 //                    de una caja que pierde un evento: se guardan el triple.
 //
 // SUBIR `change_log_first_seq`
-// Ese valor es «lo más antiguo que el Host todavía puede servir». Se fija en el
-// `seq` del ÚLTIMO fila borrada + 1, no en el `seq` mínimo que quede: si se
-// usara el mínimo, una caja que ya está al día (su cursor es justo la última
-// fila que se podó) recibiría un `LOG_COMPACTED` y se bajaría 27 000 filas sin
-// motivo. Sólo se sube, nunca se baja (el marcador `bulk` de una importación
+// Las cajas con cursor `< change_log_first_seq` reciben `LOG_COMPACTED`. Se
+// fija en el `seq` de la ÚLTIMA fila borrada: una caja cuyo cursor es
+// justo esa fila ya la aplicó y sólo necesita lo posterior, que sigue en el
+// log. (Fase 4 · antes era +1 y esa caja se bajaba 27 000 filas sin motivo.) Sólo se sube, nunca se baja (el marcador `bulk` de una importación
 // puede estar más alto).
 //
 // Si no se borró NADA, no se toca: mover el límite sin podar sería un resync
@@ -70,7 +69,7 @@ const compact = (db, now = Date.now()) => {
   }
 
   if (out.deleted > 0) {
-    const boundary = doomedMax + 1;
+    const boundary = doomedMax;
     const current = Number(activation.getSetting(db, FIRST_SEQ_KEY) || 0);
     if (Number.isFinite(boundary) && boundary > current) {
       activation.setSetting(db, FIRST_SEQ_KEY, String(boundary));

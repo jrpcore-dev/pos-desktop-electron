@@ -165,6 +165,24 @@ const unreachable = (err) =>
   );
 
 // ── Cola offline ────────────────────────────────────────────────────────────
+// Fase 4 · sin Host, la caja descuenta en SU réplica lo que vendió para que la
+// búsqueda y el aviso de stock no sigan mostrando unidades que ya salieron.
+// Es sólo una vista: al reconectar, el Host sube la venta y la réplica trae
+// el stock real, que pisa este valor.
+const deductLocalStock = (db, cart) => {
+  if (!Array.isArray(cart)) return;
+  const stmt = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
+  for (const item of cart) {
+    if (!item || item.isManual || typeof item.id !== "number") continue;
+    const qty = Number(item.quantity) || 0;
+    const factor = item.isBoxItem
+      ? Number(item.box_qty) || 1
+      : item.isPackItem
+        ? Number(item.pack_qty) || 1
+        : 1;
+    if (qty > 0) stmt.run(qty * factor, item.id);
+  }
+};
 const enqueueSale = (db, row) => {
   // La venta queda a salvo en disco y el intento se limpia en la MISMA
   // transacción: un cierre entre ambos pasos dejaba el intento vivo y la
@@ -172,6 +190,7 @@ const enqueueSale = (db, row) => {
   const saved = db.transaction(() => {
     const out = offlineQueue.enqueue(db, row);
     clearAttempt(db);
+    deductLocalStock(db, row.payload && row.payload.cart);
     return out;
   })();
   return {
@@ -399,7 +418,12 @@ const offlineVerifyPin = (db, id, pin) => {
     delete attempts[key];
     writePinAttempts(db, attempts);
   }
-  const syncedAt = Number(activation.getSetting(db, "replica_synced_at") || 0);
+  // Fase 4 · cuenta desde el último delta confirmado con el Host.
+  const syncedAt = Number(
+    activation.getSetting(db, "replica_fresh_at") ||
+      activation.getSetting(db, "replica_synced_at") ||
+      0,
+  );
   const age = syncedAt ? Date.now() - syncedAt : Infinity;
   return {
     success: true,
