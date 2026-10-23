@@ -504,32 +504,38 @@ const cashRegisterRow = (db, id) =>
     } catch (e) {}
     return { status: res.status, data };
   };
-  const auth = await post("/api/auth", { id: 1, pin: "1234" }, { "x-device-id": "box-a" });
-  const AUTH = auth.data.token;
+  // Fase 1 · la sesión va ligada al aparato: cada caja hace su propio login.
+  const AUTH = {};
+  for (const id of ["box-a", "box-b", "box-sin"]) {
+    const auth = await post("/api/auth", { id: 1, pin: "1234" }, { "x-device-id": id });
+    AUTH[id] = auth.data.token;
+  }
   const saleHeaders = (id, key) => ({
-    authorization: AUTH,
+    authorization: AUTH[id],
     "x-device-id": id,
     "x-device-token": tokens[id],
     "idempotency-key": key,
   });
-  const payload = (total = 8) => ({
-    cart: [{ id: 1, quantity: 1, price: 8, finalPrice: 8 }],
-    total,
+  // Cantidades distintas para que cada venta tenga su propia huella; el total
+  // cuadra con las líneas (el Host lo valida).
+  const payload = (qty = 1) => ({
+    cart: [{ id: 1, quantity: qty, price: 8, finalPrice: 8 }],
+    total: 8 * qty,
     paymentMethod: "cash",
     discountTotal: 0,
   });
 
-  let r = await post("/api/sales", payload(10), saleHeaders("box-a", "a1"));
+  let r = await post("/api/sales", payload(1), saleHeaders("box-a", "a1"));
   check(r.status === 200, "box-a vende → 200", JSON.stringify(r.data));
   const regA = db.prepare("SELECT register_id FROM sales WHERE id = ?").get(r.data.saleId).register_id;
   check(regA === 11, "venta de box-a en SU caja (11)", `register_id=${regA}`);
 
-  r = await post("/api/sales", payload(11), saleHeaders("box-b", "b1"));
+  r = await post("/api/sales", payload(2), saleHeaders("box-b", "b1"));
   check(r.status === 200, "box-b vende → 200", JSON.stringify(r.data));
   const regB = db.prepare("SELECT register_id FROM sales WHERE id = ?").get(r.data.saleId).register_id;
   check(regB === 12, "venta de box-b en SU caja (12)", `register_id=${regB}`);
 
-  r = await post("/api/sales", payload(12), saleHeaders("box-sin", "s1"));
+  r = await post("/api/sales", payload(3), saleHeaders("box-sin", "s1"));
   check(
     r.status === 400 && r.data && r.data.code === "NO_OPEN_REGISTER",
     "box sin caja → 400 NO_OPEN_REGISTER",

@@ -118,7 +118,7 @@ const keyCount = () => db.prepare("SELECT COUNT(*) AS c FROM idempotency_keys").
   assert(started.success === true, "startServer arranca");
 
   // Login para obtener el token de cajero (independiente del emparejamiento).
-  const authRes = await post("/api/auth", { id: 1, pin: "1234" }, { "x-device-id": "dev-ok" });
+  const authRes = await post("/api/auth", { id: 1, pin: "1234" }, { "x-device-id": "dev-desk-ok" });
   const authBody = await json(authRes);
   assert(authRes.status === 200 && authBody.token, "POST /api/auth 200 con token");
   AUTH_TOKEN = authBody.token;

@@ -59,7 +59,9 @@ let AUTH = null;
   assert(a.status === 200 && ab.token, "POST /api/auth 200 con token");
   AUTH = ab.token;
 
-  let g = await post("/api/sales", payload(), { authorization: AUTH, "x-device-id": "dev-mobile", "x-device-token": "tok-mobile", "idempotency-key": "k1" });
+  // Fase 1 · la sesión va ligada al aparato: el móvil usa SU propio login.
+  const am = await json(await post("/api/auth", { id: 1, pin: "1234" }, { "x-device-id": "dev-mobile" }));
+  let g = await post("/api/sales", payload(), { authorization: am.token, "x-device-id": "dev-mobile", "x-device-token": "tok-mobile", "idempotency-key": "k1" });
   let b = await json(g);
   assert(g.status === 403, "móvil con sales:write → 403", JSON.stringify(b));
 

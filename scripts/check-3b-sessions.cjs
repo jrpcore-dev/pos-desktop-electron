@@ -61,9 +61,13 @@ for (const [id, type] of [["mobile-1", "mobile"], ["box-1", "desktop_box"]]) {
 }
 
 const req = async (method, url, { token, headers = {}, body } = {}) => {
+  // Fase 1 · la sesión va ligada al aparato: como un cliente real, se manda
+  // el x-device-id con el que se hizo login (salvo que la prueba fije otro).
+  const own = token ? sessionOf(token) : null;
   const res = await fetch(`${BASE}${url}`, {
     method,
     headers: {
+      ...(own && own.device_id ? { "x-device-id": own.device_id } : {}),
       ...(token ? { authorization: token } : {}),
       ...(body ? { "content-type": "application/json" } : {}),
       ...headers,
@@ -141,7 +145,8 @@ const ALL_COLUMNS = () => JSON.stringify(db.prepare("SELECT * FROM box_sessions"
   check(sessionOf(M2).revoked === 0, "la sesión del móvil NO se toca al entrar la caja");
 
   // 7 · 401 ≠ 403 (scope nuevo con dispositivo NO emparejado en la petición)
-  r = await req("POST", "/api/sales", { token: B1, headers: { "x-device-id": "sin-par", "x-device-token": "tok-sin-par" }, body: {} });
+  const SP = (await login({ "x-device-id": "sin-par" })).data.token;
+  r = await req("POST", "/api/sales", { token: SP, headers: { "x-device-id": "sin-par", "x-device-token": "tok-sin-par" }, body: {} });
   const sinScope403 = r.status;
   check(sinScope403 === 403, "scope nuevo con dispositivo sin emparejar → 403 (no 401)", String(sinScope403));
 
@@ -154,7 +159,9 @@ const ALL_COLUMNS = () => JSON.stringify(db.prepare("SELECT * FROM box_sessions"
   check(r.status === 401 && r.data.error === "Sesión expirada", "token vencido → 401 «Sesión expirada»", JSON.stringify(r.data));
   r = await req("POST", "/api/sales", { token: A, body: {} });
   check(r.status === 401, "token vencido en un scope nuevo → 401 (no 403)", String(r.status));
-  check(!sessionOf(A), "la sesión vencida se borra de box_sessions");
+  // Se conserva (revocada) 30 días: /api/sales la usa para verificar al
+  // cajero de las ventas de la cola offline.
+  check(sessionOf(A) && sessionOf(A).revoked === 1, "la sesión vencida queda revocada en box_sessions");
 
   // 9 · revocada → 401
   db.prepare("UPDATE box_sessions SET revoked = 1 WHERE token_hash = ?").run(activation.hashToken(B1));
@@ -207,12 +214,16 @@ const ALL_COLUMNS = () => JSON.stringify(db.prepare("SELECT * FROM box_sessions"
   db.prepare(
     `INSERT INTO box_sessions (token_hash, cashier_id, device_id, device_type, created_at, expires_at, last_used_at, revoked)
      VALUES ('vencida-hash', 1, 'box-1', 'desktop_box', ?, ?, ?, 0)`,
-  ).run(Date.now() - 20000, Date.now() - 10000, Date.now() - 10000);
+  ).run(
+    Date.now() - 32 * 24 * 60 * 60 * 1000,
+    Date.now() - 31 * 24 * 60 * 60 * 1000,
+    Date.now() - 31 * 24 * 60 * 60 * 1000,
+  );
   apiServer.stopServer();
   started = await apiServer.startServer(db, PORT);
   check(started.success === true, "servidor arrancado para la poda");
   check(db.prepare("SELECT COUNT(*) c FROM box_sessions WHERE token_hash = 'vencida-hash'").get().c === 0,
-    "la sesión vencida se poda al arrancar");
+    "la sesión vencida hace >30 días se poda al arrancar");
   check(!!sessionOf(B2), "las sesiones vivas NO se podan");
 
   await apiServer.stopServer();

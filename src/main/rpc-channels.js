@@ -36,6 +36,8 @@
 // `cancel-sale` conserva las reglas de rol y de corte cerrado.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const dbSchema = require("./db-schema");
+
 const RPC_CHANNELS = new Set([
   // ── caja: estado y movimiento del registro ────────────────────────────────
   "get-cash-register-status",
@@ -125,8 +127,34 @@ const RPC_CHANNELS = new Set([
   "taecel:reconcile",
 ]);
 
+// Canales de la lista blanca que sólo un cajero ADMIN puede pedir desde una
+// caja. El menú del renderer ya los esconde, pero la frontera real es el Host:
+// /api/rpc comprueba el rol de la sesión antes de despachar.
+const RPC_ADMIN_CHANNELS = new Set([
+  "add-cashier",
+  "update-cashier",
+  "delete-cashier",
+  "save-setting",
+  "import-products-content",
+  "resolve-stock-conflict",
+  "taecel:reconcile",
+]);
+
+// Claves de `save-setting` que una caja puede escribir en el Host: sólo las de
+// negocio que se replican. Identidad, activación y respaldos nunca.
+const RPC_SETTING_KEYS = new Set(dbSchema.REPLICATED_SETTINGS_KEYS);
+
 const has = (channel) => RPC_CHANNELS.has(channel);
+
+const requiresAdmin = (channel) => RPC_ADMIN_CHANNELS.has(channel);
 
 const list = () => [...RPC_CHANNELS].sort();
 
-module.exports = { RPC_CHANNELS, has, list };
+module.exports = {
+  RPC_CHANNELS,
+  RPC_ADMIN_CHANNELS,
+  RPC_SETTING_KEYS,
+  has,
+  requiresAdmin,
+  list,
+};

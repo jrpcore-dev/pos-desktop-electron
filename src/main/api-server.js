@@ -59,7 +59,11 @@ const pairAttempts = new Map(); // { deviceId: { count, windowStart } }
 // 3b · poda de sesiones vencidas al arrancar el servidor.
 const purgeExpiredSessions = (db) => {
   try {
-    db.prepare("DELETE FROM box_sessions WHERE expires_at <= ?").run(Date.now());
+    // Las vencidas se conservan 30 días: /api/sales las consulta para saber
+    // qué cajeros iniciaron sesión en cada caja (ventas de la cola offline).
+    db.prepare("DELETE FROM box_sessions WHERE expires_at <= ?").run(
+      Date.now() - 30 * 24 * 60 * 60 * 1000,
+    );
   } catch (err) {
     // Tabla ausente en BDs de entregas anteriores: se crea en la migración.
   }
@@ -127,7 +131,13 @@ const startServer = async (
   if (server) return { success: true, port };
 
   const app = express();
-  app.use(express.json());
+  // Fase 1 · cuerpo normal hasta 1 MB; /api/rpc admite el import del catálogo
+  // (`import-products-content`, hasta 80 MB en base64 dentro del JSON).
+  const jsonSmall = express.json({ limit: "1mb" });
+  const jsonLarge = express.json({ limit: "120mb" });
+  app.use((req, res, next) =>
+    req.path === "/api/rpc" ? jsonLarge(req, res, next) : jsonSmall(req, res, next),
+  );
   // Bloque 5 · versión de protocolo en CADA llamada de la caja. Distinto major
   // bloquea escrituras con mensaje claro; distinto minor solo viaja como aviso
   // en `x-protocol-warning`. El Host se actualiza primero (electron-updater).
@@ -186,7 +196,20 @@ const startServer = async (
     }
     const now = Date.now();
     if (row.expires_at <= now) {
-      db.prepare("DELETE FROM box_sessions WHERE token_hash = ?").run(row.token_hash);
+      db.prepare("UPDATE box_sessions SET revoked = 1 WHERE token_hash = ?").run(row.token_hash);
+      return res.status(401).json({ success: false, error: "Sesión expirada" });
+    }
+    // Fase 1 · la sesión es del aparato que hizo login: un token copiado a
+    // otro dispositivo no sirve.
+    if (row.device_id && String(req.headers["x-device-id"] || "") !== String(row.device_id)) {
+      return res.status(401).json({ success: false, error: "No autorizado" });
+    }
+    // Un cajero desactivado o borrado pierde sus sesiones abiertas.
+    const active = db
+      .prepare("SELECT 1 FROM cashiers WHERE id = ? AND is_active = 1")
+      .get(row.cashier_id);
+    if (!active) {
+      db.prepare("UPDATE box_sessions SET revoked = 1 WHERE token_hash = ?").run(row.token_hash);
       return res.status(401).json({ success: false, error: "Sesión expirada" });
     }
     if (!row.last_used_at || now - row.last_used_at >= LAST_USED_THROTTLE_MS) {
@@ -622,6 +645,19 @@ const startServer = async (
     return { rows, next: rows.length ? rows[rows.length - 1].id : Number(cursor) || 0 };
   };
 
+  // Fase 1 · el hash del PIN sólo viaja a cajas (lo usan para el login sin
+  // red). Un celular con catalog:read no lo recibe: con PIN de 4 dígitos se
+  // podría probar entero fuera de línea.
+  const PIN_COLUMNS = ["pin_hash", "pin_salt"];
+  const canReceivePins = (req) =>
+    scopeDefs.scopeAllowed(req.deviceScopes || [], scopeDefs.SCOPE.SALES_WRITE);
+  const redactRow = (req, table, row) => {
+    if (table !== "cashiers" || !row || canReceivePins(req)) return row;
+    const copy = { ...row };
+    for (const c of PIN_COLUMNS) if (c in copy) copy[c] = null;
+    return copy;
+  };
+
   // 3e · túnel SSE. Arranca con el servidor y se cierra con él.
   changeStream = createChangeStream({
     db,
@@ -645,7 +681,9 @@ const startServer = async (
     const limit = Math.min(Math.max(Number(req.query.limit) || 2000, 1), 5000);
     const cursor = req.query.cursor === undefined ? 0 : req.query.cursor;
     const snapshotSeq = Number(req.query.snapshot_seq) || maxSeq();
-    const { rows, next } = pageOf(table, cursor, limit);
+    const page = pageOf(table, cursor, limit);
+    const rows = page.rows.map((row) => redactRow(req, table, row));
+    const next = page.next;
     // El total tiene que contar lo que realmente se entrega: con 3e, los
     // productos de catálogo no viajan, así que no cuentan.
     const total =
@@ -699,7 +737,7 @@ const startServer = async (
         }
         if (c.op !== "upsert") return { ...c, row: null };
         // La fila se borró después de loguearse: mejor entregarla como borrado.
-        const row = readRow(c.tbl, c.row_id);
+        const row = redactRow(req, c.tbl, readRow(c.tbl, c.row_id));
         return row ? { ...c, row } : { ...c, op: "delete", row: null };
       })
       .filter(Boolean);
@@ -956,6 +994,27 @@ const startServer = async (
         error: `El canal "${channel}" no está en la lista blanca del Host`,
       });
     }
+    // Fase 1 · la lista blanca dice QUÉ puede pedir una caja; el rol de la
+    // sesión dice QUIÉN. Administrar cajeros o ajustes es sólo del admin.
+    if (rpcChannels.requiresAdmin(channel)) {
+      const caller = db
+        .prepare("SELECT role FROM cashiers WHERE id = ? AND is_active = 1")
+        .get(req.cashierId);
+      if (!caller || caller.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          code: "FORBIDDEN",
+          error: "Esta operación requiere un usuario administrador",
+        });
+      }
+    }
+    if (channel === "save-setting" && !rpcChannels.RPC_SETTING_KEYS.has(String(args[0]))) {
+      return res.status(403).json({
+        success: false,
+        code: "SETTING_NOT_ALLOWED",
+        error: `El ajuste "${String(args[0])}" no se puede cambiar desde una caja`,
+      });
+    }
     const listener = ipcRegistry.get(channel);
     if (!listener) {
       return res.status(404).json({
@@ -1000,11 +1059,25 @@ const startServer = async (
     // la del Host (`synced_at`) y la local queda como referencia.
     const offline = body.offline === true;
     let cashier = db.prepare("SELECT id, name, role FROM cashiers WHERE id = ?").get(req.cashierId);
-    if (offline && body.cashier_id != null) {
+    // Fase 1 · el cajero que declara la cola sólo se acepta si alguna vez
+    // inició sesión en ESTA caja; si no, la venta queda a nombre de la sesión
+    // que la sube y se avisa. Una caja no puede firmar ventas a nombre ajeno.
+    let cashierWarning = null;
+    if (offline && body.cashier_id != null && Number(body.cashier_id) !== Number(req.cashierId)) {
       const claimed = db
         .prepare("SELECT id, name, role FROM cashiers WHERE id = ? AND is_active = 1")
         .get(Number(body.cashier_id));
-      if (claimed) cashier = claimed;
+      const seenHere =
+        claimed &&
+        db
+          .prepare("SELECT 1 FROM box_sessions WHERE cashier_id = ? AND device_id = ? LIMIT 1")
+          .get(claimed.id, req.deviceId);
+      if (claimed && seenHere) cashier = claimed;
+      else
+        cashierWarning = {
+          code: "CASHIER_UNVERIFIED",
+          claimed_cashier_id: Number(body.cashier_id),
+        };
     }
 
 
@@ -1018,7 +1091,9 @@ const startServer = async (
       paymentMethod: body.paymentMethod,
       discountTotal: body.discountTotal,
       folio: body.folio || null,
-      ...(offline ? { register_id: body.register_id || null } : {}),
+      // Fase 2 · sin `register_id` ni `offline`: la misma venta enviada en
+      // línea y luego reenviada desde la cola (timeout tras commit) debe
+      // producir la misma huella y recibir la respuesta original, no un 422.
       ...(cidHash !== undefined ? { customer_id: cidHash } : {}),
     };
     const payload = {
@@ -1037,6 +1112,7 @@ const startServer = async (
       registerId: offline ? body.register_id || undefined : undefined,
       syncedAt: offline ? new Date().toISOString() : undefined,
       clientCreatedAt: offline ? body.client_created_at || undefined : undefined,
+      strictTotals: true,
     };
     const requestHash = sha256(canonicalStringify(clientFields));
 
@@ -1059,7 +1135,7 @@ const startServer = async (
         success: true,
         saleId: result.saleId,
         folio: result.folio,
-        warnings: result.warnings || [],
+        warnings: [...(result.warnings || []), ...(cashierWarning ? [cashierWarning] : [])],
         ...(offline ? { synced_at: payload.syncedAt } : {}),
       };
       setKey.run(req.deviceId, key, requestHash, JSON.stringify(responseBody), 200);
@@ -1174,10 +1250,12 @@ const startServer = async (
     res.json({
       success: true,
       pairedToken: token,
-      approved: !isDesktop,
-      pending: isDesktop,
-      deviceType: type,
-      scopes: list,
+      // Fase 1 · lo que quedó en la BD, no lo que se pidió: un revocado o una
+      // caja que se re-empareja como móvil quedan pendientes.
+      approved: registered ? registered.approved === 1 : !isDesktop,
+      pending: registered ? registered.approved !== 1 : isDesktop,
+      deviceType: registered && registered.deviceType ? registered.deviceType : type,
+      scopes: registered && registered.approved === 1 ? list : [],
       // 3c · la caja necesita su código y con qué Host se quedó emparejada.
       device_code: registered ? registered.deviceCode : null,
       host_device_id: hostDeviceId,

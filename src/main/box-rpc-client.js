@@ -31,6 +31,8 @@ const RPC_TIMEOUTS = {
   "taecel:refresh-catalog": 40000,
   "taecel:recharge": 40000,
   "taecel:reconcile": 40000,
+  // El import manda el archivo completo y el Host lo procesa por lotes.
+  "import-products-content": 120000,
 };
 
 // Claves de `save-setting` que el negocio comparte entre cajas (van al Host).
@@ -311,7 +313,38 @@ const syncPending = async (db) => {
 };
 
 // ── PIN cacheado (Bloque 4) ─────────────────────────────────────────────────
+// Fase 1 · sin red no hay rate limit del Host: la caja lleva el suyo, en
+// disco para que reiniciar la app no lo borre.
+const OFFLINE_PIN_MAX_ATTEMPTS = 5;
+const OFFLINE_PIN_LOCK_MS = 5 * 60 * 1000;
+const OFFLINE_PIN_ATTEMPTS_KEY = "offline_pin_attempts";
+const readPinAttempts = (db) => {
+  try {
+    const raw = activation.getSetting(db, OFFLINE_PIN_ATTEMPTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+};
+const writePinAttempts = (db, value) => {
+  try {
+    activation.setSetting(db, OFFLINE_PIN_ATTEMPTS_KEY, JSON.stringify(value));
+  } catch (err) {}
+};
+
 const offlineVerifyPin = (db, id, pin) => {
+  const attempts = readPinAttempts(db);
+  const key = String(Number(id));
+  const now = Date.now();
+  const entry = attempts[key];
+  if (entry && entry.lockedUntil && entry.lockedUntil > now) {
+    const mins = Math.ceil((entry.lockedUntil - now) / 60000);
+    return fail(
+      "PIN_LOCKED",
+      `Demasiados intentos sin conexión. Intenta de nuevo en ${mins} min.`,
+    );
+  }
   const cashier = db
     .prepare("SELECT id, name, role, pin_hash, pin_salt FROM cashiers WHERE id = ? AND is_active = 1")
     .get(Number(id));
@@ -319,7 +352,17 @@ const offlineVerifyPin = (db, id, pin) => {
     return fail("OFFLINE_PIN_UNAVAILABLE", "No hay PIN cacheado para este usuario");
   }
   if (!pins.verifyPin(pin, cashier.pin_salt, cashier.pin_hash)) {
+    const count = (entry && !entry.lockedUntil ? Number(entry.count) || 0 : 0) + 1;
+    attempts[key] =
+      count >= OFFLINE_PIN_MAX_ATTEMPTS
+        ? { count: 0, lockedUntil: now + OFFLINE_PIN_LOCK_MS }
+        : { count };
+    writePinAttempts(db, attempts);
     return fail("PIN_INVALID", "PIN inválido");
+  }
+  if (entry) {
+    delete attempts[key];
+    writePinAttempts(db, attempts);
   }
   const syncedAt = Number(activation.getSetting(db, "replica_synced_at") || 0);
   const age = syncedAt ? Date.now() - syncedAt : Infinity;

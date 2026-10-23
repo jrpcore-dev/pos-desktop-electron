@@ -139,6 +139,33 @@ const fail = (code, message, extra) => {
   return err;
 };
 
+// El total cobrado es la suma de las líneas; en efectivo puede redondearse al
+// paso configurado (`rounding_mode`, 0.5 por defecto). Más allá de eso, el
+// payload se alteró o el renderer tiene un bug: se rechaza.
+const assertTotalMatchesLines = (db, cart, total, paymentMethod) => {
+  const sum = cart.reduce((acc, item) => {
+    const unit = item ? item.finalPrice ?? item.price : NaN;
+    const qty = item ? item.quantity : NaN;
+    return acc + (Number.isFinite(unit) && Number.isFinite(qty) ? unit * qty : 0);
+  }, 0);
+  let tolerance = 0.01 + cart.length * 0.005;
+  if ((paymentMethod || "cash") === "cash") {
+    let step = 0.5;
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'rounding_mode'").get();
+      const parsed = parseFloat(row && row.value);
+      if (Number.isFinite(parsed) && parsed > 0) step = parsed;
+    } catch (err) {}
+    tolerance += step / 2;
+  }
+  if (Math.abs(sum - total) > tolerance) {
+    throw fail(
+      "TOTAL_MISMATCH",
+      `El total (${total}) no cuadra con las líneas (${sum.toFixed(2)})`,
+    );
+  }
+};
+
 const createSaleTx = (
   db,
   {
@@ -158,6 +185,8 @@ const createSaleTx = (
     registerId,
     syncedAt,
     clientCreatedAt,
+    // Fase 1 · ventas que llegan por red: el total debe cuadrar con las líneas.
+    strictTotals,
     // Recarga Taecel (sólo service-transactions): la venta usa la serie del
     // Host (`null` → "H") para no gastar folios de la serie local de la caja,
     // y su línea puede enlazarse con el ledger del proveedor.
@@ -173,6 +202,12 @@ const createSaleTx = (
   }
   if (!Number.isFinite(total) || total < 0) {
     throw fail("INVALID_PAYLOAD", "Total inválido");
+  }
+  for (const item of cart) {
+    const pct = item && item.discount_percent;
+    if (pct != null && (!Number.isFinite(pct) || pct < 0 || pct > 100)) {
+      throw fail("INVALID_DISCOUNT", "Descuento inválido");
+    }
   }
 
   let resolvedCustomerId = null;
@@ -351,6 +386,10 @@ const createSaleTx = (
       }
     }
   }
+
+  // Después de validar las líneas (producto, unidad, cantidad) para que esos
+  // errores conserven su código; el throw revierte la venta entera.
+  if (strictTotals) assertTotalMatchesLines(db, cart, total, paymentMethod);
 
   const warnings = [...warningByProduct.values()];
   if (warnings.length > 0) {

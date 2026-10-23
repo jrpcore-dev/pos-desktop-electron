@@ -186,25 +186,48 @@ const registerPairing = (
   },
 ) => {
   const name = String(deviceName || "Dispositivo móvil").slice(0, 80);
+  const existing = db
+    .prepare("SELECT device_code, device_type, revoked FROM paired_devices WHERE device_id = ?")
+    .get(deviceId);
+  // Fase 1 · una caja ya registrada no cambia de tipo al re-emparejarse: si se
+  // declarara "mobile" se aprobaría sola y recuperaría sus scopes de caja.
+  const existingBox =
+    !!existing &&
+    (existing.device_type === scopes.DEVICE_TYPE.DESKTOP_BOX ||
+      (typeof existing.device_code === "string" && /^[A-G]$/.test(existing.device_code)));
+  // Un dispositivo revocado que vuelve con el código de activación queda
+  // PENDIENTE: sólo el admin lo reactiva desde Configuración.
+  const wasRevoked = !!existing && Number(existing.revoked) === 1;
   // En conflicto sólo se pisan tipo/scopes/approved si el llamante los
   // declaró: la rotación de token (autoPairIfGrace) no trae nada de eso y no
   // debe degradar una caja aprobada a "móvil" (eso le borraba register:*).
-  const declaredType = deviceType || null;
-  const type = declaredType || scopes.DEVICE_TYPE.MOBILE;
+  const declaredType = existingBox ? null : deviceType || null;
+  const type = existingBox
+    ? scopes.DEVICE_TYPE.DESKTOP_BOX
+    : declaredType || scopes.DEVICE_TYPE.MOBILE;
+  // Re-emparejar una caja con el código la deja pendiente (como la primera
+  // vez), venga declarada como caja o como móvil; rotar el token no la toca.
+  let declaredApproved = existingBox && approved !== undefined ? false : approved;
+  if (wasRevoked) declaredApproved = false;
   const isApproved =
-    approved === undefined ? (type === scopes.DEVICE_TYPE.DESKTOP_BOX ? 0 : 1) : approved ? 1 : 0;
+    declaredApproved === undefined
+      ? type === scopes.DEVICE_TYPE.DESKTOP_BOX
+        ? 0
+        : 1
+      : declaredApproved
+        ? 1
+        : 0;
+  const declaredScopes =
+    existingBox && !wasRevoked ? null : Array.isArray(scopeList) ? scopeList : null;
   const list = Array.isArray(scopeList)
     ? scopeList
     : scopes.scopesForDeviceType(type);
   // 3c · código único A,B,C… solo para CAJAS (desktop_box): la H queda
   // reservada al Host y un celular no consume letra (usa el formato D-…).
   // El de la fila se conserva si el dispositivo ya existía.
-  const existingCode = db
-    .prepare("SELECT device_code FROM paired_devices WHERE device_id = ?")
-    .get(deviceId);
   const deviceCode =
-    existingCode && existingCode.device_code
-      ? existingCode.device_code
+    existing && existing.device_code
+      ? existing.device_code
       : type === scopes.DEVICE_TYPE.DESKTOP_BOX
         ? nextDeviceCode(db)
         : generateDeviceCode();
@@ -234,19 +257,32 @@ const registerPairing = (
     protocolVersion || null,
     isApproved,
     declaredType,
-    Array.isArray(scopeList) ? JSON.stringify(scopeList) : null,
-    approved === undefined ? null : approved ? 1 : 0,
+    declaredScopes ? JSON.stringify(declaredScopes) : null,
+    declaredApproved === undefined ? null : declaredApproved ? 1 : 0,
   );
-  return { deviceId, deviceCode, approved: isApproved };
+  const saved = db
+    .prepare("SELECT approved, device_type FROM paired_devices WHERE device_id = ?")
+    .get(deviceId);
+  return {
+    deviceId,
+    deviceCode,
+    approved: saved ? Number(saved.approved) : isApproved,
+    deviceType: saved ? saved.device_type : type,
+  };
 };
 
 // Auto-emparejamiento silencioso durante la ventana de gracia: se llama solo
 // DESPUÉS de verificar un PIN correcto. Devuelve el token del dispositivo para
 // que el teléfono lo guarde (cura también a teléfonos que perdieron su token y
-// reactiva los revocados durante la gracia). Mientras dure la gracia, cada
+// NO reactiva a los revocados: eso es decisión del admin). Mientras dure la gracia, cada
 // login con PIN correcto rota el token del dispositivo al último recibido.
 const autoPairIfGrace = (db, deviceId, cashierId, cashierName) => {
   if (!graceActive(db) || !deviceId) return null;
+  // Fase 1 · la gracia migra dispositivos en uso; no deshace una revocación.
+  const row = db
+    .prepare("SELECT revoked FROM paired_devices WHERE device_id = ?")
+    .get(deviceId);
+  if (row && Number(row.revoked) === 1) return null;
   const token = crypto.randomBytes(32).toString("hex");
   registerPairing(db, {
     deviceId,
