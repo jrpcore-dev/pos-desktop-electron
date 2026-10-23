@@ -11,9 +11,9 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 
-// Configuración del proveedor (Vendesaldo). Las credenciales se guardan en la
-// base local de la app (settings), no en el repositorio. Solo se leen para
-// llamar al WebService.
+// Configuración del proveedor (Taecel). La Key y el NIP se prueban contra
+// Taecel antes de guardarse y quedan cifradas (safeStorage) en el Host. En una
+// caja este canal es del Host: se avisa que se configura allá.
 const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
@@ -31,10 +31,17 @@ const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
     try {
       const api = window.api;
       if (!api?.invoke) throw new Error("Sin puente IPC");
-      await api.invoke("vendesaldo:set-credentials", {
-        user: user.trim(),
-        pass,
-      });
+      const creds = { key: user.trim(), nip: pass };
+      const test = await api.invoke("taecel:test-credentials", creds);
+      if (!test?.ok) {
+        throw new Error(
+          test?.code === "IPC_SCOPE_DENIED"
+            ? "Las credenciales de Taecel se configuran en el equipo Host"
+            : test?.error || "Taecel rechazó la Key o el NIP",
+        );
+      }
+      const saved = await api.invoke("taecel:set-credentials", creds);
+      if (!saved?.ok) throw new Error(saved?.error || "No se pudo guardar");
       setUser("");
       setPass("");
       onSaved?.();
@@ -52,25 +59,25 @@ const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
         <DialogHeader>
           <DialogTitle>Proveedor de recargas</DialogTitle>
           <DialogDescription>
-            Usuario y contraseña de Vendesaldo. Se guardan en esta computadora y se
-            usan para consultar saldo y vender.
+            Key y NIP de tu cuenta Taecel. Se validan con Taecel y se guardan
+            cifrados en el equipo Host.
           </DialogDescription>
         </DialogHeader>
 
-        <form id="vendesaldo-config" onSubmit={handleSave} className="flex flex-col gap-3">
+        <form id="taecel-config" onSubmit={handleSave} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <label
               htmlFor="vds-user"
               className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
             >
-              Usuario
+              Key
             </label>
             <Input
               id="vds-user"
               autoComplete="off"
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              placeholder="Tu usuario de Vendesaldo"
+              placeholder="Key de Taecel"
               className="h-9 text-sm"
               autoFocus
             />
@@ -81,7 +88,7 @@ const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
               htmlFor="vds-pass"
               className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
             >
-              Contraseña
+              NIP
             </label>
             <div className="relative">
               <Input
@@ -96,7 +103,7 @@ const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
               <button
                 type="button"
                 onClick={() => setShow((s) => !s)}
-                aria-label={show ? "Ocultar contraseña" : "Mostrar contraseña"}
+                aria-label={show ? "Ocultar NIP" : "Mostrar NIP"}
                 className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-muted-foreground hover:text-foreground"
               >
                 {show ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}

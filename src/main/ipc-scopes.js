@@ -90,7 +90,8 @@ const CLASSIFICATION_BASE = {
   "pull-backup-now": SCOPES.SYSTEM,
   "promote-to-host": SCOPES.SYSTEM,
   // 3g/D · verify-cashier-pin ya no está aquí: va al Host (scope RPC).
-  "vendesaldo:status": SCOPES.SYSTEM,
+  // Taecel: las lecturas y la recarga van al Host (scope RPC). Sólo la
+  // configuración de credenciales es una escritura local del Host.
 
   // ── SYSTEM: vínculo caja ↔ Host (Entrega 3c) ───────────────────────────
   "box-discover-hosts": SCOPES.SYSTEM,
@@ -138,8 +139,6 @@ const CLASSIFICATION_BASE = {
   "get-tiers": SCOPES.HOST_READ,
   "search-customers": SCOPES.HOST_READ,
   "search-products": SCOPES.HOST_READ,
-  "vendesaldo:get-balance": SCOPES.HOST_READ,
-  "vendesaldo:get-catalog": SCOPES.HOST_READ,
   "box-link-status": SCOPES.HOST_READ,
   "box-get-settings": SCOPES.HOST_READ,
 
@@ -153,7 +152,8 @@ const CLASSIFICATION_BASE = {
   "rotate-activation-code": SCOPES.HOST_WRITE,
   "set-activation-enabled": SCOPES.HOST_WRITE,
   "set-activation-grace": SCOPES.HOST_WRITE,
-  "vendesaldo:set-credentials": SCOPES.HOST_WRITE,
+  "taecel:set-credentials": SCOPES.HOST_WRITE,
+  "taecel:test-credentials": SCOPES.HOST_WRITE,
   // 3g/D · ajusta el vínculo de ESTA caja con su Host: es del propio aparato.
   "box-save-settings": SCOPES.SYSTEM,
   "approve-device": SCOPES.HOST_WRITE,

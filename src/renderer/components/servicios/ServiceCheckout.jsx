@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   KIND_LABEL,
   filterOperators,
   getOperator,
-  mockExecute,
-  mockFolio,
   quote,
+  toUiTransaction,
   validateInput,
-} from "./serviceCatalog.mock";
+} from "./taecelCatalog";
 import { useToast } from "@/components/ToastProvider";
 import { NEEDS_ATTENTION } from "./serviceStatus";
 import { OperatorIcon } from "./OperatorIcon";
@@ -19,19 +18,38 @@ import ServiceResult from "./ServiceResult";
 
 const firstSku = (op) => op?.products?.[0]?.sku || "";
 
-const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
+// Mientras Taecel no da una respuesta final, se vuelve a consultar el estado
+// (nunca a cobrar) cada pocos segundos, hasta un límite.
+const POLL_MS = 4000;
+const POLL_MAX = 15;
+
+const newRequestId = () =>
+  window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => {
   const notify = useToast();
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
-  const [operatorKey, setOperatorKey] = useState("TELCEL");
-  const [sku, setSku] = useState("10");
+  const [operatorKey, setOperatorKey] = useState("");
+  const [sku, setSku] = useState("");
   const [inputValue, setInputValue] = useState("");
   const [confirmValue, setConfirmValue] = useState("");
   const [inputError, setInputError] = useState("");
   const [tx, setTx] = useState(null);
   const [busy, setBusy] = useState(false);
+  const polls = useRef(0);
 
-  const operator = useMemo(() => getOperator(operatorKey), [operatorKey]);
+  // Al llegar el catálogo se elige el primer operador.
+  useEffect(() => {
+    if (!operatorKey && operators?.length) setOperatorKey(operators[0].key);
+  }, [operators, operatorKey]);
+
+  const operator = useMemo(
+    () => getOperator(operators, operatorKey),
+    [operators, operatorKey],
+  );
   const product = useMemo(
     () => operator?.products?.find((p) => p.sku === sku) || null,
     [operator, sku],
@@ -48,6 +66,7 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
     setInputError("");
     setTx(null);
     setBusy(false);
+    polls.current = 0;
   }, [operator]);
 
   // Cambiar de operador reinicia la captura (mismo cuerpo que `reset`).
@@ -57,7 +76,7 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
 
   const handleCategoryChange = (next) => {
     setCategory(next);
-    const list = filterOperators(next, query);
+    const list = filterOperators(operators, next, query);
     if (list.length && !list.some((o) => o.key === operatorKey)) {
       setOperatorKey(list[0].key);
     }
@@ -65,48 +84,32 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
 
   const validation = operator ? validateInput(operator, inputValue) : { ok: false };
   const confirmOk =
-    !operator || operator.input?.kind === "none" || confirmValue === inputValue;
+    !operator ||
+    operator.input?.kind === "none" ||
+    !operator.input?.confirmar ||
+    confirmValue === inputValue;
   const canCharge =
-    !!product && validation.ok && confirmOk && !!quoteData && !busy && !tx;
+    providerLive &&
+    !!product &&
+    validation.ok &&
+    confirmOk &&
+    !!quoteData &&
+    !busy &&
+    !tx;
 
-  // Ejecuta la venta: va al WebService real si el proveedor está configurado;
-  // sin proveedor usa la simulación local. Los servicios tipo CFE aún usan
-  // simulación hasta tener `realizarServicio`.
-  const runCharge = useCallback(
-    async (folio) => {
-      const api = window.api;
-      if (providerLive && operator?.kind !== "bill" && api?.invoke) {
-        try {
-          const r = await api.invoke("vendesaldo:recharge", {
-            operatorName: operator.name,
-            sku: product.sku,
-            phone: inputValue,
-          });
-          if (r?.ok) {
-            return {
-              status: "applied",
-              providerRef: r.providerRef || folio,
-              message: r.message || "Recarga aplicada por el proveedor",
-            };
-          }
-          return {
-            status: "failed",
-            providerRef: "",
-            message: r?.error || "El proveedor rechazó la recarga",
-          };
-        } catch (e) {
-          return {
-            status: "failed",
-            providerRef: "",
-            message: e?.message || "Error de red con el proveedor",
-          };
-        }
-      }
-      return mockExecute({ folio });
-    },
-    [providerLive, operator, product, inputValue],
+  const display = useCallback(
+    (row, fallback) => ({
+      ...fallback,
+      ...toUiTransaction(row),
+      operatorLogo: operator?.logo || fallback?.operatorLogo,
+      inputValue: fallback?.inputValue ?? row?.inputValue,
+    }),
+    [operator],
   );
 
+  // Cobro: el Host habla con Taecel. `clientRequestId` es la llave de
+  // idempotencia: el mismo intento nunca se cobra dos veces aunque se repita
+  // la llamada (timeout, doble clic).
   const charge = useCallback(async () => {
     if (!operator || !product || !quoteData) return;
 
@@ -117,10 +120,15 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
     }
     setInputError("");
 
-    const folio = tx?.folio || mockFolio();
-    setBusy(true);
-    setTx({
-      folio,
+    // Un intento FALLIDO es definitivo en Taecel: el reintento es un cobro
+    // nuevo con su propio id. Uno pendiente o desconocido se consulta.
+    const clientRequestId =
+      tx && tx.status !== "failed" && tx.clientRequestId
+        ? tx.clientRequestId
+        : newRequestId();
+    const base = {
+      clientRequestId,
+      folio: tx?.folio || "—",
       status: "pending",
       operatorKey: operator.key,
       operatorLogo: operator.logo,
@@ -129,53 +137,85 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
       sku: product.sku,
       inputValue,
       quote: quoteData,
-    });
-
-    const res = await runCharge(folio);
-
-    const next = {
-      folio,
-      status: res.status,
-      providerRef: res.providerRef,
-      message: res.message,
-      operatorKey: operator.key,
-      operatorLogo: operator.logo,
-      operatorName: operator.name,
-      productName: product.name,
-      sku: product.sku,
-      inputValue,
-      quote: quoteData,
     };
+    setBusy(true);
+    setTx(base);
+    polls.current = 0;
+
+    let next;
+    try {
+      const r = await window.api.invoke("taecel:recharge", {
+        clientRequestId,
+        productCode: product.sku,
+        reference: inputValue,
+        amountCents: product.amountCents,
+        paymentMethod: "cash",
+      });
+      next =
+        r && r.status
+          ? display(r, base)
+          : {
+              ...base,
+              status: "failed",
+              message: r?.error || "Taecel rechazó la recarga",
+            };
+    } catch (e) {
+      // La llamada no volvió: no se sabe si Taecel la aplicó. Se consulta
+      // con el mismo id en vez de cobrar otra vez.
+      next = {
+        ...base,
+        status: "unknown",
+        message: e?.message || "Sin respuesta del Host",
+      };
+    }
     setTx(next);
     setBusy(false);
     onTransaction?.(next);
-  }, [operator, product, inputValue, quoteData, tx, runCharge, onTransaction]);
+  }, [operator, product, inputValue, quoteData, tx, display, onTransaction]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (canCharge) charge();
   };
 
-  const reconcile = useCallback(
-    async (folio) => {
-      const res = await mockExecute({ folio });
-      setTx((cur) => {
-        if (!cur || cur.folio !== folio) return cur;
-        const next = {
-          ...cur,
-          status: res.status,
-          providerRef: res.providerRef || cur.providerRef,
-          message:
-            res.status === "applied"
-              ? "Confirmado por el proveedor"
-              : "El proveedor no encontró la operación",
-        };
-        onTransaction?.(next);
-        return next;
+  // Consulta el estado de la operación en curso (no cobra).
+  const reconcile = useCallback(async () => {
+    const cur = tx;
+    if (!cur?.clientRequestId) return;
+    try {
+      const r = await window.api.invoke("taecel:transaction-status", {
+        clientRequestId: cur.clientRequestId,
       });
-    },
-    [onTransaction],
-  );
+      if (!r?.ok || !r.transaction) return;
+      const next = display(r.transaction, cur);
+      setTx((prev) =>
+        prev && prev.clientRequestId === cur.clientRequestId ? next : prev,
+      );
+      onTransaction?.(next);
+    } catch (e) {
+      // Se reintenta en el siguiente ciclo.
+    }
+  }, [tx, display, onTransaction]);
+
+  useEffect(() => {
+    if (!tx || busy) return undefined;
+    if (tx.status !== "pending" && tx.status !== "unknown") return undefined;
+    if (polls.current >= POLL_MAX) return undefined;
+    const t = setTimeout(() => {
+      polls.current += 1;
+      reconcile();
+    }, POLL_MS);
+    return () => clearTimeout(t);
+  }, [tx, busy, reconcile]);
+
+  const retry = useCallback(() => {
+    if (tx?.status === "unknown" || tx?.status === "pending") {
+      polls.current = 0;
+      reconcile();
+      return;
+    }
+    charge();
+  }, [tx, reconcile, charge]);
 
   let blockedHint = "";
   if (!product) blockedHint = "Elige un producto";
@@ -189,6 +229,7 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
     >
       <section className="flex min-h-0 flex-col gap-3 rounded-lg border border-border bg-card p-3 lg:h-[calc(100dvh-var(--app-chrome-h)-7.5rem)]">
         <ServiceCatalog
+          operators={operators}
           category={category}
           onCategoryChange={handleCategoryChange}
           operatorKey={operatorKey}
@@ -231,11 +272,13 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
               <ServiceResult
                 tx={tx}
                 busy={busy}
-                onRetry={charge}
+                onRetry={retry}
                 onDone={reset}
-                onReconcile={reconcile}
                 onPrint={() =>
-                  notify("El ticket se imprime cuando exista el proveedor", "info")
+                  notify(
+                    `La recarga quedó como venta ${tx.saleFolio || ""}; reimprímela desde Transacciones`,
+                    "info",
+                  )
                 }
               />
             ) : (
@@ -274,8 +317,10 @@ const ServiceCheckout = ({ onTransaction, providerLive = false }) => {
         {tx && NEEDS_ATTENTION.includes(tx.status) && !busy && (
           <p className="text-[11px] text-muted-foreground">
             {tx.status === "unknown"
-              ? "El pago sí entró, falta la confirmación del proveedor. El reintento usa el mismo folio."
-              : "El reintento usa el mismo folio para no cobrar dos veces."}
+              ? "Falta la confirmación de Taecel. Se consulta la misma operación; no se vuelve a cobrar."
+              : tx.status === "needs_review"
+                ? "Taecel aplicó la recarga pero la venta no se registró. Avisa al administrador; no la cobres otra vez."
+                : "Taecel rechazó la operación: el reintento es un cobro nuevo."}
           </p>
         )}
       </aside>

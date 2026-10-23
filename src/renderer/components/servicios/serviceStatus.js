@@ -37,6 +37,14 @@ export const SERVICE_STATUS = {
     badgeVariant: "secondary",
     artRing: "bg-muted text-muted-foreground",
   },
+  // Taecel la aplicó pero la venta no se pudo registrar (p. ej. caja
+  // cerrada): el admin la revisa; NO se vuelve a cobrar.
+  needs_review: {
+    key: "needs_review",
+    label: "Por revisar",
+    badgeVariant: "warning",
+    artRing: "bg-warning/15 text-warning",
+  },
   reversed: {
     key: "reversed",
     label: "Revertida",
@@ -47,6 +55,7 @@ export const SERVICE_STATUS = {
 
 export const STATUS_ORDER = [
   "applied",
+  "needs_review",
   "unknown",
   "failed",
   "pending",
@@ -62,7 +71,7 @@ export const getStatus = (key) =>
   };
 
 /** Estados que todavía pueden cambiar o que exigen atención del cajero. */
-export const NEEDS_ATTENTION = ["failed", "unknown"];
+export const NEEDS_ATTENTION = ["failed", "unknown", "needs_review"];
 
 /** Un estado ya no va a cambiar solo: se puede cerrar. */
 export const isSettled = (key) => key === "applied" || key === "reversed";

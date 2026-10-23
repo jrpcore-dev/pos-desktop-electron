@@ -92,7 +92,58 @@ const createTables = (db) => {
     quantity INTEGER NOT NULL,
     price_at_sale REAL NOT NULL,
     discount_percent REAL DEFAULT 0,
-    stock_deducted REAL DEFAULT 0
+    stock_deducted REAL DEFAULT 0,
+    service_transaction_id INTEGER
+  )`);
+
+  // ─── RECARGAS / SERVICIOS (TAECEL) ─────────────────────────────
+  // Ledger propio del proveedor. No se replica a las cajas: la verdad vive en
+  // el Host y las cajas la consultan por RPC. `client_request_id` es la llave
+  // de idempotencia del renderer; `provider_trans_id` es el transID de Taecel.
+  // La referencia completa se guarda cifrada; para buscar y reconciliar se usan
+  // `reference_masked` y `reference_hash`.
+  db.exec(`CREATE TABLE IF NOT EXISTS service_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_request_id TEXT NOT NULL UNIQUE,
+    ref_cte TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'taecel',
+    provider_trans_id TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'requesting',
+    provider_status TEXT,
+    provider_message TEXT,
+    category_id INTEGER,
+    carrier_id TEXT,
+    carrier_name TEXT,
+    carrier_logo TEXT,
+    product_code TEXT NOT NULL,
+    product_name TEXT,
+    reference_masked TEXT,
+    reference_hash TEXT,
+    reference_enc TEXT,
+    amount_cents INTEGER NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL DEFAULT 'cash',
+    register_id INTEGER,
+    cashier_id INTEGER,
+    cashier_name TEXT,
+    device_id TEXT,
+    sale_id INTEGER,
+    sale_folio TEXT,
+    provider_folio TEXT,
+    saldo_final_cents INTEGER,
+    cargo_cents INTEGER,
+    abono_cents INTEGER,
+    comision_cents INTEGER,
+    requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_checked_at DATETIME,
+    check_attempts INTEGER NOT NULL DEFAULT 0,
+    next_check_at DATETIME,
+    applied_at DATETIME,
+    failed_at DATETIME,
+    needs_review INTEGER NOT NULL DEFAULT 0,
+    review_reason TEXT,
+    raw_status_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
   // Entrega 2c-B: idempotencia de escrituras por dispositivo (p. ej. ventas del
@@ -310,6 +361,7 @@ const createTables = (db) => {
       "price_at_sale",
       "discount_percent",
       "stock_deducted",
+      "service_transaction_id",
     ].filter((c) => siHave.includes(c));
     const siList = siCopy.join(", ");
     db.pragma("foreign_keys = OFF");
@@ -322,7 +374,8 @@ const createTables = (db) => {
         quantity INTEGER NOT NULL,
         price_at_sale REAL NOT NULL,
         discount_percent REAL DEFAULT 0,
-        stock_deducted REAL DEFAULT 0
+        stock_deducted REAL DEFAULT 0,
+        service_transaction_id INTEGER
       )
     `);
     db.exec(
@@ -345,6 +398,17 @@ const createTables = (db) => {
   ensureColumn("sale_items", "cancelled_by", "TEXT");
   ensureColumn("sale_items", "cancelled_by_device", "TEXT");
   ensureColumn("sale_items", "returned_qty", "REAL DEFAULT 0");
+  // Recarga Taecel enlazada a la línea de venta. La usan la impresión, el
+  // historial y el candado de cancelación (SERVICE_SALE_NOT_CANCELLABLE).
+  ensureColumn("sale_items", "service_transaction_id", "INTEGER");
+
+  // Vendesaldo quedó reemplazado por Taecel. Se borran sus credenciales en
+  // claro para que no queden en la BD ni en los respaldos.
+  try {
+    db.prepare(
+      "DELETE FROM settings WHERE key IN ('vendesaldo_user','vendesaldo_pass','vendesaldo_apikey')",
+    ).run();
+  } catch (err) {}
 
   // ─── CUSTOMERS / TIERS ─────────────────────────────────────
   db.exec(`CREATE TABLE IF NOT EXISTS customer_tiers (
@@ -429,6 +493,27 @@ const runMigrations = (db) => {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sale_items_service_tx ON sale_items(service_transaction_id)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_service_tx_status_next ON service_transactions(status, next_check_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_service_tx_requested ON service_transactions(requested_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_service_tx_register ON service_transactions(register_id, status)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_service_tx_sale ON service_transactions(sale_id)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_service_tx_reference ON service_transactions(reference_hash)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_service_tx_device ON service_transactions(device_id, requested_at)`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)`,

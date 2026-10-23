@@ -7,6 +7,7 @@ const {
   Tray,
   Menu,
   nativeImage,
+  safeStorage,
 } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
@@ -115,20 +116,6 @@ ipcMain.handle("log-error", (e, payload) => {
   );
 });
 
-const vendesaldo = require("./vendesaldo");
-
-ipcMain.handle("vendesaldo:status", async () => ({
-  configured: vendesaldo.credentialsReady(db),
-}));
-ipcMain.handle("vendesaldo:get-balance", async () => vendesaldo.saldo(db));
-ipcMain.handle("vendesaldo:get-catalog", async () => vendesaldo.catalog(db));
-ipcMain.handle("vendesaldo:set-credentials", async (e, creds) =>
-  vendesaldo.saveCredentials(db, creds && creds.user, creds && creds.pass),
-);
-ipcMain.handle("vendesaldo:recharge", async (e, payload) =>
-  vendesaldo.recharge(db, payload),
-);
-
 const dbPath = path.join(dbDir, "pos-system.db");
 let db = new Database(dbPath);
 db.pragma("journal_mode = WAL");
@@ -186,6 +173,102 @@ const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 // de registro se recorta a SU caja en vez de mirar el cajón del vecino.
 // Un solo sitio: todos los handlers de registro pasan por aquí.
 const callerDeviceId = () => rpcContext.currentDeviceId() || hostDeviceId;
+
+// ─── TAECEL (recargas / paquetes) ───────────────────────────────────────────
+// El Host es el único que habla con Taecel. Las cajas piden estos canales por
+// RPC; el ledger y las credenciales viven sólo aquí.
+const taecel = require("./taecel").createTaecel({
+  db,
+  cipher: safeStorage,
+});
+const serviceTx = require("./service-transactions").createServiceTransactions({
+  db,
+  taecel,
+  emit: (tables, ids) => emitDbChanged(tables, ids),
+  logger: (scope, err) =>
+    appendErrorLog(
+      `[${new Date().toISOString()}] taecel/${scope}\n${
+        err && err.stack ? err.stack : String(err)
+      }\n---\n`,
+    ),
+});
+
+const resolveCallerCashier = (fallback = {}) => {
+  const rpcCashierId = rpcContext.currentCashierId();
+  const id = rpcCashierId || fallback.cashierId || null;
+  if (!id) {
+    return {
+      id: null,
+      name: fallback.cashierName || "Usuario Principal",
+      role: fallback.role || "cashier",
+    };
+  }
+  const row = db
+    .prepare("SELECT id, name, role FROM cashiers WHERE id = ?")
+    .get(id);
+  return row
+    ? { id: row.id, name: row.name, role: row.role }
+    : {
+        id,
+        name: fallback.cashierName || "Usuario Principal",
+        role: fallback.role || "cashier",
+      };
+};
+
+ipcMain.handle("taecel:status", async () => taecel.getStatus());
+ipcMain.handle("taecel:get-balance", async (e, opts) =>
+  taecel.getBalance({ force: !!(opts && opts.force) }),
+);
+ipcMain.handle("taecel:get-catalog", async (e, opts) =>
+  taecel.getCatalog({ force: !!(opts && opts.force) }),
+);
+ipcMain.handle("taecel:refresh-catalog", async () =>
+  taecel.getCatalog({ force: true }),
+);
+ipcMain.handle("taecel:set-credentials", async (e, creds) =>
+  taecel.saveCredentials(
+    creds && creds.key,
+    creds && creds.nip,
+    rpcContext.currentCashierId(),
+  ),
+);
+ipcMain.handle("taecel:test-credentials", async (e, creds) =>
+  taecel.testCredentials(creds && creds.key, creds && creds.nip),
+);
+ipcMain.handle("taecel:recharge", async (e, payload) => {
+  const body = payload || {};
+  const cashier = resolveCallerCashier(body);
+  const deviceId = rpcContext.currentDeviceId() || body.deviceId || hostDeviceId;
+  return serviceTx.createRecharge(body, {
+    deviceId,
+    cashierId: cashier.id,
+    cashierName: cashier.name,
+    role: cashier.role,
+  });
+});
+ipcMain.handle("taecel:transaction-status", async (e, payload) =>
+  serviceTx.checkTransaction(payload || {}),
+);
+ipcMain.handle("taecel:history", async (e, payload) =>
+  serviceTx.history(payload || {}),
+);
+ipcMain.handle("taecel:reconcile", async (e, payload) => {
+  const body = payload || {};
+  const cashier = resolveCallerCashier(body);
+  if (cashier.id) {
+    const row = db
+      .prepare("SELECT role FROM cashiers WHERE id = ?")
+      .get(cashier.id);
+    if (row && row.role !== "admin") {
+      return {
+        ok: false,
+        code: "FORBIDDEN",
+        error: "Sólo un administrador puede reconciliar recargas",
+      };
+    }
+  }
+  return serviceTx.reconcileDate(body);
+});
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -473,9 +556,9 @@ app.on("ready", async () => {
   createTray();
   setupAutoUpdater();
 
-  // Pre-compila el worker del cajón en segundo plano para que la primera
-  // apertura también sea rápida (no bloquea el arranque).
-  ensureDrawerWorker().catch(() => {});
+  // Pre-compila el worker RAW (tickets ESC/POS y cajón) en segundo plano
+  // para que el primer ticket también sea rápido (no bloquea el arranque).
+  rawPrinter.ensure().catch(() => {});
 
   // 3c · el token de emparejamiento de la caja se cifra con safeStorage.
   clientLink.setSecretCipher(clientLink.safeStorageCipher());
@@ -587,7 +670,7 @@ app.on("ready", async () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
-  destroyDrawerWorker();
+  rawPrinter.destroy();
   apiServer.stopServer();
   discovery.stopDiscovery();
 });
@@ -2251,6 +2334,23 @@ ipcMain.handle(
       if (sale.status === "cancelado")
         return { success: false, error: "Esta venta ya fue cancelada" };
 
+      // Una recarga Taecel ya se aplicó en el operador. Cancelar la venta sin
+      // revertir la recarga descuadraría el saldo. Se bloquea en el POS; el
+      // admin debe gestionar la reversión con Taecel.
+      const serviceItem = db
+        .prepare(
+          "SELECT 1 FROM sale_items WHERE sale_id = ? AND service_transaction_id IS NOT NULL LIMIT 1",
+        )
+        .get(saleId);
+      if (serviceItem) {
+        return {
+          success: false,
+          code: "SERVICE_SALE_NOT_CANCELLABLE",
+          error:
+            "Esta venta contiene una recarga. No se puede cancelar desde el POS; gestiona la reversión con Taecel.",
+        };
+      }
+
       const reg = sale.register_id
         ? db
             .prepare("SELECT status, closed_at, device_id FROM cash_register WHERE id = ?")
@@ -2339,6 +2439,14 @@ ipcMain.handle(
       if (!item) return { success: false, error: "Producto no encontrado" };
       if (item.status === "cancelado")
         return { success: false, error: "Este producto ya fue cancelado" };
+      if (item.service_transaction_id) {
+        return {
+          success: false,
+          code: "SERVICE_SALE_NOT_CANCELLABLE",
+          error:
+            "Esta línea es una recarga Taecel y no se puede cancelar desde el POS.",
+        };
+      }
 
       const reg = sale.register_id
         ? db
@@ -2865,6 +2973,15 @@ ipcMain.handle("save-setting", async (event, key, value) => {
         error: "Ancho de papel no soportado (48, 58 u 80 mm).",
       };
     }
+    if (key === "print_mode" && !["auto", "escpos", "driver"].includes(value)) {
+      return { success: false, error: "Modo de impresión no soportado." };
+    }
+    if (
+      key === "escpos_dots_width" &&
+      !["", "384", "512", "576"].includes(String(value ?? ""))
+    ) {
+      return { success: false, error: "Ancho en puntos no soportado." };
+    }
     db.prepare(
       "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
     ).run(key, value);
@@ -3113,6 +3230,22 @@ const emitDbChanged = (tables = [], ids = {}) => {
     mainWin.webContents.send("db-changed", payload);
   }, 150);
 };
+
+// Taecel · el Host es el único que consulta StatusTXN. La caja sólo lee el
+// ledger por RPC. El poller respeta 5 s y se detiene a los 60 s (ver
+// service-transactions.applyStatus).
+if (!isBoxDevice()) {
+  try {
+    serviceTx.recoverAmbiguous();
+    serviceTx.startPoller();
+  } catch (err) {
+    appendErrorLog(
+      `[${new Date().toISOString()}] taecel/poller-start\n${
+        err && err.stack ? err.stack : String(err)
+      }\n---\n`,
+    );
+  }
+}
 
 // 3f · arranque del bucle de réplica en vivo. Idempotente: si ya corre para
 // esta BD no abre una segunda conexión compitiendo por el mismo cursor. Sólo
@@ -3418,7 +3551,16 @@ ipcMain.handle(
   "close-cash-register",
   async (
     event,
-    { declaredClose, expenses, name, cashierId, role, registerId, force },
+    {
+      declaredClose,
+      expenses,
+      name,
+      cashierId,
+      role,
+      registerId,
+      force,
+      confirmServicePending,
+    },
   ) => {
     try {
       let register;
@@ -3452,6 +3594,19 @@ ipcMain.handle(
         return {
           success: false,
           error: "No hay caja abierta que puedas cerrar hoy",
+        };
+      }
+
+      // Recargas que todavía no se pudieron confirmar con Taecel. No se suman
+      // como venta (aún no existen en `sales`), pero el cierre debe advertirlo.
+      const servicePending = serviceTx.pendingSummary(register.id);
+      if (!confirmServicePending && servicePending.hasPending) {
+        return {
+          success: false,
+          code: "SERVICE_PENDING",
+          error:
+            "Hay recargas pendientes o por verificar. Confirma que quieres cerrar la caja.",
+          pending: servicePending,
         };
       }
 
@@ -3498,7 +3653,12 @@ ipcMain.handle(
       if (deviceRole === ipcScopes.ROLES.HOST) {
         runHostBackup("close").catch(() => {});
       }
-      return { success: true, expectedClose, difference };
+      return {
+        success: true,
+        expectedClose,
+        difference,
+        servicePending,
+      };
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -6264,13 +6424,16 @@ ipcMain.handle("is-scale-connected", async () => {
   return { connected: scaleConnected };
 });
 
-// ─── IMPRESION DE TICKETS (WINDOWS SPOOLER + POS58 DRIVER) ───────
+// ─── IMPRESIÓN DE TICKETS (WINDOWS SPOOLER + DRIVER DE LA IMPRESORA) ─────
+// El motor vive en ./printing.js (config sanitizada, resolución de impresora,
+// preparación/medición del documento, opciones de Electron, ejecución y
+// diagnóstico). Aquí sólo se cablean las dependencias reales: la BD
+// (settings), las ventanas y el directorio temporal de la app.
 const { BrowserWindow: BW } = require("electron");
-
-// Configuración de impresión SIN nombres hardcodeados: todo se lee de la
-// tabla `settings` (Configuración → Impresora). Si `printer_name` falta o
-// la impresora no existe en el equipo, se cae a la predeterminada de Windows.
-const PAPER_WIDTHS_MM = [48, 58, 80];
+const printing = require("./printing");
+const escpos = require("./escpos");
+const escposRaster = require("./escpos-raster");
+const { PAPER_WIDTHS_MM, resolvePrinterTarget } = printing;
 
 function readSettingValue(key, fallback = null) {
   try {
@@ -6282,17 +6445,16 @@ function readSettingValue(key, fallback = null) {
 }
 
 function getPrinterConfig() {
-  const rawName = readSettingValue("printer_name", "");
-  const printerName =
-    typeof rawName === "string" &&
-    rawName.trim().length > 0 &&
-    rawName.trim().length <= 128
-      ? rawName.trim()
-      : "";
+  const printerName = printing.sanitizePrinterName(
+    readSettingValue("printer_name", ""),
+  );
   const width = Number(readSettingValue("paper_width_mm", "58"));
   return {
     printerName,
     paperWidthMm: PAPER_WIDTHS_MM.includes(width) ? width : 58,
+    printMode: escposRaster.normalizePrintMode(readSettingValue("print_mode", "auto")),
+    dotsWidth: readSettingValue("escpos_dots_width", ""),
+    escposCut: readSettingValue("escpos_cut", "true") !== "false",
   };
 }
 
@@ -6303,21 +6465,21 @@ async function listSystemPrinters() {
   return (await win?.webContents.getPrintersAsync?.()) ?? [];
 }
 
-// Resolución de la impresora destino: nombre configurado → predeterminada
-// del sistema → primera disponible. `fellBack` avisa que se desvió de lo
-// configurado para que el renderer pueda mostrar el aviso al usuario.
-function resolvePrinterTarget(printers, configuredName) {
-  if (configuredName) {
-    const exact = printers.find((p) => p.name === configuredName);
-    if (exact) return { name: exact.name, fellBack: false };
-    console.warn(
-      `[PRINT] «${configuredName}» no está disponible; se usa la predeterminada.`,
-    );
-  }
-  const fallback = printers.find((p) => p.isDefault) || printers[0];
-  if (!fallback) return { name: null, fellBack: false };
-  return { name: fallback.name, fellBack: Boolean(configuredName) };
-}
+// Worker RAW persistente (winspool): ticket ESC/POS, prueba ESC/POS y cajón.
+const rawPrinter = escpos.createRawPrinterWorker({
+  getTempPath: () => app.getPath("temp"),
+  log: (...args) => console.error(...args),
+});
+
+const printEngine = printing.createPrintEngine({
+  getPrinterConfig,
+  listSystemPrinters,
+  createPrintWindow: (options) => new BW(options),
+  getTempPath: () => app.getPath("temp"),
+  sendRaw: (printerName, payload, options) =>
+    rawPrinter.send(printerName, payload, options),
+  nativeImage,
+});
 
 ipcMain.handle("get-printers", async () => {
   try {
@@ -6328,6 +6490,8 @@ ipcMain.handle("get-printers", async () => {
       description: p.description || "",
       status: p.status ?? 0,
       isDefault: !!p.isDefault,
+      // Lo que elegiría el modo "Automático" para esta impresora.
+      autoMode: escposRaster.resolveEffectiveMode("auto", p).mode,
     }));
   } catch (error) {
     console.error("[PRINTERS] Error al listar impresoras:", error.message);
@@ -6335,287 +6499,19 @@ ipcMain.handle("get-printers", async () => {
   }
 });
 
-// 203 dpi (8 dots/mm) es la densidad de la térmica POS de 58 mm. Forzar el
-// raster evita que Chromium renderice a ~96 dpi y el driver lo escale.
-const RECEIPT_DPI = 203;
+ipcMain.handle("print-receipt", async (event, htmlContent, overrides) =>
+  printEngine.printReceipt(htmlContent, overrides),
+);
 
-ipcMain.handle("print-receipt", async (event, htmlContent, overrides) => {
-  let printWin = null;
-  try {
-    const config = getPrinterConfig();
-    // `overrides` solo lo usa "Imprimir prueba" de Configuración para
-    // reflejar ajustes aún no guardados; ambos campos se sanitizan aquí.
-    const ovPrinter =
-      typeof overrides?.printerName === "string" &&
-      overrides.printerName.trim().length <= 128
-        ? overrides.printerName.trim()
-        : null;
-    const ovWidth = Number(overrides?.paperWidthMm);
-    const printerName = ovPrinter !== null ? ovPrinter : config.printerName;
-    const paperWidthMm = PAPER_WIDTHS_MM.includes(ovWidth)
-      ? ovWidth
-      : config.paperWidthMm;
+// Prueba ESC/POS en crudo (diagnóstico de dialecto de la impresora):
+// mismos datos de impresora/papel que print-receipt, pero en datatype RAW.
+ipcMain.handle("print-escpos-test", async (event, overrides) =>
+  printEngine.printEscPosTest(overrides),
+);
 
-    const printers = await listSystemPrinters();
-    const target = resolvePrinterTarget(printers, printerName);
-    if (!target.name) {
-      return {
-        success: false,
-        code: "NO_PRINTER",
-        error: "No se detectaron impresoras en este equipo.",
-      };
-    }
-    console.log(
-      "[PRINT] Impresoras detectadas:",
-      printers.map((p) => p.name),
-      "→ destino:",
-      target.name,
-    );
-
-    printWin = new BW({
-      show: false,
-      width: 220,
-      height: 700,
-      backgroundColor: "#ffffff",
-      webPreferences: {
-        sandbox: true,
-      },
-    });
-
-    await printWin.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    const printPromise = new Promise((resolve, reject) => {
-      printWin.webContents.print(
-        {
-          silent: true,
-          printBackground: true,
-          color: false,
-          deviceName: target.name,
-          margins: { marginType: "none" },
-          pageSize: { width: paperWidthMm * 1000, height: 200000 },
-          dpi: { horizontal: RECEIPT_DPI, vertical: RECEIPT_DPI },
-          scaleFactor: 1,
-        },
-        (success, errorType) => {
-          if (success) resolve(true);
-          else
-            reject(
-              new Error(
-                errorType || "No se pudo enviar el trabajo de impresión",
-              ),
-            );
-        },
-      );
-    });
-
-    // Timeout de seguridad: si el callback nunca regresa, no te quedes colgado
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(
-        () =>
-          reject(new Error("TIMEOUT: el callback de print nunca respondió")),
-        8000,
-      ),
-    );
-
-    const printed = await Promise.race([printPromise, timeoutPromise]);
-
-    if (!printed) {
-      throw new Error("La impresión no fue aceptada por el spooler");
-    }
-
-    console.log("[PRINT] Completado OK");
-    return {
-      success: true,
-      printer: target.name,
-      fellBack: target.fellBack,
-    };
-  } catch (error) {
-    console.error("[PRINT ERROR]", error.message);
-    return { success: false, code: "PRINT_ERROR", error: error.message };
-  } finally {
-    if (printWin && !printWin.isDestroyed()) {
-      printWin.destroy();
-    }
-  }
-});
-
-// ─── APERTURA DE CAJON (CASH DRAWER) — worker persistente ─────
-// Se mantiene un solo powershell.exe vivo que compila el Add-Type una vez
-// y queda escuchando por stdin: "OPEN <impresora>" -> abre el cajón. El
-// nombre de la impresora viaja en cada comando, así el worker sigue siendo
-// válido aunque cambie la selección en Configuración → Impresora.
-let drawerWorker = null;
-let drawerWorkerWaiters = [];
-let drawerWorkerReadyHandlers = [];
-let drawerChain = Promise.resolve();
-
-const drawerScriptPath = () =>
-  path.join(app.getPath("temp"), "pos-drawer-worker.ps1");
-
-function spawnDrawerWorker() {
-  const psCode = `
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class Drawer {
-    [DllImport("winspool.drv")]
-    public static extern bool OpenPrinter(string p, out IntPtr h, IntPtr d);
-    [DllImport("winspool.drv")]
-    public static extern bool ClosePrinter(IntPtr h);
-    [DllImport("winspool.drv")]
-    public static extern bool StartDocPrinter(IntPtr h, int l, ref DOCINFO d);
-    [DllImport("winspool.drv")]
-    public static extern bool EndDocPrinter(IntPtr h);
-    [DllImport("winspool.drv")]
-    public static extern bool StartPagePrinter(IntPtr h);
-    [DllImport("winspool.drv")]
-    public static extern bool EndPagePrinter(IntPtr h);
-    [DllImport("winspool.drv")]
-    public static extern bool WritePrinter(IntPtr h, IntPtr b, int c, out int w);
-    public struct DOCINFO { public string pDocName; public string pOutputFile; public string pDataType; }
-    public static void Open(string printerName) {
-        IntPtr hPrinter;
-        if(!OpenPrinter(printerName, out hPrinter, IntPtr.Zero)) throw new Exception("No se pudo abrir impresora");
-        try {
-            var di = new DOCINFO { pDocName = "Drawer", pDataType = "RAW" };
-            StartDocPrinter(hPrinter, 1, ref di);
-            StartPagePrinter(hPrinter);
-            byte[] b = new byte[] {0x1B,0x70,0x00,0x32,0x00};
-            IntPtr p = Marshal.AllocHGlobal(b.Length);
-            try {
-                Marshal.Copy(b, 0, p, b.Length);
-                int written;
-                WritePrinter(hPrinter, p, b.Length, out written);
-            } finally {
-                Marshal.FreeHGlobal(p);
-            }
-            EndPagePrinter(hPrinter);
-            EndDocPrinter(hPrinter);
-        } finally {
-            ClosePrinter(hPrinter);
-        }
-    }
-}
-"@
-[Console]::Out.WriteLine("READY")
-[Console]::Out.Flush()
-while ($true) {
-    $line = [Console]::In.ReadLine()
-    if ($null -eq $line) { break }
-    if ($line.StartsWith("OPEN")) {
-        $pname = $line.Substring(4).Trim()
-        try {
-            [Drawer]::Open($pname)
-            [Console]::Out.WriteLine("OK")
-        } catch {
-            [Console]::Out.WriteLine("ERR " + $_.Exception.Message)
-        }
-        [Console]::Out.Flush()
-    }
-}
-`;
-  try {
-    fs.writeFileSync(drawerScriptPath(), psCode, "utf8");
-  } catch (e) {
-    console.error("[DRAWER] No se pudo escribir el script:", e.message);
-  }
-
-  drawerWorker = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", drawerScriptPath()],
-    { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
-  );
-
-  let buffer = "";
-  drawerWorker.stdout.on("data", (chunk) => {
-    buffer += chunk.toString("utf8");
-    let idx;
-    while ((idx = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, idx).replace(/\r$/, "").trim();
-      buffer = buffer.slice(idx + 1);
-      if (line === "READY") {
-        const handlers = drawerWorkerReadyHandlers.splice(0);
-        handlers.forEach((h) => h());
-      } else if (drawerWorkerWaiters.length > 0) {
-        const waiter = drawerWorkerWaiters.shift();
-        if (line === "OK") waiter({ success: true });
-        else if (line.startsWith("ERR "))
-          waiter({ success: false, error: line.slice(4) });
-        else waiter({ success: false, error: "Respuesta inesperada: " + line });
-      }
-    }
-  });
-
-  drawerWorker.stderr.on("data", (d) => {
-    console.error("[DRAWER stderr]", d.toString().trim());
-  });
-
-  const failAll = (error) => {
-    const waiters = drawerWorkerWaiters.splice(0);
-    waiters.forEach((w) => w({ success: false, error }));
-  };
-
-  drawerWorker.on("error", (e) => {
-    console.error("[DRAWER ERROR]", e.message);
-    failAll(e.message);
-    drawerWorker = null;
-  });
-
-  drawerWorker.on("exit", () => {
-    failAll("El proceso del cajón terminó inesperadamente");
-    drawerWorker = null;
-  });
-}
-
-function ensureDrawerWorker() {
-  return new Promise((resolve) => {
-    if (
-      drawerWorker &&
-      drawerWorker.exitCode === null &&
-      !drawerWorker.killed
-    ) {
-      resolve();
-      return;
-    }
-    let settled = false;
-    const done = () => {
-      if (!settled) {
-        settled = true;
-        resolve();
-      }
-    };
-    const timeout = setTimeout(done, 15000);
-    drawerWorkerReadyHandlers.push(() => {
-      clearTimeout(timeout);
-      done();
-    });
-    spawnDrawerWorker();
-  });
-}
-
-function destroyDrawerWorker() {
-  const proc = drawerWorker;
-  drawerWorker = null;
-  if (proc) {
-    try {
-      proc.stdin.end();
-    } catch {}
-    try {
-      proc.kill();
-    } catch {}
-  }
-  const waiters = drawerWorkerWaiters.splice(0);
-  waiters.forEach((w) =>
-    w({ success: false, error: "Cajón detenido al cerrar la app" }),
-  );
-  try {
-    fs.unlinkSync(drawerScriptPath());
-  } catch {}
-}
-
+// ─── APERTURA DE CAJON (CASH DRAWER) ─────
+// Pulso ESC p por el mismo worker RAW persistente que imprime los tickets
+// (compila el Add-Type una vez; los trabajos van en serie).
 ipcMain.handle("open-cash-drawer", async () => {
   // Misma resolución que print-receipt: configurada → predeterminada del
   // sistema → primera disponible. El nombre viaja al worker por stdin.
@@ -6632,39 +6528,11 @@ ipcMain.handle("open-cash-drawer", async () => {
       error: "No se detectaron impresoras en este equipo",
     };
   }
-  const task = drawerChain.then(
-    () =>
-      new Promise((resolve) => {
-        ensureDrawerWorker().then(() => {
-          const proc = drawerWorker;
-          if (!proc || proc.killed || proc.exitCode !== null) {
-            resolve({
-              success: false,
-              error: "No se pudo iniciar el proceso del cajón",
-            });
-            return;
-          }
-          const timeout = setTimeout(
-            () =>
-              resolve({ success: false, error: "Timeout abriendo el cajón" }),
-            8000,
-          );
-          drawerWorkerWaiters.push((result) => {
-            clearTimeout(timeout);
-            resolve(result);
-          });
-          try {
-            proc.stdin.write(`OPEN ${target.name}\n`);
-          } catch (e) {
-            clearTimeout(timeout);
-            resolve({ success: false, error: e.message });
-          }
-        });
-      }),
-  );
-  drawerChain = task.catch(() => ({
-    success: false,
-    error: "Error abriendo el cajón",
-  }));
-  return drawerChain;
+  const result = await rawPrinter.send(target.name, escpos.CASH_DRAWER_PULSE, {
+    docName: "Vendia cajon",
+    timeoutMs: 8000,
+  });
+  return result.ok
+    ? { success: true }
+    : { success: false, error: result.error || "Error abriendo el cajón" };
 });

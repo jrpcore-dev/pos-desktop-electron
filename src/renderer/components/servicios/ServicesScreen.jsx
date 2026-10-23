@@ -11,7 +11,7 @@ import {
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useToast } from "@/components/ToastProvider";
-import { mockExecute, MOCK_TRANSACTIONS } from "./serviceCatalog.mock";
+import { toUiOperators, toUiTransaction } from "./taecelCatalog";
 import { money } from "./serviceMoney";
 import PageHeader from "../PageHeader";
 import ServiceCheckout from "./ServiceCheckout";
@@ -20,10 +20,12 @@ import ServiceProviderDialog from "./ServiceProviderDialog";
 
 // Pantalla de Servicios: cobro e historial en la misma ruta.
 // Este archivo es el único dueño del estado compartido entre las dos pestañas.
+// Todo pasa por el Host (`taecel:*`): en una caja viajan por RPC.
 const ServicesScreen = () => {
   const notify = useToast();
   const [tab, setTab] = useState("cobrar");
-  const [transactions, setTransactions] = useState(MOCK_TRANSACTIONS);
+  const [transactions, setTransactions] = useState([]);
+  const [operators, setOperators] = useState([]);
   const [busyFolio, setBusyFolio] = useState(null);
   const [provider, setProvider] = useState({ state: "loading" });
   const [checking, setChecking] = useState(false);
@@ -37,7 +39,18 @@ const ServicesScreen = () => {
     };
   }, []);
 
-  const checkProvider = useCallback(async () => {
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await window.api.invoke("taecel:history", { limit: 100 });
+      if (mounted.current && res?.ok) {
+        setTransactions((res.transactions || []).map(toUiTransaction));
+      }
+    } catch (e) {
+      // El historial se vuelve a pedir en la siguiente consulta.
+    }
+  }, []);
+
+  const checkProvider = useCallback(async (force = false) => {
     setChecking(true);
     try {
       const api = window.api;
@@ -45,18 +58,24 @@ const ServicesScreen = () => {
         if (mounted.current) setProvider({ state: "local", error: "sin puente IPC" });
         return;
       }
-      const res = await api.invoke("vendesaldo:get-balance");
+      const [res, catalog] = await Promise.all([
+        api.invoke("taecel:get-balance", { force }),
+        api.invoke("taecel:get-catalog", { force: false }),
+      ]);
       if (!mounted.current) return;
-      if (res?.ok) {
+      if (catalog?.ok) setOperators(toUiOperators(catalog));
+      if (res?.ok && catalog?.ok) {
         setProvider({
           state: "live",
-          recargas: res.recargas,
-          servicios: res.servicios,
+          airtimeCents: res.airtimeCents,
+          servicesCents: res.servicesCents,
         });
       } else {
+        const failed = !res?.ok ? res : catalog;
         setProvider({
           state: "local",
-          error: res?.error || "sin conexión con el proveedor",
+          notConfigured: failed?.code === "TAECEL_NOT_CONFIGURED",
+          error: failed?.error || "sin conexión con Taecel",
         });
       }
     } catch (e) {
@@ -70,19 +89,19 @@ const ServicesScreen = () => {
 
   useEffect(() => {
     checkProvider();
+    loadHistory();
     const t = setInterval(checkProvider, 6 * 60 * 1000);
     return () => clearInterval(t);
-  }, [checkProvider]);
+  }, [checkProvider, loadHistory]);
 
   const upsert = useCallback((tx) => {
     if (!tx) return;
     setTransactions((rows) => {
-      const i = rows.findIndex((r) => r.folio === tx.folio);
+      const i = rows.findIndex(
+        (r) => r.clientRequestId && r.clientRequestId === tx.clientRequestId,
+      );
       if (i === -1) {
-        return [
-          { ...tx, id: Date.now(), createdAt: new Date().toISOString() },
-          ...rows,
-        ];
+        return [{ ...tx, createdAt: tx.createdAt || new Date().toISOString() }, ...rows];
       }
       const next = [...rows];
       next[i] = { ...next[i], ...tx };
@@ -90,23 +109,32 @@ const ServicesScreen = () => {
     });
   }, []);
 
+  // "Reintentar" en el historial consulta a Taecel por la MISMA operación.
   const handleRetry = useCallback(
     async (tx) => {
       setBusyFolio(tx.folio);
-      const res = await mockExecute({ folio: tx.folio });
-      upsert({
-        ...tx,
-        status: res.status,
-        providerRef: res.providerRef || tx.providerRef,
-        message: res.message,
-      });
-      setBusyFolio(null);
-      notify(
-        res.status === "applied"
-          ? `Folio ${tx.folio} confirmado`
-          : `Folio ${tx.folio} sigue sin aplicarse`,
-        res.status === "applied" ? "success" : "error",
-      );
+      try {
+        const res = await window.api.invoke("taecel:transaction-status", {
+          transactionId: tx.transactionId,
+          clientRequestId: tx.clientRequestId,
+        });
+        if (res?.ok && res.transaction) {
+          const next = toUiTransaction(res.transaction);
+          upsert(next);
+          notify(
+            next.status === "applied"
+              ? `Folio ${next.folio} confirmado`
+              : `Folio ${next.folio}: ${next.status === "failed" ? "rechazado" : "sigue sin confirmar"}`,
+            next.status === "applied" ? "success" : "error",
+          );
+        } else {
+          notify(res?.error || "No se pudo consultar el estado", "error");
+        }
+      } catch (e) {
+        notify(e?.message || "No se pudo consultar el estado", "error");
+      } finally {
+        if (mounted.current) setBusyFolio(null);
+      }
     },
     [upsert, notify],
   );
@@ -133,25 +161,27 @@ const ServicesScreen = () => {
               ) : (
                 <WifiOff size={13} className="text-warning" aria-hidden />
               )}
-              Vendesaldo
+              Taecel
             </span>
             <span aria-hidden className="h-3 w-px bg-border" />
             <span className="tabular-nums">
               {provider.state === "loading" && "Consultando saldo…"}
               {provider.state === "live" && (
                 <>
-                  Saldo recargas{" "}
+                  Saldo tiempo aire{" "}
                   <b className="font-semibold text-foreground">
-                    {money(parseFloat(provider.recargas || 0) * 100)}
+                    {money(provider.airtimeCents || 0)}
                   </b>{" "}
                   · servicios{" "}
                   <b className="font-semibold text-foreground">
-                    {money(parseFloat(provider.servicios || 0) * 100)}
+                    {money(provider.servicesCents || 0)}
                   </b>
                 </>
               )}
               {provider.state === "local" &&
-                `Catálogo local${provider.error ? ` · ${provider.error}` : ""}`}
+                (provider.notConfigured
+                  ? "Sin configurar · captura la Key y el NIP en «Proveedor»"
+                  : `Sin conexión${provider.error ? ` · ${provider.error}` : ""}`)}
             </span>
           </span>
         }
@@ -162,7 +192,7 @@ const ServicesScreen = () => {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={checkProvider}
+                onClick={() => checkProvider(true)}
                 disabled={checking}
                 className="gap-1.5"
               >
@@ -188,7 +218,13 @@ const ServicesScreen = () => {
         }
       />
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          setTab(next);
+          if (next === "historial") loadHistory();
+        }}
+      >
         <TabsList className="h-9 w-fit">
           <TabsTrigger value="cobrar" className="h-8 gap-1.5 px-3 text-sm">
             <Zap size={14} aria-hidden />
@@ -202,6 +238,7 @@ const ServicesScreen = () => {
 
         <TabsContent value="cobrar" className="mt-3">
           <ServiceCheckout
+            operators={operators}
             onTransaction={upsert}
             providerLive={provider.state === "live"}
           />
@@ -219,7 +256,7 @@ const ServicesScreen = () => {
       <ServiceProviderDialog
         open={configOpen}
         onOpenChange={setConfigOpen}
-        onSaved={checkProvider}
+        onSaved={() => checkProvider(true)}
       />
     </div>
   );

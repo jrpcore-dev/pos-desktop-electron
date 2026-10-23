@@ -21,6 +21,18 @@ const ipcRegistry = require("./ipc-registry");
 const TIMEOUT_MS = 8000;
 const OFFLINE_PIN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// Taecel puede tardar más que una lectura normal: el catálogo baja 700+
+// productos y RequestTXN espera al operador. La caja debe esperar lo mismo que
+// el Host, o cortaría una recarga que el Host sí alcanzó a enviar.
+const RPC_TIMEOUTS = {
+  "taecel:get-balance": 20000,
+  "taecel:transaction-status": 20000,
+  "taecel:get-catalog": 40000,
+  "taecel:refresh-catalog": 40000,
+  "taecel:recharge": 40000,
+  "taecel:reconcile": 40000,
+};
+
 // Claves de `save-setting` que el negocio comparte entre cajas (van al Host).
 const BUSINESS_SETTING_KEYS = new Set(dbSchema.REPLICATED_SETTINGS_KEYS);
 
@@ -83,7 +95,14 @@ const clearAttempt = (db) => {
   } catch (err) {}
 };
 
-const postJson = async (db, creds, path, body, extraHeaders = {}) => {
+const postJson = async (
+  db,
+  creds,
+  path,
+  body,
+  extraHeaders = {},
+  timeoutMs = TIMEOUT_MS,
+) => {
   const pendingCount = safe(() => offlineQueue.summary(db).count, 0);
   const headers = {
     "content-type": "application/json",
@@ -98,7 +117,7 @@ const postJson = async (db, creds, path, body, extraHeaders = {}) => {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   let data = null;
   try {
@@ -415,12 +434,19 @@ const forward = (db, channel, args = []) => {
 };
 
 // POST /api/rpc · los canales de la lista blanca del Host (rpc-channels.js).
-const rpcCall = async (db, channel, args = []) => {
+const rpcCall = async (db, channel, args = [], timeoutMs = null) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
   let res;
   try {
-    res = await postJson(db, creds, "/api/rpc", { channel, args });
+    res = await postJson(
+      db,
+      creds,
+      "/api/rpc",
+      { channel, args },
+      {},
+      timeoutMs || RPC_TIMEOUTS[channel] || TIMEOUT_MS,
+    );
   } catch (err) {
     return unreachable(err);
   }

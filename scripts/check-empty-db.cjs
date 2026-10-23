@@ -106,6 +106,7 @@ check(
       "price_at_sale",
       "discount_percent",
       "stock_deducted",
+      "service_transaction_id",
       "status",
       "cancelled_at",
       "cancelled_by",

@@ -157,27 +157,12 @@ const cashRegisterRow = (db, id) =>
   // Lo que la 3f.i dejó (ya dentro de HEAD, sólo para que conste): las 8
   // tablas de entidad con `updated_at`, la tumba-sigilo `replica_tombstones`,
   // los 28 triggers reescritos y los 8 `*_touch` nuevos (45 altas / 36 bajas).
-  // Bloques 4/5/6 · delta de esquema de esta línea (folio, cola offline,
-  // conflictos de stock). HEAD todavía no los tiene, así que se declaran aquí.
-  const DDL_AGREGADO = [
-    /CREATE TABLE[^;]*\bproducts\s*\(/,
-    /CREATE TABLE[^;]*\bsales\s*\(/,
-    /CREATE TABLE[^;]*\bsale_items\s*\(/,
-    /CREATE TABLE[^;]*\bfolio_counters\b/,
-    /CREATE TABLE[^;]*\bpending_sales\b/,
-    /CREATE TABLE[^;]*\bstock_conflict_resolutions\b/,
-    /CREATE UNIQUE INDEX[^;]*\bidx_sales_folio\b/,
-    /CREATE INDEX[^;]*\bidx_sales_device\b/,
-    /CREATE UNIQUE INDEX[^;]*\bidx_pending_sales_folio\b/,
-    /CREATE INDEX[^;]*\bidx_pending_sales_status\b/,
-    /CREATE TRIGGER[^;]*\btrg_change_log_cashiers_update\b/,
-  ];
-  const DDL_BORRADO = [
-    /CREATE TABLE[^;]*\bproducts\s*\(/,
-    /CREATE TABLE[^;]*\bsales\s*\(/,
-    /CREATE TABLE[^;]*\bsale_items\s*\(/,
-    /CREATE TRIGGER[^;]*\btrg_change_log_cashiers_update\b/,
-  ];
+  // Bloques 4/5/6 (folio, cola offline, conflictos) y Taecel
+  // (`service_transactions`, `sale_items.service_transaction_id`) ya están en
+  // HEAD: no queda delta sin commitear. Si una entrega nueva toca el esquema,
+  // declara aquí sus statements.
+  const DDL_AGREGADO = [];
+  const DDL_BORRADO = [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -258,6 +243,19 @@ const cashRegisterRow = (db, id) =>
     // APARATO hizo cada venta, y por tanto para filtrar por caja las ventas
     // sin registro y para que una caja no cancele la venta de otra.
     const ESPERADO_3G = colDe(before.cols.sales, "device_id") ? [] : ["+ sales.device_id|TEXT|nn=0|dflt=null"];
+    // Taecel · ledger de recargas y enlace desde la línea de venta. Si la
+    // app ya corrió con Taecel en esta máquina, el delta es 0.
+    const ESPERADO_TAECEL = [
+      ...(Array.isArray(before.cols.service_transactions)
+        ? []
+        : [
+            "+ tabla nueva service_transactions",
+            ...(after.cols.service_transactions || []).map((c) => `+ service_transactions.${c}`),
+          ]),
+      ...(colDe(before.cols.sale_items, "service_transaction_id")
+        ? []
+        : ["+ sale_items.service_transaction_id|INTEGER|nn=0|dflt=null"]),
+    ];
     const ESPERADO_3D = (yaTieneLog
       ? []
       : [
@@ -297,11 +295,13 @@ const cashRegisterRow = (db, id) =>
     // La BD real puede venir ya migrada de 3a.i+3b, pero change_log es nuevo
     // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
     // falta migrar) más el de 3d más el de 3g.
-    const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B).concat(ESPERADO_3G).sort();
+    const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B)
+      .concat(ESPERADO_3G, ESPERADO_TAECEL)
+      .sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
       yaMigrada
-        ? "la BD real ganó SOLO change_log (3d) + sales.device_id (3g/C)"
+        ? "la BD real ganó SOLO change_log (3d) + sales.device_id (3g/C) + Taecel"
         : "el esquema SOLO gana device_id + box_sessions + change_log + sales.device_id",
       JSON.stringify(colDiff),
     );
@@ -311,6 +311,10 @@ const cashRegisterRow = (db, id) =>
       ...(yaMigrada ? [] : ["cash_register.idx_cash_register_device"]),
       ...(yaTieneLog ? [] : ["change_log.idx_change_log_tbl_row"]),
       "sales.idx_sales_device_id",
+      // Taecel: índices del ledger y del enlace desde sale_items.
+      ...after.indexes.filter(
+        (i) => i.startsWith("service_transactions.") || i === "sale_items.idx_sale_items_service_tx",
+      ),
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

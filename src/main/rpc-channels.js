@@ -26,7 +26,7 @@
 //   FUERA de la lista, y por tanto rechazadas en la caja, queda sólo la
 //   ADMINISTRACIÓN de la instalación: activación, dispositivos emparejados,
 //   restauración de respaldos, importación masiva del catálogo y las
-//   credenciales de vendesaldo. Eso se hace en el Host.
+//   credenciales de Taecel. Eso se hace en el Host.
 //
 // Nota sobre `get-outside-register-sales` y `cancel-sale`: son los dos casos
 // en los que "la venta" puede no tener caja asignada (`register_id IS NULL`).
@@ -114,8 +114,15 @@ const RPC_CHANNELS = new Set([
   "touch-customer",
   // ── ajustes de negocio (los del propio aparato se quedan locales) ─────────
   "save-setting",
-  // ── saldo de clientes: la integración vive en el Host ─────────────────────
-  "vendesaldo:recharge",
+  // ── recargas / paquetes: la integración con Taecel vive en el Host ────────
+  "taecel:status",
+  "taecel:get-balance",
+  "taecel:get-catalog",
+  "taecel:refresh-catalog",
+  "taecel:recharge",
+  "taecel:transaction-status",
+  "taecel:history",
+  "taecel:reconcile",
 ]);
 
 const has = (channel) => RPC_CHANNELS.has(channel);

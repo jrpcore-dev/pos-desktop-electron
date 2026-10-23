@@ -2,13 +2,14 @@ import { Check, Search, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { cn } from "@/lib/utils";
-import { CAT_TABS, filterOperators } from "./serviceCatalog.mock";
+import { CAT_TABS, filterOperators } from "./taecelCatalog";
 import { OperatorIcon } from "./OperatorIcon";
 
 // Rejilla de operadores: cada tile sale del catálogo (logo + nombre). Si el
 // operador no trae SVG, `OperatorIcon` pinta un bloque de marca con su color
 // para que la rejilla se vea uniforme y nunca quede sin logos.
 const ServiceCatalog = ({
+  operators,
   category,
   onCategoryChange,
   operatorKey,
@@ -17,7 +18,7 @@ const ServiceCatalog = ({
   onQueryChange,
   disabled,
 }) => {
-  const list = filterOperators(category, query);
+  const list = filterOperators(operators, category, query);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5">

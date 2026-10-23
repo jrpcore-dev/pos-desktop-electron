@@ -135,6 +135,16 @@ export const invoke = [
   "set-tier-price",
   "start-weight-stream",
   "stop-weight-stream",
+  "taecel:get-balance",
+  "taecel:get-catalog",
+  "taecel:history",
+  "taecel:recharge",
+  "taecel:reconcile",
+  "taecel:refresh-catalog",
+  "taecel:set-credentials",
+  "taecel:status",
+  "taecel:test-credentials",
+  "taecel:transaction-status",
   "touch-customer",
   "update-cashier",
   "update-catalog-name",
@@ -146,11 +156,6 @@ export const invoke = [
   "update:download",
   "update:get-state",
   "update:install",
-  "vendesaldo:get-balance",
-  "vendesaldo:get-catalog",
-  "vendesaldo:recharge",
-  "vendesaldo:set-credentials",
-  "vendesaldo:status",
   "verify-cashier-pin"
 ];
 

@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { CircleCheck, Loader2, Printer, RefreshCw } from "lucide-react";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -9,16 +8,11 @@ import { OperatorIcon } from "./OperatorIcon";
 
 // Panel de resultado. Reemplaza el resumen mientras la transacción vive.
 // `unknown` se explica en pantalla: el cliente ya pagó y no sabemos si el
-// operador aplicó la recarga. Se reintenta con el MISMO folio para no cobrar dos veces.
-const ServiceResult = ({ tx, onRetry, onDone, onReconcile, onPrint, busy }) => {
+// operador aplicó la recarga. El checkout consulta el estado solo (misma
+// operación, nunca un cobro nuevo); "Reintentar" fuerza esa consulta.
+const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy }) => {
   const status = getStatus(tx.status);
   const needsInput = tx.operatorKey && tx.inputValue;
-
-  useEffect(() => {
-    if (tx.status !== "unknown") return undefined;
-    const t = setTimeout(() => onReconcile?.(tx.folio), 2500);
-    return () => clearTimeout(t);
-  }, [tx.status, tx.folio, onReconcile]);
 
   return (
     <div
@@ -126,7 +120,9 @@ const ServiceResult = ({ tx, onRetry, onDone, onReconcile, onPrint, busy }) => {
           </div>
         )}
 
-        {(tx.status === "failed" || tx.status === "reversed") && (
+        {(tx.status === "failed" ||
+          tx.status === "reversed" ||
+          tx.status === "needs_review") && (
           <Button variant="outline" onClick={onDone} className="h-11 w-full text-sm">
             Volver
           </Button>
@@ -143,6 +139,7 @@ const title = (status) =>
     failed: "No se pudo aplicar",
     unknown: "Estamos verificando",
     reversed: "Recarga revertida",
+    needs_review: "Aplicada, por revisar",
   })[status] || "Procesando…";
 
 const subtitle = (status) =>
@@ -152,6 +149,7 @@ const subtitle = (status) =>
     failed: "No se le cobró nada al cliente",
     unknown: "El pago sí entró, falta la confirmación",
     reversed: "El operador devolvió el importe",
+    needs_review: "La venta no quedó registrada en caja",
   })[status] || "";
 
 export default ServiceResult;

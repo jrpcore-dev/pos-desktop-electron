@@ -24,12 +24,13 @@ export const normalizePaperWidth = (value) => {
 export const receiptContentMm = (paperWidthMm) =>
   Math.max(normalizePaperWidth(paperWidthMm) - 10, 20);
 
-// CSS del documento: `@page` debe coincidir con el ancho real del rollo.
+// El ancho del contenido sigue el rollo elegido. El tamaño físico de página
+// lo aporta el controlador de la impresora (incluido el alto continuo).
 export function receiptDocCss(paperWidthMm) {
   const width = normalizePaperWidth(paperWidthMm);
   const content = receiptContentMm(width);
   return `
-      @page{size:${width}mm auto;margin:0}
+      @page{margin:0}
       *{box-sizing:border-box}
       body{font-family:'Courier New',monospace;font-size:11px;margin:0 auto;padding:2px 2px;width:${content}mm;max-width:${content}mm;background:white;color:black;overflow-wrap:break-word}
       .sep{border-top:1px dashed #333;margin:5px 0}`;

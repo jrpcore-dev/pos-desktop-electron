@@ -158,6 +158,11 @@ const createSaleTx = (
     registerId,
     syncedAt,
     clientCreatedAt,
+    // Recarga Taecel (sólo service-transactions): la venta usa la serie del
+    // Host (`null` → "H") para no gastar folios de la serie local de la caja,
+    // y su línea puede enlazarse con el ledger del proveedor.
+    folioDeviceId,
+    allowServiceLink,
   },
 ) => {
   if (!Array.isArray(cart) || cart.length === 0) {
@@ -206,7 +211,7 @@ const createSaleTx = (
   }
   const folioFinal = folio
     ? acceptFolio(db, deviceId, folio)
-    : nextFolio(db, deviceId);
+    : nextFolio(db, folioDeviceId !== undefined ? folioDeviceId : deviceId);
 
   const saleStmt = db.prepare(
     // 3g/C · `device_id` deja constancia de qué aparato hizo la venta: sin él,
@@ -228,7 +233,7 @@ const createSaleTx = (
   const saleId = saleInfo.lastInsertRowid;
 
   const itemStmt = db.prepare(
-    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted, service_transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
   // `day_sold` mantiene el contador "vendido hoy" de la línea base compartida:
   // se escribe junto al stock, así que la fila cambia igual que antes y viaja
@@ -268,6 +273,9 @@ const createSaleTx = (
         unitPrice,
         item.discount_percent || 0,
         0,
+        // Recarga Taecel: enlaza la línea de venta con el ledger del proveedor.
+        // Nunca desde el carrito de un cliente: sólo la llamada interna.
+        allowServiceLink ? item.serviceTransactionId || null : null,
       );
       continue;
     }
@@ -323,6 +331,7 @@ const createSaleTx = (
       unitPrice,
       item.discount_percent || 0,
       stockDeducted,
+      null,
     );
 
     if (stockAfter < 0) {

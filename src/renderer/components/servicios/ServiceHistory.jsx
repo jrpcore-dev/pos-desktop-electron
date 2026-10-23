@@ -24,7 +24,7 @@ const FILTERS = [
   { key: "attention", label: "Por atender" },
   { key: "applied", label: "Aplicadas" },
   { key: "failed", label: "Fallidas" },
-  { key: "reversed", label: "Revertidas" },
+  { key: "needs_review", label: "Por revisar" },
 ];
 
 // El filtro "Por atender" junta `failed` y `unknown` porque son los dos únicos
@@ -115,7 +115,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
             </TableHeader>
             <TableBody>
               {filtered.map((t) => {
-                const retryable = NEEDS_ATTENTION.includes(t.status);
+                const retryable = t.status === "unknown" || t.status === "pending";
                 return (
                   <TableRow key={t.folio}>
                     <TableCell className="text-[11px] text-muted-foreground">
@@ -169,8 +169,8 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
                           variant="outline"
                           disabled={busyFolio === t.folio}
                           onClick={() => onRetry?.(t)}
-                          title="Reintentar con el mismo folio"
-                          aria-label={`Reintentar folio ${t.folio}`}
+                          title="Consultar el estado con Taecel"
+                          aria-label={`Consultar estado del folio ${t.folio}`}
                         >
                           {busyFolio === t.folio ? (
                             <Spinner size={13} />
@@ -190,7 +190,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
 
       {filtered.length > 0 && (
         <p className="text-[11px] text-muted-foreground">
-          El reintento reutiliza el folio original para no cobrar dos veces.
+          Consultar el estado pregunta a Taecel por la misma operación; nunca vuelve a cobrar.
         </p>
       )}
     </div>

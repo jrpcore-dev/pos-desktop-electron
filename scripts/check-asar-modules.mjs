@@ -51,7 +51,10 @@ const MODULES = [
   ["src/main/db-schema.js", "db-schema.js"],
   ["src/main/discovery.js", "discovery.js"],
   ["src/main/pins.js", "pins.js"],
-  ["src/main/vendesaldo.js", "vendesaldo.js"],
+  // Recargas Taecel: el Host habla con el proveedor y lleva el ledger.
+  ["src/main/taecel.js", "taecel.js"],
+  ["src/main/taecel-errors.js", "taecel-errors.js"],
+  ["src/main/service-transactions.js", "service-transactions.js"],
   // 3g · la caja habla con el Host por estos cuatro.
   ["src/main/rpc-context.js", "rpc-context.js"],
   ["src/main/ipc-registry.js", "ipc-registry.js"],

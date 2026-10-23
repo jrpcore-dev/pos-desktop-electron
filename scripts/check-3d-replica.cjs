@@ -252,7 +252,9 @@ const dropTriggers = (db) => {
       products: rdb.prepare("SELECT COUNT(*) c FROM products").get().c,
       customers: rdb.prepare("SELECT COUNT(*) c FROM customers").get().c,
       sales: rdb.prepare("SELECT COUNT(*) c FROM sales").get().c,
-      settings: rdb.prepare("SELECT COUNT(*) c FROM settings").get().c,
+      // Taecel borra las credenciales viejas de Vendesaldo (migración a
+      // propósito): no cuentan como datos del negocio.
+      settings: rdb.prepare("SELECT COUNT(*) c FROM settings WHERE key NOT LIKE 'vendesaldo_%'").get().c,
     };
     dbSchema.createTables(rdb);
     activation.ensureSchema(rdb);
@@ -262,7 +264,9 @@ const dropTriggers = (db) => {
       products: rdb.prepare("SELECT COUNT(*) c FROM products").get().c,
       customers: rdb.prepare("SELECT COUNT(*) c FROM customers").get().c,
       sales: rdb.prepare("SELECT COUNT(*) c FROM sales").get().c,
-      settings: rdb.prepare("SELECT COUNT(*) c FROM settings").get().c,
+      // Taecel borra las credenciales viejas de Vendesaldo (migración a
+      // propósito): no cuentan como datos del negocio.
+      settings: rdb.prepare("SELECT COUNT(*) c FROM settings WHERE key NOT LIKE 'vendesaldo_%'").get().c,
     };
     const integrity = rdb.pragma("integrity_check", { simple: true });
     const onlyNewTables = rdb
