@@ -472,17 +472,21 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     return () => unsub();
   }, []);
 
+  // Nombre y logo de la tienda: al montar y cada vez que cambian (en una caja
+  // llegan replicados desde el Host).
+  const loadStoreSettings = useCallback(async () => {
+    try {
+      const name = await window.api.invoke("get-setting", "store_name");
+      const logo = await window.api.invoke("get-setting", "store_logo");
+      if (name) setStoreName(name.toUpperCase());
+      if (logo) setStoreLogo(logo);
+    } catch (error) {
+      console.error("Error loading store settings:", error);
+    }
+  }, []);
+  useDbChanges(loadStoreSettings, ["settings"]);
+
   useEffect(() => {
-    const loadStoreSettings = async () => {
-      try {
-        const name = await window.api.invoke("get-setting", "store_name");
-        const logo = await window.api.invoke("get-setting", "store_logo");
-        if (name) setStoreName(name.toUpperCase());
-        if (logo) setStoreLogo(logo);
-      } catch (error) {
-        console.error("Error loading store settings:", error);
-      }
-    };
     loadStoreSettings();
 
     const checkServer = async () => {
@@ -521,7 +525,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       window.removeEventListener("setupCompleted", handleSetupCompleted);
       window.removeEventListener("storeSettingsUpdated", handleSettingsUpdated);
     };
-  }, []);
+  }, [loadStoreSettings]);
 
   useEffect(() => {
     const timer = setInterval(() => {

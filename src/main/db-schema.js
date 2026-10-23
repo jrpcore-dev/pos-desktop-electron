@@ -903,7 +903,10 @@ const UPDATED_AT_TABLES = REPLICATED_TABLES.filter((t) => t !== "settings");
 // el evento `delete` le sigue quedando de dónde reconciliar.
 const TOMBSTONE_TABLE = "replica_tombstones";
 const REPLICATED_CASHIER_COLUMNS = ["id", "name", "role", "is_active", "pin_hash", "pin_salt"]; // PIN cacheado (solo cajas aprobadas)
-// Subconjunto de `settings` que la caja necesita para vender/mostrar tickets.
+// Subconjunto de `settings` que es del NEGOCIO y se comparte entre cajas:
+// datos de la tienda y reglas de venta. Lo del ticket (imprimir, copias,
+// desglose, notas) es de cada caja, igual que la impresora y el papel: cada
+// una lo configura y se queda local.
 const REPLICATED_SETTINGS_KEYS = [
   "store_name",
   "store_address",
@@ -914,11 +917,6 @@ const REPLICATED_SETTINGS_KEYS = [
   "store_website",
   "owner_name",
   "currency",
-  "print_enabled",
-  "print_two_tickets",
-  "print_tax_breakdown",
-  "print_header_note",
-  "print_footer_note",
   "rounding_enabled",
   "rounding_mode",
   "sale_without_stock",

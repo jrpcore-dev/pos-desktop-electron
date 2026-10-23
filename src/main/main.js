@@ -2988,6 +2988,8 @@ ipcMain.handle("save-setting", async (event, key, value) => {
     db.prepare(
       "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
     ).run(key, value);
+    // Las pantallas abiertas (terminal, encabezado) releen sus ajustes.
+    emitDbChanged(["settings"], {});
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -3259,8 +3261,9 @@ const startLiveReplica = () => {
   replicaLive.startLiveSync({
     db,
     onChanged: emitDbChanged,
-    // Tras un resync entero cambiaron TODAS las tablas: se avisa de todas.
-    onResync: () => emitDbChanged(replicaEngine.SWAP_ORDER, {}),
+    // Tras un resync entero cambiaron TODAS las tablas: se avisa de todas
+    // (incluidos los ajustes, que no están en el orden de swap).
+    onResync: () => emitDbChanged([...replicaEngine.SWAP_ORDER, "settings"], {}),
   });
   return true;
 };

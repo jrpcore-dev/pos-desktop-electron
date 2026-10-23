@@ -392,49 +392,53 @@ const processSaleRef = useRef(null);
     }
   };
 
+  // Ajustes de la tienda, del ticket y del POS. Se releen al montar y cada
+  // vez que cambian (guardados aquí, o replicados desde el Host en una caja).
+  const loadSettings = useCallback(async () => {
+    try {
+      const name = await window.api.invoke("get-setting", "store_name");
+      const website = await window.api.invoke("get-setting", "store_website");
+      const logo = await window.api.invoke("get-setting", "store_logo");
+      const headerNote = await window.api.invoke(
+        "get-setting",
+        "print_header_note"
+      );
+      const footerNote = await window.api.invoke(
+        "get-setting",
+        "print_footer_note"
+      );
+      const roundingEnabled = await window.api.invoke(
+        "get-setting",
+        "rounding_enabled"
+      );
+      const roundingMode = await window.api.invoke(
+        "get-setting",
+        "rounding_mode"
+      );
+      const saleWithoutStock = await window.api.invoke(
+        "get-setting",
+        "sale_without_stock"
+      );
+      if (name)
+        setStoreSettings((prev) => ({ ...prev, name: name.toUpperCase() }));
+      if (website) setStoreSettings((prev) => ({ ...prev, website }));
+      if (logo) setStoreSettings((prev) => ({ ...prev, logo }));
+      setReceiptNotes({
+        header: headerNote || "",
+        footer: footerNote || "",
+      });
+      if (roundingEnabled !== null || roundingMode !== null) {
+        applyRoundingConfig(
+          roundingEnabled === null ? true : roundingEnabled !== "false",
+          roundingMode === null ? "0.50" : roundingMode
+        );
+      }
+      allowSaleWithoutStock = saleWithoutStock === "true";
+    } catch (e) {}
+  }, []);
+  useDbChanges(loadSettings, ["settings"]);
+
   useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const name = await window.api.invoke("get-setting", "store_name");
-        const website = await window.api.invoke("get-setting", "store_website");
-        const logo = await window.api.invoke("get-setting", "store_logo");
-        const headerNote = await window.api.invoke(
-          "get-setting",
-          "print_header_note"
-        );
-        const footerNote = await window.api.invoke(
-          "get-setting",
-          "print_footer_note"
-        );
-        const roundingEnabled = await window.api.invoke(
-          "get-setting",
-          "rounding_enabled"
-        );
-        const roundingMode = await window.api.invoke(
-          "get-setting",
-          "rounding_mode"
-        );
-        const saleWithoutStock = await window.api.invoke(
-          "get-setting",
-          "sale_without_stock"
-        );
-        if (name)
-          setStoreSettings((prev) => ({ ...prev, name: name.toUpperCase() }));
-        if (website) setStoreSettings((prev) => ({ ...prev, website }));
-        if (logo) setStoreSettings((prev) => ({ ...prev, logo }));
-        setReceiptNotes({
-          header: headerNote || "",
-          footer: footerNote || "",
-        });
-        if (roundingEnabled !== null || roundingMode !== null) {
-          applyRoundingConfig(
-            roundingEnabled === null ? true : roundingEnabled !== "false",
-            roundingMode === null ? "0.50" : roundingMode
-          );
-        }
-        allowSaleWithoutStock = saleWithoutStock === "true";
-      } catch (e) {}
-    };
     loadSettings();
 
     const handleSettingsUpdated = (event) => {
@@ -461,7 +465,7 @@ const processSaleRef = useRef(null);
       window.removeEventListener("storeSettingsUpdated", handleSettingsUpdated);
       window.removeEventListener("posSettingsUpdated", handlePosSettingsUpdated);
     };
-  }, []);
+  }, [loadSettings]);
 
   useEffect(() => {
     cartRef.current = cart;
