@@ -166,7 +166,10 @@ const startServer = async (
 
   // Purga de claves de idempotencia viejas (> 7 días) y sesiones vencidas.
   try {
-    db.prepare("DELETE FROM idempotency_keys WHERE created_at < datetime('now', '-7 days')").run();
+    // Fase 2 · 30 días: la cola offline de una caja puede tardar en subir y,
+    // si la clave ya no existe, un reenvío choca con el folio en vez de
+    // recibir la respuesta original.
+    db.prepare("DELETE FROM idempotency_keys WHERE created_at < datetime('now', '-30 days')").run();
   } catch (err) {
     // Tabla ausente en BDs de entregas anteriores: se crea en la migración.
   }
@@ -1137,6 +1140,8 @@ const startServer = async (
         folio: result.folio,
         warnings: [...(result.warnings || []), ...(cashierWarning ? [cashierWarning] : [])],
         ...(offline ? { synced_at: payload.syncedAt } : {}),
+        // Fase 2 · hasta dónde va la serie de esta caja en el Host.
+        folio_next_seq: salesCore.folioNextSeq(db, req.deviceId),
       };
       setKey.run(req.deviceId, key, requestHash, JSON.stringify(responseBody), 200);
       return { created: true, body: responseBody };
@@ -1147,7 +1152,14 @@ const startServer = async (
       outcome = runTxn.immediate();
     } catch (err) {
       if (err && typeof err.code === "string") {
-        return res.status(400).json({ success: false, code: err.code, error: err.message });
+        return res.status(400).json({
+          success: false,
+          code: err.code,
+          error: err.message,
+          // Con un folio repetido o fuera de serie la caja realinea su contador.
+          folio_next_seq: salesCore.folioNextSeq(db, req.deviceId),
+          ...(err.expected_prefix ? { expected_prefix: err.expected_prefix } : {}),
+        });
       }
       throw err;
     }

@@ -16,13 +16,60 @@
 // el inventario. El resto de validaciones (payload, cantidades, existencia de
 // producto) sí provocan rollback total.
 
+const crypto = require("crypto");
+
 const MAX_CART_LINES = 500;
 const KNOWN_UNITS = ["piece", "weight", "box", "package", "boxpack"];
 
 // Bloque 5 · folio continuo por dispositivo: H-000001 para el Host, A-000001
-// para la caja A, etc. La letra sale del `device_code` que el Host ya asigna al
-// aprobar la caja; si no existe se usa "X" para no romper el formato.
-const FOLIO_RE = /^([A-Z])-(\d{6,})$/;
+// para la caja A, etc. El prefijo sale del `device_code` que el Host asigna al
+// aprobar la caja.
+//
+// Fase 2 · el prefijo es el código COMPLETO (A, B, A2, B2…): antes se tomaba
+// sólo la primera letra y la caja A2 emitía los mismos folios que la A (cada
+// una con su contador). Un código que no es de caja (`D-1A2B3C` de celular o
+// de respaldo) da `X1A2B3C`, y sin código se deriva del device_id: nunca una
+// letra que pueda tener otra caja.
+const FOLIO_RE = /^([A-Z][A-Z0-9]{0,7})-(\d{6,})$/;
+
+const folioPrefixFor = (code, deviceId) => {
+  const c = String(code || "").trim().toUpperCase();
+  if (/^[A-Z]\d{0,2}$/.test(c)) return c;
+  const m = /^D-([0-9A-F]{6})$/.exec(c);
+  if (m) return `X${m[1]}`;
+  if (!deviceId) return "X";
+  return `X${crypto.createHash("sha256").update(String(deviceId)).digest("hex").slice(0, 6).toUpperCase()}`;
+};
+
+// Prefijo que emitía la versión anterior (primera letra): se sigue aceptando
+// para no dejar en conflicto las ventas que ya estaban en la cola offline.
+const legacyPrefixFor = (code) => {
+  const m = /^([A-Z])/.exec(String(code || "").trim().toUpperCase());
+  return m ? m[1] : "X";
+};
+
+const deviceCodeOf = (db, deviceId) => {
+  try {
+    const row = db
+      .prepare("SELECT device_code FROM paired_devices WHERE device_id = ?")
+      .get(deviceId);
+    return row ? row.device_code : null;
+  } catch (err) {
+    return null;
+  }
+};
+
+const isHostDevice = (db, deviceId) => {
+  if (!deviceId) return true;
+  try {
+    const host = db
+      .prepare("SELECT value FROM settings WHERE key = 'host_device_id'")
+      .get();
+    return !!host && host.value === deviceId;
+  } catch (err) {
+    return false;
+  }
+};
 
 const folioLetter = (db, deviceId) => {
   if (!deviceId) return "H";
@@ -41,8 +88,7 @@ const folioLetter = (db, deviceId) => {
   } catch (err) {
     row = null;
   }
-  const m = /^([A-Z])/.exec(String((row && row.device_code) || ""));
-  return m ? m[1] : "X";
+  return folioPrefixFor(row && row.device_code, deviceId);
 };
 
 const formatFolio = (letter, seq) =>
@@ -85,11 +131,23 @@ const nextFolio = (db, deviceId) => {
 // una asignación futura del Host no choque. No reescribe el folio recibido.
 const acceptFolio = (db, deviceId, folio) => {
   const value = String(folio || "").trim().toUpperCase();
-  if (!FOLIO_RE.test(value)) {
+  const parts = FOLIO_RE.exec(value);
+  if (!parts) {
     throw fail("FOLIO_INVALID", `Folio inválido: ${folio}`);
   }
+  // Fase 2 · el prefijo tiene que ser el de ESTE dispositivo: una caja no
+  // puede gastar folios de la serie del Host ni de otra caja.
+  if (!isHostDevice(db, deviceId)) {
+    const code = deviceCodeOf(db, deviceId);
+    const allowed = [folioPrefixFor(code, deviceId), legacyPrefixFor(code)];
+    if (!allowed.includes(parts[1])) {
+      throw fail("FOLIO_INVALID", `El folio ${value} no es de la serie de esta caja`, {
+        expected_prefix: allowed[0],
+      });
+    }
+  }
   const key = folioKey(db, deviceId);
-  const seq = Number(value.split("-")[1]);
+  const seq = Number(parts[2]);
   db.prepare(
     "INSERT OR IGNORE INTO folio_counters (device_key, next_seq) VALUES (?, 1)",
   ).run(key);
@@ -102,6 +160,19 @@ const acceptFolio = (db, deviceId, folio) => {
     ).run(seq + 1, key);
   }
   return value;
+};
+
+// Siguiente número que el Host tiene registrado para la serie del
+// dispositivo. La caja lo usa para no retroceder tras reinstalar o restaurar.
+const folioNextSeq = (db, deviceId) => {
+  try {
+    const row = db
+      .prepare("SELECT next_seq FROM folio_counters WHERE device_key = ?")
+      .get(folioKey(db, deviceId));
+    return row ? Number(row.next_seq) || 1 : 1;
+  } catch (err) {
+    return 1;
+  }
 };
 
 // 3a.i · deviceId filtra por dispositivo y quita el fallback a caja ajena.
@@ -234,15 +305,22 @@ const createSaleTx = (
   // Venta sincronizada desde la cola: se conserva la caja que estaba abierta
   // cuando se vendió, aunque ya se haya cerrado. Se valida que sea de la caja.
   let registerIdFinal = openReg ? openReg.id : null;
+  let lateWarning = null;
   if (registerId) {
     const row = db
-      .prepare("SELECT id, device_id FROM cash_register WHERE id = ?")
+      .prepare("SELECT id, device_id, status FROM cash_register WHERE id = ?")
       .get(registerId);
     if (!row) throw fail("REGISTER_NOT_FOUND", "La caja de la venta no existe");
     if (deviceId && row.device_id && row.device_id !== deviceId) {
       throw fail("REGISTER_NOT_OWNED", "La caja de la venta pertenece a otro dispositivo");
     }
     registerIdFinal = row.id;
+    // Fase 2 · la venta se hizo con la caja abierta pero llegó después del
+    // corte: se conserva en su turno (el dinero estaba en ese cajón) y se
+    // avisa para que el admin revise la diferencia del corte.
+    if (row.status === "closed") {
+      lateWarning = { code: "LATE_SYNC_CLOSED_REGISTER", register_id: row.id };
+    }
   }
   const folioFinal = folio
     ? acceptFolio(db, deviceId, folio)
@@ -400,6 +478,9 @@ const createSaleTx = (
   if (customerWarning) {
     warnings.push(customerWarning);
   }
+  if (lateWarning) {
+    warnings.push(lateWarning);
+  }
 
   return { success: true, saleId, folio: folioFinal, warnings };
 };
@@ -410,5 +491,7 @@ module.exports = {
   nextFolio,
   acceptFolio,
   formatFolio,
+  folioPrefixFor,
+  folioNextSeq,
   MAX_CART_LINES,
 };

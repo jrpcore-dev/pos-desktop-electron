@@ -14,6 +14,7 @@ const dbSchema = require("./db-schema");
 const offlineQueue = require("./offline-queue");
 const pins = require("./pins");
 const protocol = require("./protocol");
+const salesCore = require("./sales-core");
 // 3g/D · registro de listeners CRUDOS: el puente lo usa para ejecutar en la
 // caja las claves de `save-setting` que son del propio aparato.
 const ipcRegistry = require("./ipc-registry");
@@ -66,14 +67,25 @@ const sha256 = (text) => crypto.createHash("sha256").update(String(text)).digest
 // ── Folio local (Bloque 5) ──────────────────────────────────────────────────
 // La caja reserva su folio ANTES de enviar. Si el Host no responde, la misma
 // reserva viaja en la cola; el contador local nunca retrocede.
+// Fase 2 · el prefijo es el mismo que el Host valida (`folioPrefixFor`).
+const FOLIO_SEQ_KEY = "folio_next_seq";
 const nextBoxFolio = (db) => {
   const code = activation.getSetting(db, "box_device_code") || "";
-  const m = /^([A-Z])/.exec(String(code));
-  const letter = m ? m[1] : "X";
-  const key = "folio_next_seq";
-  const seq = Math.max(1, Number(activation.getSetting(db, key) || 1) || 1);
-  activation.setSetting(db, key, String(seq + 1));
-  return `${letter}-${String(seq).padStart(6, "0")}`;
+  const deviceId = activation.getSetting(db, "box_device_id") || "";
+  const prefix = salesCore.folioPrefixFor(code, deviceId);
+  const seq = Math.max(1, Number(activation.getSetting(db, FOLIO_SEQ_KEY) || 1) || 1);
+  activation.setSetting(db, FOLIO_SEQ_KEY, String(seq + 1));
+  return salesCore.formatFolio(prefix, seq);
+};
+
+// Fase 2 · el Host informa hasta dónde va la serie de esta caja. Tras una
+// reinstalación o un respaldo restaurado el contador local quedaría atrás y
+// cada venta chocaría con un folio ya usado; nunca retrocede.
+const adoptHostFolioSeq = (db, data) => {
+  const hostNext = Number(data && data.folio_next_seq);
+  if (!Number.isFinite(hostNext) || hostNext < 1) return;
+  const local = Math.max(1, Number(activation.getSetting(db, FOLIO_SEQ_KEY) || 1) || 1);
+  if (hostNext > local) activation.setSetting(db, FOLIO_SEQ_KEY, String(hostNext));
 };
 
 // ── Intento de venta estable (Bloque 4/A) ───────────────────────────────────
@@ -154,10 +166,14 @@ const unreachable = (err) =>
 
 // ── Cola offline ────────────────────────────────────────────────────────────
 const enqueueSale = (db, row) => {
-  const saved = offlineQueue.enqueue(db, row);
-  // La venta ya está a salvo en disco: se limpia el intento para que una
-  // canasta nueva no reutilice la clave.
-  clearAttempt(db);
+  // La venta queda a salvo en disco y el intento se limpia en la MISMA
+  // transacción: un cierre entre ambos pasos dejaba el intento vivo y la
+  // siguiente canasta reutilizaba un folio ya encolado.
+  const saved = db.transaction(() => {
+    const out = offlineQueue.enqueue(db, row);
+    clearAttempt(db);
+    return out;
+  })();
   return {
     success: true,
     offline: true,
@@ -256,8 +272,10 @@ const recordSale = async (db, payload = {}) => {
       localCreatedAt: new Date().toISOString(),
     });
   }
-  // Folio repetido (solo posible tras restaurar un respaldo): se reasigna una
-  // vez con una clave nueva y se reintenta. La venta no se pierde.
+  adoptHostFolioSeq(db, res.data);
+  // Folio repetido (reinstalación o respaldo restaurado): se reasigna una vez
+  // con una clave nueva, ya con el contador alineado al del Host, y se
+  // reintenta. La venta no se pierde.
   if (res.data.code === "FOLIO_INVALID" || res.data.code === "SQLITE_CONSTRAINT_UNIQUE") {
     attempt = { signature, key: crypto.randomUUID(), folio: nextBoxFolio(db) };
     saveAttempt(db, attempt);
@@ -277,6 +295,21 @@ const recordSale = async (db, payload = {}) => {
         localCreatedAt: new Date().toISOString(),
       });
     }
+    // Respuesta sin JSON o sesión vencida en el reintento: igual que en el
+    // primer envío, la venta se encola en vez de perderse.
+    if (!res.data || res.status === 401) {
+      if (res.status === 401) expired(db, res.data);
+      return enqueueSale(db, {
+        folio: attempt.folio,
+        payload,
+        idempotencyKey: attempt.key,
+        registerId: payload.registerId,
+        cashierId: payload.cashierId,
+        cashierName: payload.cashierName,
+        localCreatedAt: new Date().toISOString(),
+      });
+    }
+    adoptHostFolioSeq(db, res.data);
   }
   if (res.data.success) clearAttempt(db);
   return res.data; // éxito o fallo del Host: mismo contrato que el IPC local.
@@ -289,10 +322,11 @@ const syncPending = async (db) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return { success: false, code: "NO_HOST_LINKED", pending: offlineQueue.countBlocking(db) };
   syncInFlight = offlineQueue.sync(db, async (row) => {
+    // Fase 2 · mismo armado que el envío en línea (`customerId` →
+    // `customer_id`, etc.): antes se esparcía el payload crudo y el Host
+    // perdía el cliente de toda venta subida desde la cola.
     const body = {
-      ...row.payload,
-      folio: row.folio,
-      offline: true,
+      ...saleBody(row.payload, row.folio, true),
       register_id: row.registerId,
       cashier_id: row.cashierId,
       cashier_name: row.cashierName,
@@ -303,6 +337,7 @@ const syncPending = async (db) => {
     });
     if (!res.data) return { success: false, code: "HOST_UNREACHABLE" };
     if (res.status === 401) return { success: false, code: "SESSION_EXPIRED", error: "Sesión expirada" };
+    adoptHostFolioSeq(db, res.data);
     return res.data;
   });
   try {
@@ -400,6 +435,11 @@ const verifyPin = async (db, id, pin) => {
   // La ventana de gracia rota el token de dispositivo en cada login: si la caja
   // no guarda el nuevo, el Host la rechaza con "no está activado" en todo.
   if (res.data.pairedToken) clientLink.savePairedToken(db, res.data.pairedToken);
+  // Fase 2 · con sesión nueva, las ventas que quedaron esperando login
+  // vuelven a la cola y se suben ya (sin esperar al temporizador).
+  if (offlineQueue.resumeNeedsAuth(db).resumed > 0) {
+    syncPending(db).catch(() => {});
+  }
   return { success: true, cashier: res.data.cashier };
 };
 

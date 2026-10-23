@@ -132,6 +132,17 @@ const retryConflicts = (db) => {
   return { success: true, retried: info.changes };
 };
 
+// Fase 2 · tras un login correcto, lo que esperaba sesión vuelve a la cola.
+// Los `conflict` NO: esos requieren que alguien los revise.
+const resumeNeedsAuth = (db) => {
+  const info = db
+    .prepare(
+      "UPDATE pending_sales SET status = 'pending', last_error = NULL WHERE status = 'needs_auth'",
+    )
+    .run();
+  return { resumed: info.changes };
+};
+
 const _set = (db, id, status, error) => {
   db.prepare(
     "UPDATE pending_sales SET status = ?, last_error = ?, attempts = attempts + 1 WHERE id = ?",
@@ -212,6 +223,7 @@ module.exports = {
   get,
   cancel,
   retryConflicts,
+  resumeNeedsAuth,
   countPending,
   countBlocking,
   summary,
