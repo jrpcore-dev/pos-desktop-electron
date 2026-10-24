@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useToast } from "@/components/ToastProvider";
 import { toUiOperators, toUiTransaction } from "./taecelCatalog";
 import { money } from "./serviceMoney";
+import { useCashier } from "@/contexts/CashierContext";
 import PageHeader from "../PageHeader";
 import ServiceCheckout from "./ServiceCheckout";
 import ServiceHistory from "./ServiceHistory";
@@ -22,6 +23,9 @@ import ServiceProviderDialog from "./ServiceProviderDialog";
 // Este archivo es el único dueño del estado compartido entre las dos pestañas.
 // Todo pasa por el Host (`taecel:*`): en una caja viajan por RPC.
 const ServicesScreen = () => {
+  // Quién cobra: el Host sólo acepta el id y resolve al nombre desde su BD,
+  // así una caja no puede inventar el nombre de otro cajero.
+  const { cashier } = useCashier();
   const notify = useToast();
   const [tab, setTab] = useState("cobrar");
   const [transactions, setTransactions] = useState([]);
@@ -239,8 +243,10 @@ const ServicesScreen = () => {
         <TabsContent value="cobrar" className="mt-3">
           <ServiceCheckout
             operators={operators}
+            transactions={transactions}
             onTransaction={upsert}
             providerLive={provider.state === "live"}
+            cashierId={cashier?.id ?? null}
           />
         </TabsContent>
 
