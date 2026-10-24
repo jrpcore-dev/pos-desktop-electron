@@ -27,13 +27,26 @@ const protocol = require(path.join(REPO, "src/main/protocol.js"));
 const discovery = require(path.join(REPO, "src/main/discovery.js"));
 const { hashPin } = require(path.join(REPO, "src/main/pins.js"));
 
+const net = require("net");
 const TMP = path.join(os.tmpdir(), "opencode", `check-3c-${process.pid}`);
 fs.mkdirSync(TMP, { recursive: true });
-const PORT_A = 3510;
-const PORT_B = 3511;
-const PORT_FAKE = 3512;
-const URL_A = `http://127.0.0.1:${PORT_A}`;
-const URL_B = `http://127.0.0.1:${PORT_B}`;
+// Puertos efímeros libres: en un equipo real un servicio ajeno (p.ej.
+// LogiPluginService en 3511) puede ocupar los puertos fijos y la caja le
+// pregunta a ese proceso en vez de al Host B.
+const freePort = () =>
+  new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+let PORT_A = 0;
+let PORT_B = 0;
+let PORT_FAKE = 0;
+let URL_A = "";
+let URL_B = "";
 
 let pass = 0;
 let fail = 0;
@@ -96,6 +109,9 @@ clientLink.setSecretCipher(testCipher);
 
 (async () => {
   console.log("=== 3c · descubrimiento y emparejamiento ===");
+  [PORT_A, PORT_B, PORT_FAKE] = await Promise.all([freePort(), freePort(), freePort()]);
+  URL_A = `http://127.0.0.1:${PORT_A}`;
+  URL_B = `http://127.0.0.1:${PORT_B}`;
   const started = await apiServer.startServer(dbA, PORT_A, { appVersion: "9.9.9-check" });
   check(started.success === true, "Host A arranca", started.error);
 

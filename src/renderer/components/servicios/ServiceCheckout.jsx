@@ -37,6 +37,7 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
   const [inputValue, setInputValue] = useState("");
   const [confirmValue, setConfirmValue] = useState("");
   const [inputError, setInputError] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("cash");
   const [tx, setTx] = useState(null);
   const [busy, setBusy] = useState(false);
   const polls = useRef(0);
@@ -136,6 +137,7 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
       productName: product.name,
       sku: product.sku,
       inputValue,
+      paymentMethod,
       quote: quoteData,
     };
     setBusy(true);
@@ -149,7 +151,7 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
         productCode: product.sku,
         reference: inputValue,
         amountCents: product.amountCents,
-        paymentMethod: "cash",
+        paymentMethod,
       });
       next =
         r && r.status
@@ -171,7 +173,7 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
     setTx(next);
     setBusy(false);
     onTransaction?.(next);
-  }, [operator, product, inputValue, quoteData, tx, display, onTransaction]);
+  }, [operator, product, inputValue, quoteData, paymentMethod, tx, display, onTransaction]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -308,6 +310,8 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
                   blockedHint={blockedHint}
                   onReset={reset}
                   disabled={busy}
+                  paymentMethod={paymentMethod}
+                  onPaymentMethodChange={setPaymentMethod}
                 />
               </div>
             )}

@@ -67,13 +67,13 @@ const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
         <form id="taecel-config" onSubmit={handleSave} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <label
-              htmlFor="vds-user"
+              htmlFor="taecel-key"
               className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
             >
               Key
             </label>
             <Input
-              id="vds-user"
+              id="taecel-key"
               autoComplete="off"
               value={user}
               onChange={(e) => setUser(e.target.value)}
@@ -85,14 +85,14 @@ const ServiceProviderDialog = ({ open, onOpenChange, onSaved }) => {
 
           <div className="flex flex-col gap-1">
             <label
-              htmlFor="vds-pass"
+              htmlFor="taecel-nip"
               className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
             >
               NIP
             </label>
             <div className="relative">
               <Input
-                id="vds-pass"
+                id="taecel-nip"
                 type={show ? "text" : "password"}
                 autoComplete="off"
                 value={pass}

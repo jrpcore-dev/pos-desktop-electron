@@ -61,6 +61,15 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy }) => {
           </span>
         </div>
 
+        <div className="flex items-center justify-between border-t border-border px-2.5 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Forma de pago
+          </span>
+          <span className="text-xs font-semibold text-foreground">
+            {paymentLabel(tx.paymentMethod)}
+          </span>
+        </div>
+
         {tx.providerRef && (
           <div className="flex items-center justify-between px-2.5 pb-2.5">
             <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -131,6 +140,10 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy }) => {
     </div>
   );
 };
+
+const paymentLabel = (method) =>
+  ({ cash: "Efectivo", card: "Tarjeta", transfer: "Transferencia" })[method] ||
+  "Efectivo";
 
 const title = (status) =>
   ({

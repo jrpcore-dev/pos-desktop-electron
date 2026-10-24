@@ -1,4 +1,4 @@
-import { Ban, RotateCcw, Zap } from "lucide-react";
+import { Ban, CreditCard, DollarSign, Landmark, RotateCcw, Zap } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "@/lib/utils";
 import { money } from "./serviceMoney";
@@ -17,7 +17,53 @@ const Row = ({ label, value, muted }) => (
   </div>
 );
 
-const ServiceSummary = ({ quote, canCharge, onReset, disabled, blockedHint }) => {
+// Mismos tres métodos que la terminal de venta: la recarga se cobra como una
+// venta más y el importe entra al corte por el método elegido.
+const METHODS = [
+  { key: "cash", label: "Efectivo", Icon: DollarSign },
+  { key: "card", label: "Tarjeta", Icon: CreditCard },
+  { key: "transfer", label: "Transferencia", Icon: Landmark },
+];
+
+const PaymentMethods = ({ value, onChange, disabled }) => (
+  <div className="grid grid-cols-3 gap-1" role="group" aria-label="Método de pago">
+    {METHODS.map(({ key, label, Icon }) => {
+      const active = value === key;
+      return (
+        <button
+          key={key}
+          type="button"
+          title={label}
+          aria-pressed={active}
+          disabled={disabled}
+          onClick={() => onChange?.(key)}
+          className={cn(
+            "flex h-10 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border px-1 transition-colors duration-150",
+            active
+              ? "border-primary bg-primary/10 text-primary shadow-sm"
+              : "border-border bg-background text-muted-foreground hover:bg-muted",
+            disabled && "cursor-not-allowed opacity-60",
+          )}
+        >
+          <Icon size={15} aria-hidden />
+          <span className="truncate text-[11px] font-bold leading-none">
+            {key === "transfer" ? "Transf." : label}
+          </span>
+        </button>
+      );
+    })}
+  </div>
+);
+
+const ServiceSummary = ({
+  quote,
+  canCharge,
+  onReset,
+  disabled,
+  blockedHint,
+  paymentMethod = "cash",
+  onPaymentMethodChange,
+}) => {
   if (!quote) {
     return (
       <div className="flex flex-col items-center justify-center gap-1 px-3 py-6 text-center">
@@ -49,6 +95,12 @@ const ServiceSummary = ({ quote, canCharge, onReset, disabled, blockedHint }) =>
           </span>
         </div>
       </div>
+
+      <PaymentMethods
+        value={paymentMethod}
+        onChange={onPaymentMethodChange}
+        disabled={disabled}
+      />
 
       <Button
         type="submit"
