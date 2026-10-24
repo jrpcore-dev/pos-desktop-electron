@@ -280,8 +280,8 @@ const AppInner = () => {
           <Route path="/" element={<Layout />}>
             <Route index element={<SalesTerminal />} />
             <Route path="inventory" element={<Inventory />} />
-            <Route path="stock-conflicts" element={<StockConflicts />} />
-            <Route path="catalog-reference" element={<Catalog />} />
+            <Route path="stock-conflicts" element={<AdminOnly><StockConflicts /></AdminOnly>} />
+            <Route path="catalog-reference" element={<AdminOnly><Catalog /></AdminOnly>} />
             <Route path="catalog" element={<Navigate to="catalog-reference" replace />} />
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="categories" element={<Categories />} />
@@ -290,16 +290,24 @@ const AppInner = () => {
             <Route path="servicios" element={<ServicesScreen />} />
             <Route path="customers" element={<Customers />} />
             <Route path="end-of-day" element={<EndOfDay />} />
-            <Route path="register-history" element={<RegisterHistory />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="backup" element={<BackupRestore />} />
-            <Route path="cashiers" element={<Cashiers />} />
+            <Route path="register-history" element={<AdminOnly><RegisterHistory /></AdminOnly>} />
+            <Route path="reports" element={<AdminOnly><Reports /></AdminOnly>} />
+            <Route path="backup" element={<AdminOnly><BackupRestore /></AdminOnly>} />
+            <Route path="cashiers" element={<AdminOnly><Cashiers /></AdminOnly>} />
             <Route path="configuration" element={<ConfigurationScreen />} />
           </Route>
         </Routes>
       </ToastProvider>
     </ThemeModeContext.Provider>
   );
+};
+
+// Fase 5 · las pantallas de administración no sólo se esconden del menú: una
+// navegación directa (atajo, enlace guardado) sin rol admin vuelve al inicio.
+const AdminOnly = ({ children }) => {
+  const { cashier } = useCashier();
+  if (cashier?.role !== "admin") return <Navigate to="/" replace />;
+  return children;
 };
 
 const App = () => (

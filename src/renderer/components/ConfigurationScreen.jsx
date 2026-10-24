@@ -846,7 +846,7 @@ function ConfigurationScreen() {
   const handleRevokeDevice = async (deviceId) => {
     if (
       !window.confirm(
-        "¿Revocar este dispositivo? Perderá el acceso y deberá introducir el código de activación para volver a emparejarse."
+        "¿Revocar este dispositivo? Perderá el acceso al momento. Para volver necesitará el código de activación y tu aprobación aquí."
       )
     )
       return;
@@ -856,7 +856,7 @@ function ConfigurationScreen() {
       const status = await reloadActivation();
       setActivation(status);
     } else {
-      notify("No se pudo revocar el dispositivo.", "error");
+      notify(res?.error || "No se pudo revocar el dispositivo.", "error");
     }
   };
 
@@ -938,11 +938,11 @@ function ConfigurationScreen() {
 
   const meta = TABS_META[activeTab];
   const MetaIcon = meta.icon;
-  // Entrega 2b: mostrar la lista de dispositivos si la seguridad está activa o
-  // si hay algún dispositivo pendiente de aprobación (p.ej. una caja).
+  // Fase 5 · la lista se muestra siempre que haya dispositivos: con la
+  // seguridad apagada una caja aprobada también hay que poder renombrarla o
+  // revocarla.
   const showDevices =
-    !!activation?.enabled ||
-    (activation?.devices || []).some((d) => d.approved === false);
+    !!activation?.enabled || (activation?.devices || []).length > 0;
 
   const previewSubtotal = PREVIEW_ITEMS.reduce(
     (sum, i) => sum + i.qty * i.price,
@@ -1094,7 +1094,7 @@ function ConfigurationScreen() {
       <section className="divide-y divide-border/40">
         <ToggleBlock
           title="Impresión habilitada"
-          description="Emitir el ticket automáticamente al cobrar. Si está desactivada, el resto de las opciones quedan bloqueadas."
+          description="Emitir el ticket automáticamente al cobrar en ESTE equipo (cada caja decide si imprime). Las demás opciones del ticket son del negocio y se comparten con todas las cajas."
           checked={printEnabled}
           onCheckedChange={setPrintEnabled}
         />

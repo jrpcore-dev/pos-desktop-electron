@@ -18,6 +18,7 @@ import {
   PopoverTrigger,
 } from "./ui/popover";
 import { formatMXTime } from "../utils/dateUtils";
+import { STALE_STRONG_MS, STALE_WARN_MS } from "../lib/replicaThresholds";
 import { fmtMoney } from "../utils/format";
 import { cn } from "@/lib/utils";
 
@@ -280,7 +281,19 @@ const openRegister = () => {
             </div>
             <Divider />
             <div className="p-2">
-              <Button size="sm" className="w-full" onClick={openRegister}>
+              {/* Fase 5 · abrir caja requiere al Host: sin él, el botón
+                  sólo produciría un error. */}
+              <Button
+                size="sm"
+                className="w-full"
+                onClick={openRegister}
+                disabled={!!hostStatus && hostStatus.reachable === false}
+                title={
+                  hostStatus && hostStatus.reachable === false
+                    ? "Abrir caja requiere conexión con el Host"
+                    : undefined
+                }
+              >
                 Abrir caja
               </Button>
             </div>
@@ -301,7 +314,7 @@ const openRegister = () => {
               </p>
             </div>
           )}
-          {hostStatus && !hostStatus.reachable && (
+          {hostStatus && hostStatus.reachable === false && (
             <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
               <p className="text-[14px] font-semibold text-destructive">
                 Host desconectado
@@ -333,9 +346,21 @@ const openRegister = () => {
               </p>
             </div>
           )}
-          {replicaStaleMs != null && replicaStaleMs > 30 * 60 * 1000 && (
-            <div className="mb-1.5 rounded-md border border-warning/30 bg-warning/[0.07] px-2.5 py-2">
-              <p className="text-[14px] font-semibold text-warning">
+          {replicaStaleMs != null && replicaStaleMs > STALE_WARN_MS && (
+            <div
+              className={
+                replicaStaleMs > STALE_STRONG_MS
+                  ? "mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2"
+                  : "mb-1.5 rounded-md border border-warning/30 bg-warning/[0.07] px-2.5 py-2"
+              }
+            >
+              <p
+                className={
+                  replicaStaleMs > STALE_STRONG_MS
+                    ? "text-[14px] font-semibold text-destructive"
+                    : "text-[14px] font-semibold text-warning"
+                }
+              >
                 Datos de hace {Math.floor(replicaStaleMs / 3600000)} h{" "}
                 {Math.floor((replicaStaleMs % 3600000) / 60000)} min
               </p>

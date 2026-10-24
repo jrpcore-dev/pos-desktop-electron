@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CloudOff, Database, RefreshCw, TimerReset, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CloudOff, Database, KeyRound, RefreshCw, TimerReset, X } from "lucide-react";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -11,12 +11,11 @@ import {
 import { cn } from "@/lib/utils";
 import { formatMXTime } from "../utils/dateUtils";
 import { fmtMoney } from "../utils/format";
+import { useToast } from "./ToastProvider";
+import { PENDING_ADMIN_MS, STALE_STRONG_MS, STALE_WARN_MS } from "../lib/replicaThresholds";
 
 // Bloque 4/D · Estado visible de la caja: Host caído ≠ Host ocupado, datos
 // viejos a los 30 min / 4 h y ventas pendientes. NADA de esto bloquea vender.
-const STALE_WARN_MS = 30 * 60 * 1000;
-const STALE_STRONG_MS = 4 * 60 * 60 * 1000;
-const PENDING_ADMIN_MS = 60 * 60 * 1000;
 
 const fmtAge = (ms) => {
   if (ms == null || !Number.isFinite(ms)) return "";
@@ -27,25 +26,37 @@ const fmtAge = (ms) => {
 };
 
 export default function HostStatusBanner() {
+  const notify = useToast();
   const [status, setStatus] = useState(null);
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
 
+  // Fase 5 · en el Host este aviso nunca se muestra: se deja de sondear en
+  // cuanto se sabe el rol. Un fallo de lectura conserva el último estado en
+  // vez de esconder el aviso (esconderlo parecía "todo bien").
+  const timerRef = useRef(null);
   const refresh = useCallback(async () => {
     try {
       const s = await window.api.invoke("get-server-status");
       setStatus(s);
+      if (s && s.role !== "client" && timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     } catch (e) {
-      setStatus(null);
+      // Se reintenta en el siguiente ciclo con el estado anterior en pantalla.
     }
   }, []);
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 10000);
-    return () => clearInterval(t);
+    timerRef.current = setInterval(refresh, 10000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+    };
   }, [refresh]);
 
   const loadRows = useCallback(async () => {
@@ -67,9 +78,12 @@ export default function HostStatusBanner() {
   const cancel = async (id) => {
     setBusyAction(true);
     try {
-      await window.api.invoke("pending-sales-cancel", id);
+      const res = await window.api.invoke("pending-sales-cancel", id);
+      if (res && res.success === false) notify("Esa venta ya no se puede cancelar", "error");
       await loadRows();
       await refresh();
+    } catch (e) {
+      notify("No se pudo cancelar la venta", "error");
     } finally {
       setBusyAction(false);
     }
@@ -78,9 +92,20 @@ export default function HostStatusBanner() {
   const syncNow = async () => {
     setBusyAction(true);
     try {
-      await window.api.invoke("pending-sales-sync-now");
+      const res = await window.api.invoke("pending-sales-sync-now");
+      if (res?.stop === "SESSION_EXPIRED") {
+        notify("La sesión con el Host venció: vuelve a iniciar sesión para subir las ventas", "error");
+      } else if (res && res.success === false) {
+        notify(res.error || "El Host no respondió; se reintentará solo", "error");
+      } else if (res?.conflicts) {
+        notify(`${res.conflicts} venta(s) quedaron en revisión`, "error");
+      } else if (res?.synced) {
+        notify(`${res.synced} venta(s) sincronizada(s)`, "success");
+      }
       await loadRows();
       await refresh();
+    } catch (e) {
+      notify("No se pudo sincronizar", "error");
     } finally {
       setBusyAction(false);
     }
@@ -97,6 +122,8 @@ export default function HostStatusBanner() {
   const staleWarn = stale != null && stale > STALE_WARN_MS;
   const staleStrong = stale != null && stale > STALE_STRONG_MS;
   const protocolWarning = String(status.protocolWarning || "").trim();
+  // Fase 5 · ventas que esperan PIN: la cola no sube sola hasta un login.
+  const needsAuth = Number(pending.needsAuth) || 0;
 
   if (!hostDown && !busy && !pending.count && !staleWarn && !protocolWarning)
     return null;
@@ -107,7 +134,15 @@ export default function HostStatusBanner() {
       ? "border-destructive/40 bg-destructive/[0.06] text-destructive"
       : "border-warning/40 bg-warning/[0.08] text-warning";
 
-  const Icon = hostDown ? CloudOff : staleStrong || staleWarn ? Database : busy ? TimerReset : AlertTriangle;
+  const Icon = hostDown
+    ? CloudOff
+    : needsAuth
+      ? KeyRound
+      : staleStrong || staleWarn
+        ? Database
+        : busy
+          ? TimerReset
+          : AlertTriangle;
 
   return (
     <>
@@ -124,7 +159,12 @@ export default function HostStatusBanner() {
               Host ocupado (importando datos) · no es una caída
             </p>
           )}
-          {!hostDown && !busy && pending.count > 0 && (
+          {!hostDown && !busy && needsAuth > 0 && (
+            <p className="text-sm font-semibold">
+              {needsAuth} venta(s) esperan que inicies sesión de nuevo para subir
+            </p>
+          )}
+          {!hostDown && !busy && !needsAuth && pending.count > 0 && (
             <p className="text-sm font-semibold">
               {pending.count} venta(s) pendiente(s) de subir
               {pending.oldestAgeMs != null ? ` · la más antigua hace ${fmtAge(pending.oldestAgeMs)}` : ""}
@@ -135,7 +175,7 @@ export default function HostStatusBanner() {
               Datos de esta caja actualizados hace {fmtAge(stale)}
             </p>
           )}
-          {protocolWarning && !hostDown && (
+          {protocolWarning && (
             <p className="text-sm font-semibold">
               Versión distinta del Host: {protocolWarning}
             </p>
@@ -143,7 +183,9 @@ export default function HostStatusBanner() {
           <p className="mt-0.5 text-xs opacity-90">
             {hostDown
               ? "Las ventas se guardan en esta caja y suben solas al reconectar. Abrir/cerrar caja y gastos requieren Host."
-              : pendingOld
+              : needsAuth
+                ? "La sesión con el Host venció. Cierra sesión y vuelve a entrar con tu PIN; las ventas suben solas."
+                : pendingOld
                 ? "Llevan más de 1 hora sin subir: avisa al administrador. No cierres la caja."
                 : busy
                   ? "Puedes vender con normalidad; la sincronización se reanuda al terminar."
@@ -243,7 +285,11 @@ export default function HostStatusBanner() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cerrar
             </Button>
-            <Button onClick={syncNow} disabled={busyAction}>
+            <Button
+              onClick={syncNow}
+              disabled={busyAction || hostDown}
+              title={hostDown ? "El Host no responde" : undefined}
+            >
               <RefreshCw size={14} className={busyAction ? "animate-spin" : ""} />
               Sincronizar ahora
             </Button>

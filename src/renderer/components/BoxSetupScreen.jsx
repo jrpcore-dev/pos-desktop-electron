@@ -36,6 +36,9 @@ const note =
   "rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground";
 
 const APPROVAL_POLL_MS = 2500;
+// Fase 5 · revocada: no tiene caso preguntar cada 2.5 s; se sigue mirando
+// despacio por si el admin la reactiva desde el Host.
+const REVOKED_POLL_MS = 15000;
 
 const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [progress, setProgress] = useState(null);
@@ -43,6 +46,8 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [busy, setBusy] = useState(false);
   // Estado del vínculo con el Host (null = aún sin preguntar la primera vez).
   const [link, setLink] = useState(null);
+  // Fase 5 · caja revocada: se ofrece volver a vincular con el código.
+  const [relink, setRelink] = useState(false);
   const startedRef = useRef(false);
 
   // Si una respuesta vieja llega tarde, la caja no vuelve al asistente.
@@ -94,11 +99,19 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   useEffect(() => {
     if (!paired || canSell) return undefined;
     let alive = true;
+    let lastAt = 0;
+    let revoked = false;
     const check = async () => {
+      if (revoked && Date.now() - lastAt < REVOKED_POLL_MS) return;
+      lastAt = Date.now();
       try {
         const res = await window.api.invoke("box-link-status");
         if (!alive) return;
         if (res?.success) {
+          revoked = !!res.revoked;
+          // Re-vinculada: vuelve a "esperando aprobación" y se quita el
+          // asistente.
+          if (!revoked) setRelink(false);
           setLink({
             approved: !!res.approved,
             revoked: !!res.revoked,
@@ -149,7 +162,8 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   }, [paired, canSell, link, sync]);
 
   const pct = progress?.table_pct;
-  const filling = pct != null ? `${pct}%` : busy ? "100%" : "0%";
+  // Sin avance conocido la barra no puede decir 100 % mientras prepara.
+  const filling = pct != null ? `${pct}%` : "0%";
   const waiting = paired && !canSell && !link?.approved;
 
   return (
@@ -180,14 +194,26 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
           </p>
         </header>
 
-        {!paired ? (
-          <BoxLinkWizard className="rounded-lg border border-border p-4" />
+        {!paired || relink ? (
+          <div className="flex flex-col gap-2">
+            <BoxLinkWizard className="rounded-lg border border-border p-4" />
+            {relink && (
+              <button className={btn} onClick={() => setRelink(false)}>
+                Volver
+              </button>
+            )}
+          </div>
         ) : (
           <section className="flex flex-col gap-3 rounded-lg border border-border p-4">
+            {waiting && link?.revoked && (
+              <button className={btn} onClick={() => setRelink(true)}>
+                Volver a vincular con el código de activación
+              </button>
+            )}
             {waiting && (
               <p className={note}>
                 {link?.revoked
-                  ? "El Host revocó esta caja: pide un nuevo emparejamiento."
+                  ? "El Host revocó esta caja. Vuelve a vincularla con el código de activación; después el administrador la aprueba en Configuración → Dispositivos."
                   : link?.error
                     ? `No se pudo consultar el Host: ${link.error}`
                     : link?.deviceCode

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, WifiOff } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
@@ -10,19 +10,36 @@ import { formatMXDateTime } from "../utils/dateUtils";
 // Bloque 4/E · revisión de ventas que dejaron stock negativo. El admin ve el
 // detalle, ajusta el inventario real y marca la venta como revisada. El
 // ajuste es idempotente por venta en el Host (no se aplica dos veces).
+const draftKey = (saleId, productId) => `${saleId}:${productId}`;
+
 export default function StockConflicts() {
   const notify = useToast();
   const [loading, setLoading] = useState(true);
   const [conflicts, setConflicts] = useState([]);
   const [stockById, setStockById] = useState({});
+  // Borrador por (venta, producto): el mismo producto en dos ventas no
+  // comparte el campo.
   const [draft, setDraft] = useState({});
   const [savingId, setSavingId] = useState(null);
+  // Fase 5 · un fallo (Host caído en una caja) NO es "sin conflictos".
+  const [loadError, setLoadError] = useState(null);
+  const offline = loadError?.code === "HOST_UNREACHABLE";
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await window.api.invoke("get-stock-conflicts");
-      const rows = res?.success ? res.conflicts || [] : [];
+      if (!res?.success) {
+        setConflicts([]);
+        setLoadError({
+          code: res?.code || "ERROR",
+          message: res?.error || "No se pudieron cargar los conflictos de stock",
+        });
+        setLoading(false);
+        return;
+      }
+      const rows = res.conflicts || [];
       setConflicts(rows);
       const ids = new Set();
       rows.forEach((r) =>
@@ -37,13 +54,16 @@ export default function StockConflicts() {
           map[p.id] = p;
         });
         setStockById(map);
+        // Arranca con el stock actual tal cual (aunque sea negativo): el
+        // admin escribe el conteo real. Antes se proponía 0 y un clic dejaba
+        // el inventario en 0 sin que nadie lo hubiera contado.
         const nextDraft = {};
         rows.forEach((r) => {
           (r.conflict_detail || []).forEach((d) => {
             const pid = Number(d.product_id);
-            if (nextDraft[pid] == null) {
-              const current = Number(map[pid]?.stock ?? d.stock_after ?? 0);
-              nextDraft[pid] = String(Math.max(0, current));
+            const key = draftKey(r.id, pid);
+            if (nextDraft[key] == null) {
+              nextDraft[key] = String(Number(map[pid]?.stock ?? d.stock_after ?? 0));
             }
           });
         });
@@ -54,28 +74,38 @@ export default function StockConflicts() {
       }
     } catch (e) {
       setConflicts([]);
-      notify("No se pudieron cargar los conflictos de stock", "error");
+      setLoadError({ code: "ERROR", message: "No se pudieron cargar los conflictos de stock" });
     }
     setLoading(false);
-  }, [notify]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const resolve = async (sale, markOnly = false) => {
+    const pids = (sale.conflict_detail || [])
+      .map((d) => Number(d.product_id))
+      .filter((pid, idx, arr) => arr.indexOf(pid) === idx);
+    let adjustments = [];
+    if (!markOnly) {
+      // Fase 5 · un campo vacío o inválido ya no se descarta en silencio
+      // (la venta quedaba "revisada" sin ajustar nada).
+      const bad = pids.filter((pid) => {
+        const v = String(draft[draftKey(sale.id, pid)] ?? "").trim();
+        return v === "" || !Number.isFinite(Number(v)) || Number(v) < 0;
+      });
+      if (bad.length) {
+        notify("Captura el stock real (0 o más) de cada producto antes de ajustar", "error");
+        return;
+      }
+      adjustments = pids.map((pid) => ({
+        product_id: pid,
+        new_stock: Number(draft[draftKey(sale.id, pid)]),
+      }));
+    }
     setSavingId(sale.id);
     try {
-      const adjustments = markOnly
-        ? []
-        : (sale.conflict_detail || [])
-            .map((d) => Number(d.product_id))
-            .filter((pid, idx, arr) => arr.indexOf(pid) === idx)
-            .map((pid) => ({
-              product_id: pid,
-              new_stock: Number(draft[pid]),
-            }))
-            .filter((a) => Number.isFinite(a.new_stock) && a.new_stock >= 0);
       const res = await window.api.invoke("resolve-stock-conflict", {
         saleId: sale.id,
         adjustments,
@@ -91,6 +121,8 @@ export default function StockConflicts() {
           "success",
         );
         await load();
+      } else if (res?.code === "HOST_UNREACHABLE") {
+        notify("El Host no responde: los conflictos se resuelven con el Host conectado", "error");
       } else {
         notify(res?.error || "No se pudo resolver", "error");
       }
@@ -126,6 +158,28 @@ export default function StockConflicts() {
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-28 w-full" />
         </div>
+      ) : loadError ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center gap-2 py-14 text-center">
+            {offline ? (
+              <WifiOff className="h-10 w-10 text-warning" />
+            ) : (
+              <AlertTriangle className="h-10 w-10 text-destructive" />
+            )}
+            <p className="text-base font-semibold text-foreground">
+              {offline ? "El Host no responde" : "No se pudieron cargar"}
+            </p>
+            <p className="max-w-md text-sm text-muted-foreground">
+              {offline
+                ? "Los conflictos viven en el Host. Vuelve a intentarlo cuando la caja esté conectada."
+                : loadError.message}
+            </p>
+            <Button variant="outline" size="sm" onClick={load} className="mt-2">
+              <RefreshCw size={14} />
+              Reintentar
+            </Button>
+          </CardContent>
+        </Card>
       ) : total === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-2 py-14 text-center">
@@ -173,6 +227,8 @@ export default function StockConflicts() {
                       {(sale.conflict_detail || []).map((d, idx) => {
                         const pid = Number(d.product_id);
                         const current = stockById[pid]?.stock;
+                        const key = draftKey(sale.id, pid);
+                        const byWeight = stockById[pid]?.sale_unit === "weight";
                         return (
                           <tr key={`${sale.id}-${pid}-${idx}`} className="border-t border-border">
                             <td className="py-1.5 pr-3 font-medium">
@@ -194,13 +250,14 @@ export default function StockConflicts() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.001"
+                                step={byWeight ? "0.001" : "1"}
+                                aria-label={`Nuevo stock de ${stockById[pid]?.name || d.name}`}
                                 className="ml-auto h-8 w-24 text-right"
-                                value={draft[pid] ?? ""}
+                                value={draft[key] ?? ""}
                                 onChange={(e) =>
                                   setDraft((prev) => ({
                                     ...prev,
-                                    [pid]: e.target.value,
+                                    [key]: e.target.value,
                                   }))
                                 }
                               />
