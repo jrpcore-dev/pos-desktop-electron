@@ -1,0 +1,38 @@
+name: checks
+
+# Fase 6 · los checks headless del repo (npm test) en cada push y PR.
+# Windows porque la app y sus módulos nativos (better-sqlite3 para Electron)
+# se construyen y se usan ahí.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Los checks .cjs corren con el binario de Electron en modo Node: el
+      # módulo nativo tiene que estar compilado para la ABI de Electron.
+      - name: Compilar better-sqlite3 para Electron
+        run: npx @electron/rebuild -f -o better-sqlite3
+
+      - name: Checks
+        run: npm test

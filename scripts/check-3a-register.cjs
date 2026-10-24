@@ -186,7 +186,9 @@ const cashRegisterRow = (db, id) =>
   // ─── B · migración sobre una copia de la BD real ─────────────────────────
   console.log("\n=== 3a.i B · migración sobre copia de la BD real ===");
   const REAL = path.join(process.env.APPDATA || "", "JRP POS", "db", "pos-system.db");
-  check(fs.existsSync(REAL), "existe la BD real", REAL);
+  // En CI no hay BD real: ahí la sección se salta en vez de fallar.
+  if (process.env.CI && !fs.existsSync(REAL)) console.log("  SKIP sin BD real (CI)");
+  else check(fs.existsSync(REAL), "existe la BD real", REAL);
   if (fs.existsSync(REAL)) {
     const copy = path.join(TMP, "real-copy.db");
     for (const suffix of ["", "-wal", "-shm"]) {

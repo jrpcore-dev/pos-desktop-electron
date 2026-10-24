@@ -182,7 +182,8 @@ if (UPDATE) {
   fs.writeFileSync(GOLDEN_FILE, golden + "\n");
   console.log(`  golden actualizado: ${path.relative(ROOT, GOLDEN_FILE)}`);
 } else if (fs.existsSync(GOLDEN_FILE)) {
-  const current = fs.readFileSync(GOLDEN_FILE, "utf8").trim();
+  // Fin de línea normalizado: con core.autocrlf el checkout trae CRLF.
+  const current = fs.readFileSync(GOLDEN_FILE, "utf8").replace(/\r\n/g, "\n").trim();
   ok(current === golden.trim(), "clasificación idéntica al golden (0 diffs)");
 } else {
   console.log("  (sin golden; ejecuta con --update para crearlo)");

@@ -197,10 +197,11 @@ const content =
   ";\n";
 
 if (CHECK) {
+  // Fin de línea normalizado: con core.autocrlf el checkout trae CRLF.
   const current = fs.existsSync(OUT_FILE)
-    ? fs.readFileSync(OUT_FILE, "utf8")
+    ? fs.readFileSync(OUT_FILE, "utf8").replace(/\r\n/g, "\n")
     : "";
-  const upToDate = current === content;
+  const upToDate = current === content.replace(/\r\n/g, "\n");
   const ok =
     upToDate &&
     missingHandlers.length === 0 &&
