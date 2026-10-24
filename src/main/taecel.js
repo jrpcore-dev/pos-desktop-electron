@@ -91,6 +91,14 @@ const LOCAL_LOGO_KEYS = {
   iusacell: "iusacell",
   pillofon: "pillo",
   "pillo fon": "pillo",
+  cfe: "cfe",
+  telmex: "telmex",
+  megacable: "megacable",
+  naturgy: "naturgy",
+  // Taecel agrupa marcas en un solo carrier ("Paquetes BAIT") que por prefijo
+  // no se alcanza a casar; se listan a mano.
+  "paquetes bait": "bait",
+  "bait internet casa": "bait",
 };
 
 const safeJson = (value, fallback = null) => {
@@ -124,7 +132,37 @@ const slug = (value) =>
     .toLowerCase()
     .replace(/\s+/g, " ");
 
-const localLogoKey = (name) => LOCAL_LOGO_KEYS[slug(name)] || slug(name).replace(/[^a-z0-9]/g, "");
+// Nombre de marca -> llave del SVG local. El catálogo de Taecel trae
+// variantes de la misma marca ("CFE Teit", "AT&T (Iusacell - Nextel)",
+// "Telcel Internet Amigo", "Paquetes BAIT"): primero se intenta el nombre
+// exacto y luego el prefijo, para que esas variantes caigan sobre el logo
+// que ya existe en vez de un bloque de color con iniciales.
+const localLogoKey = (name) => {
+  const s = slug(name);
+  if (LOCAL_LOGO_KEYS[s]) return LOCAL_LOGO_KEYS[s];
+
+  // Prefijo: "cfe teit" -> "cfe", "telcel internet amigo" -> "telcel".
+  const words = s.split(/\s+/).filter(Boolean);
+  for (let n = words.length - 1; n >= 1; n--) {
+    const head = words.slice(0, n).join(" ");
+    if (LOCAL_LOGO_KEYS[head]) return LOCAL_LOGO_KEYS[head];
+  }
+
+  // "AT&T (Iusacell - Nextel)" trae la marca entre paréntesis.
+  const paren = s.match(/\(([^)]+)\)/);
+  if (paren && LOCAL_LOGO_KEYS[paren[1].trim()]) {
+    return LOCAL_LOGO_KEYS[paren[1].trim()];
+  }
+
+  // "FlashMobile" (sin espacio) debe caer sobre "flash mobile".
+  const bare = s.replace(/[^a-z0-9]/g, "");
+  for (const [key, value] of Object.entries(LOCAL_LOGO_KEYS)) {
+    const keyBare = key.replace(/[^a-z0-9]/g, "");
+    if (keyBare && bare.startsWith(keyBare)) return value;
+  }
+
+  return bare;
+};
 
 const absoluteLogo = (value) => {
   const v = String(value || "").trim();
@@ -621,6 +659,17 @@ const createTaecel = ({
     }
   };
 
+  // El cache guarda el logoKey ya calculado; si se mejora el mapeo de logos
+  // (o Taecel renombra un carrier) hay que poder verlo sin esperar a que
+  // venza la TTL de 24 h. Al servir desde cache se rederiva desde el nombre.
+  const recomputeLogoKeys = (catalog) => ({
+    ...catalog,
+    operators: (catalog.operators || []).map((op) => ({
+      ...op,
+      logoKey: localLogoKey(op.name),
+    })),
+  });
+
   const getCatalog = async ({ force = false } = {}) => {
     const cached = safeJson(getSetting(CATALOG_SETTING), null);
     const cachedAt = cached && Number(cached.fetchedAt) ? Number(cached.fetchedAt) : 0;
@@ -636,7 +685,7 @@ const createTaecel = ({
             catalogInFlight = null;
           });
       }
-      return { ok: true, ...cached, cached: true, stale: !fresh };
+      return { ok: true, ...recomputeLogoKeys(cached), cached: true, stale: !fresh };
     }
 
     if (force && cached) {
@@ -644,7 +693,7 @@ const createTaecel = ({
       if (Date.now() - last < CATALOG_COOLDOWN_MS) {
         return {
           ok: true,
-          ...cached,
+          ...recomputeLogoKeys(cached),
           cached: true,
           stale: !fresh,
           cooldown: true,
@@ -661,7 +710,7 @@ const createTaecel = ({
     if (!result.ok && cached) {
       return {
         ok: true,
-        ...cached,
+        ...recomputeLogoKeys(cached),
         cached: true,
         stale: true,
         warning: result.error || result.message,
@@ -907,5 +956,6 @@ module.exports = {
   normalizeSale,
   maskKey,
   absoluteLogo,
+  localLogoKey,
   DEFAULT_BASE_URL,
 };

@@ -33,6 +33,7 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy }) => {
         <div className="flex items-center gap-2 border-b border-border px-2.5 py-2.5">
           <OperatorIcon
             id={tx.operatorLogo || tx.operatorKey}
+            remote={tx.operatorRemoteLogo}
             name={tx.operatorName}
             size="sm"
             className="w-10"

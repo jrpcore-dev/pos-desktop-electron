@@ -133,6 +133,7 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
       status: "pending",
       operatorKey: operator.key,
       operatorLogo: operator.logo,
+      operatorRemoteLogo: operator.remoteLogo,
       operatorName: operator.name,
       productName: product.name,
       sku: product.sku,
@@ -249,6 +250,7 @@ const ServiceCheckout = ({ operators, onTransaction, providerLive = false }) => 
               <>
                 <OperatorIcon
                   id={operator.logo}
+                  remote={operator.remoteLogo}
                   name={operator.name}
                   size="md"
                   className="w-12"

@@ -88,10 +88,14 @@ export const logoKeyFromName = (name) => {
 };
 
 // Fila del ledger (`toUiRow` del Host) → forma de la UI.
+// El ledger guarda en `carrier_logo` la URL del CDN de Taecel; se conserva
+// como `operatorRemoteLogo` (primera opción de pintado) y además se deriva la
+// llave local para reutilizar el SVG de respaldo si el CDN falla.
 export const toUiTransaction = (row) =>
   row
     ? {
         ...row,
+        operatorRemoteLogo: row.operatorLogo || null,
         operatorLogo: logoKeyFromName(row.operatorName),
         providerRef: row.transId || row.providerFolio || null,
         message: row.providerMessage || row.error || null,

@@ -134,6 +134,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
                       <div className="flex items-center gap-2">
                         <OperatorIcon
                           id={t.operatorLogo || t.operatorKey}
+                          remote={t.operatorRemoteLogo}
                           name={t.operatorName}
                           size="sm"
                           className="w-10"

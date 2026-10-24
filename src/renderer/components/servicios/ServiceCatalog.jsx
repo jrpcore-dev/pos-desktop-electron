@@ -109,9 +109,10 @@ const ServiceCatalog = ({
               >
                 <OperatorIcon
                   id={op.logo}
+                  remote={op.remoteLogo}
                   name={op.name}
                   size="lg"
-                  className="h-10 transition-transform duration-150 group-hover:scale-105"
+                  className="h-16 transition-transform duration-150 group-hover:scale-105"
                 />
                 <span
                   className={cn(
