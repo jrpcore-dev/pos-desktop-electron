@@ -148,7 +148,7 @@ const dropTriggers = (db) => {
 
   // settings: sólo las claves replicadas
   const seqS = logAll().length;
-  // Ticket (print_*) es de cada caja: no genera evento.
+  // `print_enabled` es de cada caja: no genera evento.
   dbA.prepare("INSERT INTO settings (key, value) VALUES ('print_enabled','1')").run();
   dbA.prepare("INSERT INTO settings (key, value) VALUES ('store_website','tienda.mx')").run();
   dbA.prepare("UPDATE settings SET value='OTRO' WHERE key='activation_code'").run();
@@ -156,7 +156,7 @@ const dropTriggers = (db) => {
   const logS = logAll().slice(seqS);
   check(
     logS.length === 1 && logS[0].row_id === "store_website",
-    "settings: sólo la clave replicada genera evento (ticket/activation_code/box_paired_token no)",
+    "settings: sólo la clave replicada genera evento (print_enabled/activation_code/box_paired_token no)",
     JSON.stringify(logS),
   );
 
