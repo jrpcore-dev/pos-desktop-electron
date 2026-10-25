@@ -11,6 +11,7 @@ import {
   ReceiptText,
   RefreshCw,
   Save,
+  Scale,
   SlidersHorizontal,
   Smartphone,
   Store,
@@ -42,6 +43,12 @@ import { cn } from "@/lib/utils";
 import PageHeader from "./PageHeader";
 import { fmtNumber } from "../utils/format";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
+import {
+  getScaleConfig,
+  openScaleDialog,
+  setScaleEnabled,
+  useScaleEnabled,
+} from "../utils/scaleConfig";
 
 const trimWhitespace = (canvas) => {
   const { width, height } = canvas;
@@ -119,6 +126,7 @@ const TABS = [
   { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal },
   { id: "mobile", label: "App Móvil", icon: Smartphone },
   { id: "printer", label: "Impresora", icon: Printer },
+  { id: "scale", label: "Báscula", icon: Scale },
 ];
 
 const TABS_META = {
@@ -149,6 +157,11 @@ const TABS_META = {
     icon: Printer,
     title: "Impresora",
     description: "Dispositivo de impresión térmica y ancho del papel.",
+  },
+  scale: {
+    icon: Scale,
+    title: "Báscula",
+    description: "Báscula para vender productos a granel. Se configura en cada caja.",
   },
 };
 
@@ -382,6 +395,7 @@ function ConfigurationScreen() {
   const notify = useToast();
   const fileInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState("store");
+  const scaleEnabled = useScaleEnabled();
 
   const [storeName, setStoreName] = useState("");
   const [storeRfc, setStoreRfc] = useState("");
@@ -1564,6 +1578,41 @@ function ConfigurationScreen() {
     </>
   );
 
+  const renderScaleTab = () => {
+    const savedPort = getScaleConfig().port;
+    return (
+      <section className="divide-y divide-border/40">
+        <ToggleBlock
+          title="Esta caja tiene báscula"
+          description="Actívalo sólo si hay una báscula conectada a esta computadora. Apagado, el sistema no la busca ni la muestra, y el peso de los productos a granel se escribe a mano."
+          checked={scaleEnabled}
+          onCheckedChange={(v) => {
+            setScaleEnabled(v);
+            notify(
+              v ? "Báscula activada en esta caja" : "Báscula desactivada en esta caja",
+              "success",
+            );
+          }}
+        />
+        {scaleEnabled && (
+          <FieldRow
+            label="Conexión"
+            description={
+              savedPort
+                ? `Configurada en ${savedPort}. Puedes probarla o cambiarla.`
+                : "Aún no está configurada. Conéctala para leer el peso automáticamente."
+            }
+          >
+            <Button variant="outline" className="w-full" onClick={openScaleDialog}>
+              <Scale className="h-4 w-4" />
+              {savedPort ? "Probar o cambiar báscula" : "Configurar báscula"}
+            </Button>
+          </FieldRow>
+        )}
+      </section>
+    );
+  };
+
   const renderPrinterTab = () => {
     const selectedMissing =
       printerName !== "" &&
@@ -1878,6 +1927,7 @@ function ConfigurationScreen() {
               {activeTab === "pos" && renderPosTab()}
               {activeTab === "mobile" && renderMobileTab()}
               {activeTab === "printer" && renderPrinterTab()}
+              {activeTab === "scale" && renderScaleTab()}
             </div>
           </Card>
         </div>

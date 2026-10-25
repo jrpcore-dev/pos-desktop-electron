@@ -74,6 +74,37 @@ import { ConfirmDialog } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import RouteShellSkeleton from "./RouteShellSkeleton";
 import SystemStatus from "./SystemStatus";
+import { Label } from "./ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import {
+  SCALE_BAUDS,
+  SCALE_FORMATS,
+  SCALE_PROFILES,
+  OPEN_SCALE_EVENT,
+  getScaleConfig,
+  toDriverConfig,
+  useScaleEnabled,
+} from "../utils/scaleConfig";
+
+// Mensajes del driver/SO → algo que el cajero entienda.
+const friendlyScaleError = (msg) => {
+  const m = String(msg || "");
+  if (/access denied|acceso denegado|busy|ocupado/i.test(m))
+    return "El puerto está ocupado por otro programa. Ciérralo e intenta de nuevo.";
+  if (/file not found|cannot find|no such|not exist|no se encuentra/i.test(m))
+    return "No se encontró la báscula en ese puerto. Revisa que el cable esté conectado.";
+  if (/sin lectura|no se pudo leer/i.test(m))
+    return "La báscula se conectó pero no envió el peso. Prueba con otra marca o revisa las opciones avanzadas.";
+  if (/sobrecarga/i.test(m)) return "La báscula marca sobrecarga: retira peso.";
+  if (/desconectada/i.test(m)) return "Se perdió la conexión con la báscula.";
+  return m.replace(/^Báscula:\s*/, "") || "No se pudo conectar con la báscula.";
+};
 
 const TaskDialog = React.lazy(() => import("./TaskDialog"));
 
@@ -282,8 +313,19 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     () => localStorage.getItem("scalePort") || "",
   );
   const [scaleBaud, setScaleBaud] = useState(
-    () => localStorage.getItem("scaleBaud") || "115200",
+    () => String(getScaleConfig().baudRate),
   );
+  const [scaleProfile, setScaleProfile] = useState(
+    () => getScaleConfig().profile,
+  );
+  const [scaleFormat, setScaleFormat] = useState(
+    () => getScaleConfig().format,
+  );
+  const [scaleDetected, setScaleDetected] = useState(null);
+  const [scaleStable, setScaleStable] = useState(null);
+  const [scalePickPort, setScalePickPort] = useState("");
+  const [scaleAdvancedOpen, setScaleAdvancedOpen] = useState(false);
+  const scaleEnabled = useScaleEnabled();
   const [scaleLoading, setScaleLoading] = useState(false);
   const [scaleError, setScaleError] = useState("");
   const [scaleReading, setScaleReading] = useState("");
@@ -425,6 +467,13 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         return false;
       }
     };
+    // Báscula apagada en Configuración: se libera el puerto y no se reintenta.
+    if (!scaleEnabled) {
+      setScaleConnected(false);
+      setScaleDialogOpen(false);
+      window.api.invoke("disconnect-scale").catch(() => {});
+      return undefined;
+    }
     let cancelled = false;
     const connectingRef = { current: false };
     const autoConnect = async () => {
@@ -435,17 +484,20 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       if (alreadyConnected) return;
       connectingRef.current = true;
       try {
+        // Lo guardado (no lo que se está editando en el diálogo).
         const result = await window.api.invoke(
           "connect-scale",
           scalePort,
-          parseInt(scaleBaud),
+          toDriverConfig(getScaleConfig()),
         );
         if (!cancelled) {
           setScaleConnected(result.success);
           if (result.success) {
             setScaleReading(result.raw || "");
             setScaleLastWeight(result.weight ?? null);
-            setScaleNote(result.error || "");
+            setScaleStable(result.stable ?? null);
+            setScaleDetected(result.profile || null);
+            setScaleNote(result.error ? friendlyScaleError(result.error) : "");
           }
         }
       } catch {
@@ -463,11 +515,11 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       cancelled = true;
       clearInterval(interval);
     };
-  }, [scalePort, scaleBaud]);
+  }, [scalePort, scaleEnabled]);
 
   useEffect(() => {
     const unsub = window.api.on("scale-error", (msg) => {
-      setScaleError(String(msg));
+      setScaleError(friendlyScaleError(msg));
     });
     return () => unsub();
   }, []);
@@ -736,58 +788,77 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       : []),
   ];
 
-  const handleOpenScaleDialog = async () => {
-    setScaleDialogOpen(true);
-    setScaleError("");
-    setScaleLoading(true);
-    try {
-      const ports = await window.api.invoke("list-serial-ports");
-      setScalePorts(ports);
-    } catch {
-      setScalePorts([]);
-      setScaleError("Error al buscar puertos");
-    }
-    setScaleLoading(false);
-  };
-
   const handleRefreshPorts = async () => {
     setScaleLoading(true);
     setScaleError("");
     try {
       const ports = await window.api.invoke("list-serial-ports");
       setScalePorts(ports);
+      setScalePickPort((cur) =>
+        ports.some((p) => p.path === cur) ? cur : ports[0]?.path || "",
+      );
     } catch {
       setScalePorts([]);
-      setScaleError("Error al buscar puertos");
+      setScaleError("No se pudieron buscar las conexiones de este equipo.");
     }
     setScaleLoading(false);
   };
 
-  const handleConnectScale = async (portPath, closeOnSuccess = true) => {
+  const handleOpenScaleDialog = async () => {
+    if (!scaleEnabled) return;
+    const saved = getScaleConfig();
+    setScaleBaud(String(saved.baudRate));
+    setScaleProfile(saved.profile);
+    setScaleFormat(saved.format);
+    setScalePickPort(scalePort);
+    setScaleAdvancedOpen(false);
+    setScaleDialogOpen(true);
+    await handleRefreshPorts();
+  };
+
+  // Configuración → "Configurar báscula" abre este mismo diálogo.
+  const openScaleRef = useRef(handleOpenScaleDialog);
+  openScaleRef.current = handleOpenScaleDialog;
+  useEffect(() => {
+    const onOpen = () => openScaleRef.current();
+    window.addEventListener(OPEN_SCALE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_SCALE_EVENT, onOpen);
+  }, []);
+
+  const handleConnectScale = async (portPath, closeOnSuccess = false) => {
+    if (!portPath) return;
     setScaleLoading(true);
     setScaleError("");
     localStorage.setItem("scalePort", portPath);
     localStorage.setItem("scaleBaud", scaleBaud);
+    localStorage.setItem("scaleProfile", scaleProfile);
+    localStorage.setItem("scaleFormat", scaleFormat);
     try {
       const result = await window.api.invoke(
         "connect-scale",
         portPath,
-        parseInt(scaleBaud),
+        toDriverConfig({
+          baudRate: scaleBaud,
+          profile: scaleProfile,
+          format: scaleFormat,
+        }),
       );
       setScaleReading(result.raw || "");
       setScaleLastWeight(result.weight ?? null);
+      setScaleStable(result.stable ?? null);
+      setScaleDetected(result.profile || null);
       if (result.success) {
         setScaleConnected(true);
         setScalePort(portPath);
-        setScaleNote(result.error || "");
+        setScaleNote(result.error ? friendlyScaleError(result.error) : "");
         if (closeOnSuccess && !result.error) setScaleDialogOpen(false);
       } else {
         setScaleConnected(false);
         setScaleNote("");
-        setScaleError(`No se pudo conectar: ${result.error}`);
+        setScaleError(friendlyScaleError(result.error));
       }
     } catch (e) {
-      setScaleError("Error de conexion");
+      setScaleError(friendlyScaleError(e?.message));
       setScaleConnected(false);
     }
     setScaleLoading(false);
@@ -798,22 +869,19 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     setScaleLoading(true);
     setScaleError("");
     try {
-      const result = await window.api.invoke(
-        "connect-scale",
-        scalePort,
-        parseInt(scaleBaud),
-      );
+      // El puerto ya está abierto: sólo se pide una lectura (no se reabre).
+      const result = await window.api.invoke("read-weight");
       setScaleReading(result.raw || "");
       setScaleLastWeight(result.weight ?? null);
+      setScaleStable(result.stable ?? null);
+      if (result.profile) setScaleDetected(result.profile);
       if (result.success) {
-        setScaleConnected(true);
-        setScaleNote(result.error || "");
-        if (result.error) setScaleError("");
+        setScaleNote("");
       } else {
-        setScaleError(`No se pudo conectar: ${result.error}`);
+        setScaleError(friendlyScaleError(result.error));
       }
     } catch (e) {
-      setScaleError("Error de conexion");
+      setScaleError(friendlyScaleError(e?.message));
     }
     setScaleLoading(false);
   };
@@ -825,6 +893,8 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       setScalePort("");
       setScaleReading("");
       setScaleLastWeight(null);
+      setScaleStable(null);
+      setScaleDetected(null);
       setScaleNote("");
       setScaleError("");
       localStorage.removeItem("scalePort");
@@ -1319,12 +1389,13 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 serverRunning={serverRunning}
                 hostStatus={hostStatus}
                 scaleConnected={scaleConnected}
+                scaleEnabled={scaleEnabled}
                 tasksCount={todayTasksCount}
                 pendingCount={pendingCount}
                 replicaStaleMs={replicaStaleMs}
                 isDark={isDark}
                 onToggleTheme={toggleMode}
-                onOpenScale={handleOpenScaleDialog}
+                onOpenScale={scaleEnabled ? handleOpenScaleDialog : undefined}
                 onOpenTasks={() => setTaskDialogOpen(true)}
               />
               <UpdateButton />
@@ -1353,7 +1424,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           register={register}
           isDark={isDark}
           onToggleTheme={toggleMode}
-          onOpenScale={handleOpenScaleDialog}
+          onOpenScale={scaleEnabled ? handleOpenScaleDialog : undefined}
           onOpenTasks={() => setTaskDialogOpen(true)}
           onOpenShortcuts={() => setShortcutsDialogOpen(true)}
           onRefreshPulse={handleRefreshPulse}
@@ -1529,152 +1600,244 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         </Modal>
 
         {/* ─── BÁSCULA ─── */}
+        {scaleEnabled && (
         <Modal open={scaleDialogOpen} onClose={() => setScaleDialogOpen(false)}>
           <ModalHeader>
             <Scale
               size={20}
-              className={
-                scaleConnected ? "text-emerald-600" : "text-muted-foreground"
-              }
+              className={scaleConnected ? "text-success" : "text-muted-foreground"}
             />
             <h2 className="text-base font-bold text-foreground">Báscula</h2>
+            <span
+              className={cn(
+                "ml-auto inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                scaleConnected
+                  ? "bg-success/10 text-success"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
+              <StatusDot ok={scaleConnected} />
+              {scaleConnected ? "Conectada" : "Sin conectar"}
+            </span>
           </ModalHeader>
           <ModalBody>
-            <div className="flex flex-col gap-3 py-1">
-              <div className="flex items-center gap-2">
-                <StatusDot ok={scaleConnected} />
-                <span
-                  className={cn(
-                    "text-sm font-semibold",
-                    scaleConnected ? "text-success" : "text-destructive",
-                  )}
-                >
-                  {scaleConnected ? "Conectada" : "Desconectada"}
-                </span>
-              </div>
-
+            <div className="flex flex-col gap-4 py-1">
               {scaleConnected ? (
                 <>
-                  <p className="text-sm text-muted-foreground">
-                    Puerto:{" "}
-                    <strong className="text-foreground">{scalePort}</strong>
-                  </p>
-                  {scaleReading && (
-                    <div className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
-                      <p>
-                        Última lectura:{" "}
-                        <strong className="text-foreground">
-                          {scaleReading}
-                        </strong>
+                  {/* Prueba en vivo: lo que el usuario entiende es el peso. */}
+                  <div className="rounded-xl border border-border bg-muted/40 px-4 py-5 text-center">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Peso actual
+                    </p>
+                    <p className="mt-1 text-4xl font-extrabold tabular-nums text-foreground">
+                      {scaleLastWeight != null
+                        ? `${scaleLastWeight.toFixed(3)} kg`
+                        : "— kg"}
+                    </p>
+                    {scaleLastWeight != null && scaleStable != null && (
+                      <p
+                        className={cn(
+                          "mt-1 text-xs font-semibold",
+                          scaleStable ? "text-success" : "text-warning",
+                        )}
+                      >
+                        {scaleStable ? "Peso estable" : "Estabilizando…"}
                       </p>
-                      {scaleLastWeight != null && (
-                        <p className="mt-0.5">
-                          Peso:{" "}
-                          <strong className="text-foreground">
-                            {scaleLastWeight}
-                          </strong>
-                        </p>
-                      )}
-                    </div>
-                  )}
+                    )}
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Coloca algo sobre la báscula y presiona “Probar”.
+                    </p>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {SCALE_PROFILES.find((p) => p.value === scaleDetected)
+                      ?.label || "Báscula"}{" "}
+                    conectada en{" "}
+                    <strong className="text-foreground">{scalePort}</strong>.
+                  </p>
                   {scaleNote && <Alert tone="warning">{scaleNote}</Alert>}
                   {scaleError && <Alert tone="error">{scaleError}</Alert>}
-                  <Btn
-                    variant="ghost"
-                    size="sm"
-                    className="self-start"
-                    disabled={scaleLoading}
-                    onClick={handleProbeScale}
-                  >
-                    {scaleLoading ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <RefreshCw size={16} />
-                    )}
-                    Probar lectura
-                  </Btn>
                 </>
               ) : (
                 <>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">
-                      Selecciona el puerto COM:
-                    </span>
-                    <Btn
-                      variant="ghost"
-                      size="sm"
-                      disabled={scaleLoading}
-                      onClick={handleRefreshPorts}
-                    >
-                      Refrescar
-                    </Btn>
-                  </div>
-                  {scaleError && <Alert tone="error">{scaleError}</Alert>}
-                  {scaleLoading && (
-                    <p className="text-sm text-muted-foreground">
-                      Buscando puertos...
-                    </p>
-                  )}
-                  {!scaleLoading && scalePorts.length === 0 && (
-                    <p className="text-sm italic text-muted-foreground">
-                      No se detectaron puertos. Verifica la conexión USB.
-                    </p>
-                  )}
-                  {!scaleLoading && scalePorts.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
-                      {scalePorts.map((p) => (
-                        <button
-                          key={p.path}
-                          disabled={scaleLoading}
-                          onClick={() => handleConnectScale(p.path)}
-                          className={cn(
-                            "cursor-pointer rounded-md px-3 py-2 text-left text-sm font-semibold transition-colors",
-                            scalePort === p.path
-                              ? "bg-primary text-primary-foreground"
-                              : "border border-border text-foreground hover:bg-muted",
-                          )}
-                        >
-                          {p.path}
-                          {p.manufacturer ? ` - ${p.manufacturer}` : ""}
-                        </button>
-                      ))}
+                  <p className="text-sm text-muted-foreground">
+                    Conecta el cable de la báscula a la computadora y elige
+                    dónde está conectada.
+                  </p>
+
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">
+                        1. ¿Dónde está conectada?
+                      </Label>
+                      <Btn
+                        variant="ghost"
+                        size="sm"
+                        disabled={scaleLoading}
+                        onClick={handleRefreshPorts}
+                      >
+                        <RefreshCw
+                          size={14}
+                          className={cn(scaleLoading && "animate-spin")}
+                        />
+                        Buscar de nuevo
+                      </Btn>
                     </div>
-                  )}
-                  <label className="flex flex-col gap-1 text-sm">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Baud rate
-                    </span>
-                    <select
-                      value={scaleBaud}
-                      onChange={(e) => setScaleBaud(e.target.value)}
-                      className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                    {scalePorts.length > 0 ? (
+                      <Select
+                        value={scalePickPort}
+                        onValueChange={setScalePickPort}
+                        disabled={scaleLoading}
+                      >
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Elige una conexión" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {scalePorts.map((p) => (
+                            <SelectItem key={p.path} value={p.path}>
+                              {p.friendlyName && p.friendlyName !== p.path
+                                ? p.friendlyName
+                                : p.path}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                        {scaleLoading
+                          ? "Buscando la báscula…"
+                          : "No se encontró ninguna conexión. Revisa que el cable esté conectado y presiona “Buscar de nuevo”."}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">
+                      2. ¿Qué marca es tu báscula?
+                    </Label>
+                    <Select value={scaleProfile} onValueChange={setScaleProfile}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SCALE_PROFILES.map((p) => (
+                          <SelectItem key={p.value} value={p.value}>
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Si no la conoces, deja “No sé”: el sistema la detecta.
+                    </p>
+                  </div>
+
+                  {/* Lo técnico, escondido: sólo si un técnico o el manual lo pide. */}
+                  <div className="rounded-lg border border-border">
+                    <button
+                      type="button"
+                      onClick={() => setScaleAdvancedOpen((v) => !v)}
+                      aria-expanded={scaleAdvancedOpen}
+                      className="flex w-full cursor-pointer items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-muted-foreground hover:text-foreground"
                     >
-                      <option value="9600">9600</option>
-                      <option value="19200">19200</option>
-                      <option value="38400">38400</option>
-                      <option value="57600">57600</option>
-                      <option value="115200">115200</option>
-                    </select>
-                  </label>
+                      Opciones avanzadas
+                      <ChevronRight
+                        size={16}
+                        className={cn(
+                          "transition-transform",
+                          scaleAdvancedOpen && "rotate-90",
+                        )}
+                      />
+                    </button>
+                    {scaleAdvancedOpen && (
+                      <div className="flex flex-col gap-3 border-t border-border px-3 py-3">
+                        <p className="text-xs text-muted-foreground">
+                          Cámbialas sólo si el manual de la báscula o un técnico
+                          lo indica. Casi todas funcionan con 9600 y Estándar.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs text-muted-foreground">
+                              Velocidad
+                            </Label>
+                            <Select value={scaleBaud} onValueChange={setScaleBaud}>
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SCALE_BAUDS.map((b) => (
+                                  <SelectItem key={b} value={b}>
+                                    {b}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs text-muted-foreground">
+                              Formato
+                            </Label>
+                            <Select value={scaleFormat} onValueChange={setScaleFormat}>
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SCALE_FORMATS.map((f) => (
+                                  <SelectItem key={f.value} value={f.value}>
+                                    {f.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {scaleError && <Alert tone="error">{scaleError}</Alert>}
                 </>
               )}
             </div>
           </ModalBody>
           <ModalFooter>
-            {scaleConnected && (
-              <Btn
-                variant="destructive"
-                className="mr-auto"
-                onClick={handleDisconnectScale}
-              >
-                Desconectar
-              </Btn>
+            {scaleConnected ? (
+              <>
+                <Btn
+                  variant="ghost"
+                  className="mr-auto text-destructive hover:text-destructive"
+                  onClick={handleDisconnectScale}
+                >
+                  Desconectar
+                </Btn>
+                <CancelButton onClick={() => setScaleDialogOpen(false)}>
+                  Cerrar
+                </CancelButton>
+                <Btn disabled={scaleLoading} onClick={handleProbeScale}>
+                  {scaleLoading ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Scale size={16} />
+                  )}
+                  Probar
+                </Btn>
+              </>
+            ) : (
+              <>
+                <CancelButton onClick={() => setScaleDialogOpen(false)}>
+                  Cerrar
+                </CancelButton>
+                <Btn
+                  disabled={scaleLoading || !scalePickPort}
+                  onClick={() => handleConnectScale(scalePickPort)}
+                >
+                  {scaleLoading && <Loader2 size={16} className="animate-spin" />}
+                  {scaleLoading ? "Conectando…" : "Conectar"}
+                </Btn>
+              </>
             )}
-            <CancelButton onClick={() => setScaleDialogOpen(false)}>
-              Cerrar
-            </CancelButton>
           </ModalFooter>
         </Modal>
+        )}
 
         {/* ─── TAREAS (lazy) ─── */}
         <Suspense fallback={null}>

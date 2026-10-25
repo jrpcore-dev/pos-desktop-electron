@@ -56,7 +56,11 @@ import {
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
 import { setSaleInProgress } from "../utils/posState";
-import { getScaleConfig, toDriverConfig } from "../utils/scaleConfig";
+import {
+  getScaleConfig,
+  isScaleEnabled,
+  toDriverConfig,
+} from "../utils/scaleConfig";
 
 let roundEnabled = true;
 let roundStep = 0.5;
@@ -786,6 +790,8 @@ if (e.key === "Tab" && !isEditable) {
 
   useEffect(() => {
     if (!weightDialog.open || !weightDialog.product) return;
+    // Caja sin báscula: el peso se captura a mano, sin tocar el puerto.
+    if (!isScaleEnabled()) return;
     let cancelled = false;
 
     manualWeightRef.current = false;

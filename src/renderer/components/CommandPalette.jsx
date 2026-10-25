@@ -87,12 +87,17 @@ const CommandPalette = ({
       icon: isDark ? <Sun /> : <Moon />,
       onSelect: () => run(onToggleTheme),
     },
-    {
-      id: "scale",
-      label: "Conectar o probar báscula",
-      icon: <Scale />,
-      onSelect: () => run(onOpenScale),
-    },
+    // Sin báscula habilitada en esta caja, la acción no aparece.
+    ...(onOpenScale
+      ? [
+          {
+            id: "scale",
+            label: "Conectar o probar báscula",
+            icon: <Scale />,
+            onSelect: () => run(onOpenScale),
+          },
+        ]
+      : []),
     {
       id: "tasks",
       label: "Tareas del día",

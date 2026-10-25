@@ -95,6 +95,7 @@ const SystemStatus = ({
   serverRunning,
   hostStatus,
   scaleConnected,
+  scaleEnabled = true,
   tasksCount,
   isDark,
   pendingCount = 0,
@@ -171,8 +172,8 @@ const openRegister = () => {
             className="flex shrink-0 items-center gap-1.5"
             title={
               hostStatus
-                ? `Host: ${hostStatus.busy ? "ocupado" : hostStatus.reachable ? "conectado" : "desconectado"}${pendingCount ? ` · ${pendingCount} venta(s) pendiente(s)` : ""} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
-                : `Servidor: ${serverRunning ? "activo" : "caído"} · Báscula: ${scaleConnected ? "conectada" : "desconectada"}`
+                ? `Host: ${hostStatus.busy ? "ocupado" : hostStatus.reachable ? "conectado" : "desconectado"}${pendingCount ? ` · ${pendingCount} venta(s) pendiente(s)` : ""}${scaleEnabled ? ` · Báscula: ${scaleConnected ? "conectada" : "desconectada"}` : ""}`
+                : `Servidor: ${serverRunning ? "activo" : "caído"}${scaleEnabled ? ` · Báscula: ${scaleConnected ? "conectada" : "desconectada"}` : ""}`
             }
           >
             <Wifi
@@ -200,15 +201,17 @@ const openRegister = () => {
                     : "text-destructive"
               }
             />
-            <span
-              title={
-                scaleConnected ? "Báscula conectada" : "Báscula desconectada"
-              }
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                scaleConnected ? "bg-success" : "bg-muted-foreground/40",
-              )}
-            />
+            {scaleEnabled && (
+              <span
+                title={
+                  scaleConnected ? "Báscula conectada" : "Báscula desconectada"
+                }
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  scaleConnected ? "bg-success" : "bg-muted-foreground/40",
+                )}
+              />
+            )}
           </span>
 
           <span className="h-4 w-px shrink-0 bg-border" />
@@ -397,14 +400,16 @@ const openRegister = () => {
                     : "err"
               }
             />
-            <StateTile
-              icon={Scale}
-              label="Báscula"
-              status={scaleConnected ? "Conectada" : "Desconectada"}
-              tone={scaleConnected ? "ok" : "neutral"}
-              onClick={openScale}
-              title={scaleConnected ? "Báscula conectada" : "Conectar báscula"}
-            />
+            {scaleEnabled && (
+              <StateTile
+                icon={Scale}
+                label="Báscula"
+                status={scaleConnected ? "Conectada" : "Desconectada"}
+                tone={scaleConnected ? "ok" : "neutral"}
+                onClick={openScale}
+                title={scaleConnected ? "Báscula conectada" : "Conectar báscula"}
+              />
+            )}
             <StateTile
               icon={isDark ? Sun : Moon}
               label="Tema"
