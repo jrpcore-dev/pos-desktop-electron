@@ -380,7 +380,6 @@ function ConfigurationScreen() {
   const [activePrintMode, setActivePrintMode] = useState("auto");
   const [savingPrinter, setSavingPrinter] = useState(false);
   const [testingPrint, setTestingPrint] = useState(false);
-  const [testingEscPos, setTestingEscPos] = useState(false);
   const testReceiptHtmlRef = useRef(null);
 
   useEffect(() => {
@@ -457,7 +456,7 @@ function ConfigurationScreen() {
     }
   };
 
-  const handleTestPrint = async (variant) => {
+  const handleTestPrint = async () => {
     setTestingPrint(true);
     try {
       // Imprime con la selección ACTUAL de la UI (aunque no esté guardada):
@@ -492,23 +491,8 @@ function ConfigurationScreen() {
         printerName,
         paperWidthMm: Number(paperWidth),
         printMode,
-        // "PDF" es la variante diagnóstica (siempre por Chromium, sin driver).
-        printVariant: variant === "PDF" ? "PDF" : "ticket",
+        printVariant: "ticket",
       });
-      if (variant === "PDF" && res?.success) {
-        if (!res.pdf) {
-          throw new Error("Electron no devolvió el PDF generado.");
-        }
-        const preview = await window.api.invoke("print-pdf", res.pdf);
-        if (!preview?.success) {
-          throw new Error(preview?.error || "No se pudo abrir la vista previa PDF.");
-        }
-        notify(
-          `PDF generado para «${res.printer}». En la vista previa, imprime con Ctrl+P y selecciona esa impresora.`,
-          "success",
-        );
-        return;
-      }
       if (res && res.success) {
         const via =
           res.mode === "escpos" ? "ESC/POS directo" : "driver de Windows";
@@ -529,37 +513,6 @@ function ConfigurationScreen() {
       notify(`Falló la impresión de prueba: ${err.message || "error de impresión."}`, "error");
     } finally {
       setTestingPrint(false);
-    }
-  };
-
-  // Prueba ESC/POS en crudo: manda bytes ESC/POS por el spooler SIN pasar por
-  // el driver de render (Unidrv). Discrimina dialecto: si esto imprime y el
-  // ticket HTML no, la impresora habla ESC/POS y el driver emite otra cosa.
-  const handleEscPosTest = async () => {
-    setTestingEscPos(true);
-    try {
-      const res = await window.api.invoke("print-escpos-test", {
-        printerName,
-        paperWidthMm: Number(paperWidth),
-      });
-      if (res && res.success) {
-        notify(
-          res.fellBack
-            ? `Prueba ESC/POS enviada en crudo a «${res.printer}» (la seleccionada no está disponible). Verifica físicamente el papel.`
-            : `Prueba ESC/POS enviada en crudo a «${res.printer}». Verifica físicamente el papel.`,
-          "success",
-        );
-      } else {
-        notify(
-          `Falló la prueba ESC/POS: ${(res && res.error) || "no se pudo enviar el trabajo."}`,
-          "error",
-        );
-      }
-    } catch (err) {
-      console.error("Error printing ESC/POS test:", err);
-      notify(`Falló la prueba ESC/POS: ${err.message || "error de impresión."}`, "error");
-    } finally {
-      setTestingEscPos(false);
     }
   };
 
@@ -1724,7 +1677,7 @@ function ConfigurationScreen() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => handleTestPrint("ticket")}
+                  onClick={handleTestPrint}
                   disabled={testingPrint}
                   title="Envía este ticket real a la impresora seleccionada con el ancho y el modo de impresión elegidos."
                 >
@@ -1734,32 +1687,6 @@ function ConfigurationScreen() {
                     <Printer className="h-4 w-4" />
                   )}
                   Imprimir prueba
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => handleTestPrint("PDF")}
-                  disabled={testingPrint}
-                  title="Genera una vista PDF con el ancho seleccionado y el alto medido del HTML."
-                >
-                  {testingPrint ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Printer className="h-4 w-4" />
-                  )}
-                  Vista previa PDF
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleEscPosTest}
-                  disabled={testingEscPos || testingPrint}
-                  title="Envía un ticket de texto ESC/POS en crudo (sin driver). Si esto imprime, la impresora es compatible con el modo ESC/POS directo."
-                >
-                  {testingEscPos ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Printer className="h-4 w-4" />
-                  )}
-                  Prueba ESC/POS
                 </Button>
                 <Button onClick={handleSavePrinter} disabled={savingPrinter}>
                   {savingPrinter ? (
