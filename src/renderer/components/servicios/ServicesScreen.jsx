@@ -9,12 +9,12 @@ import {
   Zap,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useToast } from "@/components/ToastProvider";
 import { toUiOperators, toUiTransaction } from "./taecelCatalog";
 import { money } from "./serviceMoney";
 import { useCashier } from "@/contexts/CashierContext";
-import PageHeader from "../PageHeader";
 import ServiceCheckout from "./ServiceCheckout";
 import ServiceHistory from "./ServiceHistory";
 import ServiceProviderDialog from "./ServiceProviderDialog";
@@ -34,6 +34,7 @@ const ServicesScreen = () => {
   const [provider, setProvider] = useState({ state: "loading" });
   const [checking, setChecking] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -98,6 +99,36 @@ const ServicesScreen = () => {
     return () => clearInterval(t);
   }, [checkProvider, loadHistory]);
 
+  // Fuerza la baja del catálogo a Taecel (el Host aplica su cooldown de
+  // 1 hora). Sirve cuando se activan servicios o tarjetas en el panel de
+  // Taecel y no se quiere esperar a que venza la caché de 24 h.
+  const refreshCatalog = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const res = await window.api.invoke("taecel:refresh-catalog");
+      if (!mounted.current) return;
+      if (!res?.ok) {
+        notify(res?.error || "No se pudo actualizar el catálogo", "error");
+        return;
+      }
+      if (res.cooldown) {
+        notify("El catálogo ya se actualizó hace menos de 1 hora", "info");
+        return;
+      }
+      setOperators(toUiOperators(res));
+      notify(
+        `Catálogo actualizado · ${(res.operators || []).length} compañías`,
+        "success",
+      );
+    } catch (e) {
+      if (mounted.current) {
+        notify(e?.message || "No se pudo actualizar el catálogo", "error");
+      }
+    } finally {
+      if (mounted.current) setRefreshing(false);
+    }
+  }, [notify]);
+
   const upsert = useCallback((tx) => {
     if (!tx) return;
     setTransactions((rows) => {
@@ -144,84 +175,7 @@ const ServicesScreen = () => {
   );
 
   return (
-    <div className="flex flex-col gap-3">
-      <PageHeader
-        description="Cobra recargas, paquetes y pagos de servicios desde el punto de venta"
-        meta={
-          <span
-            role="status"
-            aria-live="polite"
-            className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"
-          >
-            <span className="inline-flex items-center gap-1.5 font-semibold text-foreground">
-              {provider.state === "live" ? (
-                <Wifi size={13} className="text-success" aria-hidden />
-              ) : provider.state === "loading" ? (
-                <Loader2
-                  size={13}
-                  className="animate-spin text-muted-foreground"
-                  aria-hidden
-                />
-              ) : (
-                <WifiOff size={13} className="text-warning" aria-hidden />
-              )}
-              Taecel
-            </span>
-            <span aria-hidden className="h-3 w-px bg-border" />
-            <span className="tabular-nums">
-              {provider.state === "loading" && "Consultando saldo…"}
-              {provider.state === "live" && (
-                <>
-                  Saldo tiempo aire{" "}
-                  <b className="font-semibold text-foreground">
-                    {money(provider.airtimeCents || 0)}
-                  </b>{" "}
-                  · servicios{" "}
-                  <b className="font-semibold text-foreground">
-                    {money(provider.servicesCents || 0)}
-                  </b>
-                </>
-              )}
-              {provider.state === "local" &&
-                (provider.notConfigured
-                  ? "Sin configurar · captura la Key y el NIP en «Proveedor»"
-                  : `Sin conexión${provider.error ? ` · ${provider.error}` : ""}`)}
-            </span>
-          </span>
-        }
-        actions={
-          <>
-            {provider.state === "local" && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => checkProvider(true)}
-                disabled={checking}
-                className="gap-1.5"
-              >
-                {checking ? (
-                  <Loader2 size={14} className="animate-spin" aria-hidden />
-                ) : (
-                  <RefreshCw size={14} aria-hidden />
-                )}
-                Reintentar
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setConfigOpen(true)}
-              className="gap-1.5"
-            >
-              <Settings2 size={14} aria-hidden />
-              Proveedor
-            </Button>
-          </>
-        }
-      />
-
+    <div className="flex flex-col">
       <Tabs
         value={tab}
         onValueChange={(next) => {
@@ -229,16 +183,97 @@ const ServicesScreen = () => {
           if (next === "historial") loadHistory();
         }}
       >
-        <TabsList className="h-9 w-fit">
-          <TabsTrigger value="cobrar" className="h-8 gap-1.5 px-3 text-sm">
-            <Zap size={14} aria-hidden />
-            Cobrar
-          </TabsTrigger>
-          <TabsTrigger value="historial" className="h-8 gap-1.5 px-3 text-sm">
-            <History size={14} aria-hidden />
-            Historial
-          </TabsTrigger>
-        </TabsList>
+        {/* Una sola barra: pestañas, estado de Taecel con saldos y acciones.
+            El navbar ya dice «Servicios», así que no hace falta descripción. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <TabsList className="h-9 w-fit">
+            <TabsTrigger value="cobrar" className="h-8 gap-1.5 px-3 text-sm">
+              <Zap size={14} aria-hidden />
+              Cobrar
+            </TabsTrigger>
+            <TabsTrigger value="historial" className="h-8 gap-1.5 px-3 text-sm">
+              <History size={14} aria-hidden />
+              Historial
+            </TabsTrigger>
+          </TabsList>
+
+          <div
+            role="status"
+            aria-live="polite"
+            className="ml-auto flex h-9 min-w-0 items-center gap-2.5 rounded-lg border border-border bg-card px-3 text-xs"
+          >
+            <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-foreground">
+              {provider.state === "live" ? (
+                <Wifi size={13} className="text-success" aria-hidden />
+              ) : provider.state === "loading" ? (
+                <Loader2 size={13} className="animate-spin text-muted-foreground" aria-hidden />
+              ) : (
+                <WifiOff size={13} className="text-warning" aria-hidden />
+              )}
+              Taecel
+            </span>
+            <span aria-hidden className="h-4 w-px bg-border" />
+            {provider.state === "live" ? (
+              <>
+                <Balance label="Tiempo aire" cents={provider.airtimeCents} />
+                <Balance label="Servicios" cents={provider.servicesCents} />
+              </>
+            ) : (
+              <span className="truncate text-muted-foreground">
+                {provider.state === "loading"
+                  ? "Consultando saldo…"
+                  : provider.notConfigured
+                    ? "Sin configurar · captura la Key y el NIP en «Proveedor»"
+                    : `Sin conexión${provider.error ? ` · ${provider.error}` : ""}`}
+              </span>
+            )}
+          </div>
+
+          {provider.state === "local" && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => checkProvider(true)}
+              disabled={checking}
+              className="h-9 gap-1.5"
+            >
+              {checking ? (
+                <Loader2 size={14} className="animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw size={14} aria-hidden />
+              )}
+              Reintentar
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={refreshCatalog}
+            disabled={refreshing || checking}
+            className="size-9"
+            title="Actualizar catálogo de Taecel (1 vez por hora)"
+            aria-label="Actualizar catálogo"
+          >
+            {refreshing ? (
+              <Loader2 size={15} className="animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw size={15} aria-hidden />
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setConfigOpen(true)}
+            className="size-9"
+            title="Proveedor (Key y NIP de Taecel)"
+            aria-label="Proveedor"
+          >
+            <Settings2 size={15} aria-hidden />
+          </Button>
+        </div>
 
         <TabsContent value="cobrar" className="mt-3">
           <ServiceCheckout
@@ -247,6 +282,7 @@ const ServicesScreen = () => {
             onTransaction={upsert}
             providerLive={provider.state === "live"}
             cashierId={cashier?.id ?? null}
+            loading={provider.state === "loading" && operators.length === 0}
           />
         </TabsContent>
 
@@ -267,5 +303,21 @@ const ServicesScreen = () => {
     </div>
   );
 };
+
+// Saldo de una bolsa de Taecel; en ámbar cuando ya alcanza para poco.
+const LOW_BALANCE_CENTS = 200 * 100;
+const Balance = ({ label, cents = 0 }) => (
+  <span className="inline-flex shrink-0 items-baseline gap-1">
+    <span className="text-muted-foreground">{label}</span>
+    <b
+      className={cn(
+        "font-bold tabular-nums",
+        cents < LOW_BALANCE_CENTS ? "text-warning" : "text-foreground",
+      )}
+    >
+      {money(cents || 0)}
+    </b>
+  </span>
+);
 
 export default ServicesScreen;

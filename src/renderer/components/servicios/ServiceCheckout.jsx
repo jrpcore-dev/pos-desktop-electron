@@ -4,6 +4,7 @@ import {
   buildFamilies,
   defaultMember,
   familyOfOperator,
+  isFreeAmount,
   quote,
   toUiTransaction,
   validateInput,
@@ -14,6 +15,9 @@ import { NEEDS_ATTENTION } from "./serviceStatus";
 import { OperatorIcon } from "./OperatorIcon";
 import ServiceCatalog from "./ServiceCatalog";
 import ServiceProductPicker from "./ServiceProductPicker";
+import ServiceGiftcardPicker, { GiftcardHowTo } from "./ServiceGiftcardPicker";
+import ServiceBillPicker from "./ServiceBillPicker";
+import { referenceSpec } from "./cardInfo";
 import ServiceInputField from "./ServiceInputField";
 import ServiceSummary from "./ServiceSummary";
 import ServiceResult from "./ServiceResult";
@@ -23,7 +27,9 @@ import ServiceResult from "./ServiceResult";
 const POLL_MS = 4000;
 const POLL_MAX = 15;
 
-const PANEL_H = "lg:h-[calc(100dvh-var(--app-chrome-h)-7.5rem)]";
+// Alto disponible: viewport − navbar − padding del <main> (2 × 24px) − barra
+// de pestañas (36px) − su margen (12px) = 6rem.
+const PANEL_H = "lg:h-[calc(100dvh-var(--app-chrome-h)-6rem)]";
 
 const newRequestId = () =>
   window.crypto?.randomUUID
@@ -46,6 +52,7 @@ const ServiceCheckout = ({
   onTransaction,
   providerLive = false,
   cashierId = null,
+  loading = false,
 }) => {
   const notify = useToast();
   const [category, setCategory] = useState("all");
@@ -57,6 +64,7 @@ const ServiceCheckout = ({
   const [inputError, setInputError] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [received, setReceived] = useState("");
+  const [freeAmount, setFreeAmount] = useState("");
   const [tx, setTx] = useState(null);
   const [busy, setBusy] = useState(false);
   // Foco pedido tras un render (el campo puede no existir todavía).
@@ -77,13 +85,30 @@ const ServiceCheckout = ({
     () => family?.members.find((m) => m.key === operatorKey) || null,
     [family, operatorKey],
   );
+  // Un servicio de monto libre (CFE) no trae SKU fijo: el importe lo captura el
+  // cajero. Los demás usan el monto fijo del producto del catálogo.
   const product = useMemo(
     () => operator?.products?.find((p) => p.sku === sku) || null,
     [operator, sku],
   );
+  const baseCents = product?.amountCents ?? 0;
+  const freeCents = isFreeAmount(operator)
+    ? Math.round((parseFloat(freeAmount) || 0) * 100)
+    : 0;
+  const chargeCents = isFreeAmount(operator) ? freeCents : baseCents;
+  // Para monto libre se sintetiza un producto con el importe, para que el cobro
+  // y el ledger queden con nombre y monto consistentes.
+  const chargeProduct =
+    product || (isFreeAmount(operator) && chargeCents > 0
+      ? {
+          sku: operator.key,
+          name: `${operator.name} $${(chargeCents / 100).toFixed(2)}`,
+          amountCents: chargeCents,
+        }
+      : null);
   const quoteData = useMemo(
-    () => (product ? quote(operator, product.amountCents) : null),
-    [operator, product],
+    () => (chargeProduct && chargeCents > 0 ? quote(operator, chargeCents) : null),
+    [operator, chargeProduct, chargeCents],
   );
 
   // Compañías más cobradas hoy (aplicadas), para tenerlas a un toque.
@@ -100,6 +125,10 @@ const ServiceCheckout = ({
       .map(([fam]) => fam);
   }, [transactions, families]);
 
+  // Etiqueta y ejemplo legibles del dato a capturar (celular, tag, referencia).
+  const inputSpec = useMemo(() => referenceSpec(operator), [operator]);
+  const free = isFreeAmount(operator);
+
   const validation = operator ? validateInput(operator, inputValue) : { ok: false };
   const confirmOk =
     !operator ||
@@ -107,7 +136,7 @@ const ServiceCheckout = ({
     !operator.input?.confirmar ||
     confirmValue === inputValue;
   const numberReady = !!operator && validation.ok && confirmOk;
-  const canCharge = providerLive && !!product && numberReady && !!quoteData && !busy && !tx;
+  const canCharge = providerLive && !!chargeProduct && numberReady && !!quoteData && !busy && !tx;
 
   useEffect(() => {
     if (!focusReq) return;
@@ -129,6 +158,7 @@ const ServiceCheckout = ({
     setConfirmValue("");
     setInputError("");
     setReceived("");
+    setFreeAmount("");
   };
 
   // Elegir compañía (tile, frecuente o resultado de búsqueda). Cambiar de
@@ -197,7 +227,8 @@ const ServiceCheckout = ({
   // idempotencia: el mismo intento nunca se cobra dos veces aunque se repita
   // la llamada (timeout, doble clic).
   const charge = useCallback(async () => {
-    if (!operator || !product || !quoteData) return;
+    // Con monto libre no hay `product`: se cobra el producto sintetizado.
+    if (!operator || !chargeProduct || !quoteData) return;
 
     const check = validateInput(operator, inputValue);
     if (!check.ok) {
@@ -220,8 +251,8 @@ const ServiceCheckout = ({
       operatorLogo: operator.logo,
       operatorRemoteLogo: operator.remoteLogo,
       operatorName: operator.name,
-      productName: product.name,
-      sku: product.sku,
+      productName: chargeProduct.name,
+      sku: chargeProduct.sku,
       inputValue,
       paymentMethod,
       quote: quoteData,
@@ -234,9 +265,9 @@ const ServiceCheckout = ({
     try {
       const r = await window.api.invoke("taecel:recharge", {
         clientRequestId,
-        productCode: product.sku,
+        productCode: chargeProduct.sku,
         reference: inputValue,
-        amountCents: product.amountCents,
+        amountCents: chargeCents,
         paymentMethod,
         cashierId,
       });
@@ -260,7 +291,7 @@ const ServiceCheckout = ({
     setTx(next);
     setBusy(false);
     onTransaction?.(next);
-  }, [operator, product, inputValue, quoteData, paymentMethod, cashierId, tx, display, onTransaction]);
+  }, [operator, chargeProduct, inputValue, quoteData, chargeCents, paymentMethod, cashierId, tx, display, onTransaction]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -306,13 +337,20 @@ const ServiceCheckout = ({
     charge();
   }, [tx, reconcile, charge]);
 
+  const opCategory = operator?.category;
+
   let blockedHint = "";
   if (!validation.ok) blockedHint = validation.error || "Captura el número";
   else if (!confirmOk) blockedHint = "Repite el número para confirmar";
-  else if (!product) blockedHint = "Elige un monto o paquete";
+  else if (free && chargeCents <= 0) blockedHint = "Captura el importe del recibo";
+  else if (!free && !product)
+    blockedHint =
+      opCategory === "tarjetas"
+        ? "Elige el valor de la tarjeta"
+        : opCategory === "servicios"
+          ? "Elige el importe o plan"
+          : "Elige un monto o paquete";
   else if (!providerLive) blockedHint = "Sin conexión con Taecel";
-
-  const isPackage = operator && operator.category !== "telefonia";
 
   return (
     // Sin compañía elegida el catálogo ocupa todo el ancho; al elegir una,
@@ -338,6 +376,7 @@ const ServiceCheckout = ({
           frequent={frequent}
           disabled={busy}
           wide={!operator}
+          loading={loading}
         />
       </section>
 
@@ -370,7 +409,8 @@ const ServiceCheckout = ({
                   <p className="truncate text-xs font-medium text-muted-foreground">
                     {operator.memberLabel}
                     {" · "}
-                    {operator.products.length} {isPackage ? "paquetes" : "montos"}
+                    {operator.products.length}{" "}
+                    {opCategory === "servicios" ? "recibos" : opCategory === "tarjetas" ? "tarjetas" : opCategory === "paquetes" ? "paquetes" : "montos"}
                   </p>
                 </div>
                 <button
@@ -418,6 +458,7 @@ const ServiceCheckout = ({
             {tx ? (
               <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
                 <ServiceResult
+                  kind={opCategory}
                   tx={tx}
                   busy={busy}
                   onRetry={retry}
@@ -433,10 +474,12 @@ const ServiceCheckout = ({
             ) : (
               <>
                 <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3.5">
-                  <Step n={1} title={operator.input?.label || "Número"} done={numberReady} current={!numberReady}>
+                  {opCategory === "tarjetas" && <GiftcardHowTo operator={operator} />}
+
+                  <Step n={1} title={inputSpec?.label || "Número"} done={numberReady} current={!numberReady}>
                     <ServiceInputField
                       key={family.key}
-                      spec={operator.input}
+                      spec={inputSpec}
                       value={inputValue}
                       onChange={(v) => {
                         setInputValue(v);
@@ -453,19 +496,51 @@ const ServiceCheckout = ({
 
                   <Step
                     n={2}
-                    title={isPackage ? "Paquete" : "Monto"}
-                    done={!!product}
-                    current={numberReady && !product}
-                    aside={product ? undefined : `${operator.products.length} opciones`}
+                    title={
+                      opCategory === "tarjetas"
+                        ? "Valor de la tarjeta"
+                        : opCategory === "servicios"
+                          ? free
+                            ? "Importe del recibo"
+                            : "Importe o plan"
+                          : opCategory === "paquetes"
+                            ? "Paquete"
+                            : "Monto"
+                    }
+                    done={free ? chargeCents > 0 : !!product}
+                    current={numberReady && !(free ? chargeCents > 0 : !!product)}
+                    aside={product || free ? undefined : `${operator.products.length} opciones`}
                   >
-                    <ServiceProductPicker
-                      key={operator.key}
-                      operator={operator}
-                      selectedSku={sku}
-                      onSelect={handleSelectSku}
-                      disabled={busy}
-                      listRef={listRef}
-                    />
+                    {opCategory === "tarjetas" ? (
+                      <ServiceGiftcardPicker
+                        key={operator.key}
+                        operator={operator}
+                        selectedSku={sku}
+                        onSelect={handleSelectSku}
+                        disabled={busy}
+                        listRef={listRef}
+                      />
+                    ) : opCategory === "servicios" ? (
+                      <ServiceBillPicker
+                        key={operator.key}
+                        operator={operator}
+                        selectedSku={sku}
+                        onSelect={handleSelectSku}
+                        disabled={busy}
+                        listRef={listRef}
+                        freeAmount={freeAmount}
+                        onFreeAmountChange={setFreeAmount}
+                      />
+                    ) : (
+                      <ServiceProductPicker
+                        key={operator.key}
+                        operator={operator}
+                        selectedSku={sku}
+                        onSelect={handleSelectSku}
+                        disabled={busy}
+                        listRef={listRef}
+                      />
+                    )}
                   </Step>
                 </div>
 

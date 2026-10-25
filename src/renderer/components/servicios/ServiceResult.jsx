@@ -10,7 +10,7 @@ import { OperatorIcon } from "./OperatorIcon";
 // `unknown` se explica en pantalla: el cliente ya pagó y no sabemos si el
 // operador aplicó la recarga. El checkout consulta el estado solo (misma
 // operación, nunca un cobro nuevo); "Reintentar" fuerza esa consulta.
-const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy }) => {
+const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
   const status = getStatus(tx.status);
   const needsInput = tx.operatorKey && tx.inputValue;
 
@@ -23,9 +23,9 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy }) => {
       <ServiceResultArt status={tx.status} ringClassName={status.artRing} />
 
       <div>
-        <p className="text-base font-bold text-foreground">{title(tx.status)}</p>
+        <p className="text-base font-bold text-foreground">{title(tx.status, kind)}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {subtitle(tx.status)}
+          {subtitle(tx.status, kind)}
         </p>
       </div>
 
@@ -146,20 +146,26 @@ const paymentLabel = (method) =>
   ({ cash: "Efectivo", card: "Tarjeta", transfer: "Transferencia" })[method] ||
   "Efectivo";
 
-const title = (status) =>
+// Cómo se nombra lo cobrado según la categoría: recarga, tarjeta o pago.
+const NOUN = {
+  tarjetas: { applied: "¡Tarjeta enviada!", done: "El código llegó por SMS al celular del cliente" },
+  servicios: { applied: "¡Pago aplicado!", done: "El servicio ya quedó abonado" },
+};
+
+const title = (status, kind) =>
   ({
     pending: "Procesando…",
-    applied: "¡Recarga aplicada!",
+    applied: NOUN[kind]?.applied || "¡Recarga aplicada!",
     failed: "No se pudo aplicar",
     unknown: "Estamos verificando",
     reversed: "Recarga revertida",
     needs_review: "Aplicada, por revisar",
   })[status] || "Procesando…";
 
-const subtitle = (status) =>
+const subtitle = (status, kind) =>
   ({
     pending: "No retires el cambio todavía",
-    applied: "Ya puede entregar su recarga",
+    applied: NOUN[kind]?.done || "Ya puede entregar su recarga",
     failed: "No se le cobró nada al cliente",
     unknown: "El pago sí entró, falta la confirmación",
     reversed: "El operador devolvió el importe",
