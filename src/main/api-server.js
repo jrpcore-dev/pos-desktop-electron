@@ -184,6 +184,59 @@ const startServer = async (
     }
   };
 
+  // Escrituras del móvil con `Idempotency-Key` opcional (las versiones viejas
+  // de la app no la mandan y siguen funcionando igual). Si la respuesta se
+  // pierde y el teléfono reenvía con la misma clave, se devuelve la respuesta
+  // guardada en vez de sumar el stock dos veces. `work(req)` es síncrono y
+  // devuelve { status, body }; la clave se guarda en la MISMA transacción que
+  // la escritura y solo si salió bien (un 4xx no aplicó nada: puede reintentarse).
+  // Se preparan al primer uso: en una BD sin migrar, preparar al arrancar
+  // tumbaría todo el servidor en vez de solo esta ruta.
+  let idemStmts = null;
+  const idemStatements = () =>
+    idemStmts ||
+    (idemStmts = {
+      get: db.prepare(
+        "SELECT request_hash, response_json, status_code FROM idempotency_keys WHERE device_id = ? AND endpoint = ? AND key = ?",
+      ),
+      set: db.prepare(
+        "INSERT INTO idempotency_keys (device_id, endpoint, key, request_hash, response_json, status_code) VALUES (?, ?, ?, ?, ?, ?)",
+      ),
+    });
+  const idempotent = (endpoint, work) => (req, res) => {
+    const key = String(req.headers["idempotency-key"] || "").trim();
+    if (!key) {
+      const out = work(req);
+      return res.status(out.status).json(out.body);
+    }
+    if (key.length > 200)
+      return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_INVALID", error: "Idempotency-Key inválida" });
+
+    const deviceId = String(req.sessionDeviceId || req.headers["x-device-id"] || "");
+    const requestHash = sha256(canonicalStringify({ params: req.params || {}, body: req.body || {} }));
+    const stmts = idemStatements();
+    const outcome = db.transaction(() => {
+      const existing = stmts.get.get(deviceId, endpoint, key);
+      if (existing) {
+        if (existing.request_hash !== requestHash) return { conflict: true };
+        return { replay: true, status: existing.status_code, body: JSON.parse(existing.response_json) };
+      }
+      const out = work(req);
+      if (out.status >= 200 && out.status < 300)
+        stmts.set.run(deviceId, endpoint, key, requestHash, JSON.stringify(out.body), out.status);
+      return out;
+    }).immediate();
+
+    if (outcome.conflict)
+      return res.status(422).json({
+        success: false,
+        code: "IDEMPOTENCY_CONFLICT",
+        error: "Idempotency-Key ya usada con un payload diferente",
+      });
+    if (outcome.replay) res.setHeader("idempotent-replay", "true");
+    return res.status(outcome.status).json(outcome.body);
+  };
+
   // ─── CANDADO DE ACTIVACIÓN POR NEGOCIO ─────────────────────────────
   // 3b · la sesión vive en la BD: el token se hashea (sha256) y se busca por
   // hash. Mismo contrato para todos los tipos de dispositivo: 401 si no existe,
@@ -430,12 +483,12 @@ const startServer = async (
     res.json({ success: true, product });
   }));
 
-  app.post("/api/products", protect(scopeDefs.SCOPE.CATALOG_WRITE), requireProtocolWrite, safe((req, res) => {
+  app.post("/api/products", protect(scopeDefs.SCOPE.CATALOG_WRITE), requireProtocolWrite, safe(idempotent("POST /api/products", (req) => {
     const { barcode, name, cost_price, price, sale_unit, category_id, min_stock, stock, box_qty, box_price } = req.body;
-    if (!name) return res.status(400).json({ success: false, error: "Nombre requerido" });
+    if (!name) return { status: 400, body: { success: false, error: "Nombre requerido" } };
 
     const exists = db.prepare("SELECT id FROM products WHERE barcode = ?").get(barcode);
-    if (exists) return res.status(409).json({ success: false, error: "Ya existe un producto con ese código" });
+    if (exists) return { status: 409, body: { success: false, error: "Ya existe un producto con ese código" } };
 
     const stockNum = parseInt(stock) || 0;
     const minStock =
@@ -460,22 +513,22 @@ const startServer = async (
     );
 
     const product = db.prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price FROM products WHERE id = ?").get(result.lastInsertRowid);
-    res.json({ success: true, product, message: "Producto registrado correctamente" });
-  }));
+    return { status: 200, body: { success: true, product, message: "Producto registrado correctamente" } };
+  })));
 
-  app.patch("/api/products/:id/stock", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe((req, res) => {
+  app.patch("/api/products/:id/stock", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe(idempotent("PATCH /api/products/:id/stock", (req) => {
     const { quantity, notes, cost, supplierId, registerExpense, updateCostPrice } = req.body;
     const id = parseInt(req.params.id);
 
     const product = db.prepare("SELECT * FROM products WHERE id = ? AND is_active = 1").get(id);
-    if (!product) return res.status(404).json({ success: false, error: "Producto no encontrado" });
+    if (!product) return { status: 404, body: { success: false, error: "Producto no encontrado" } };
 
     // Validación estricta: número finito > 0; entero salvo unidades de peso.
     const qty = Number(quantity);
     const isWeight = product.sale_unit === "weight";
     const valid =
       Number.isFinite(qty) && qty > 0 && (isWeight ? true : Number.isInteger(qty));
-    if (!valid) return res.status(400).json({ success: false, error: "Cantidad inválida" });
+    if (!valid) return { status: 400, body: { success: false, error: "Cantidad inválida" } };
 
     const runTxn = db.transaction(() => {
       const enteredCost = parseFloat(cost) || 0;
@@ -526,8 +579,8 @@ const startServer = async (
     });
 
     const updated = runTxn();
-    res.json({ success: true, product: updated, message: "Stock actualizado correctamente" });
-  }));
+    return { status: 200, body: { success: true, product: updated, message: "Stock actualizado correctamente" } };
+  })));
 
   app.get("/api/categories", protect(scopeDefs.SCOPE.CATALOG_READ), safe((req, res) => {
     const categories = db.prepare("SELECT id, name FROM categories ORDER BY name").all();
@@ -897,17 +950,17 @@ const startServer = async (
   }));
 
   // Deshacer un movimiento de recepción hecho desde el móvil.
-  app.delete("/api/stock/movements/:movementId", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe((req, res) => {
+  app.delete("/api/stock/movements/:movementId", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe(idempotent("DELETE /api/stock/movements/:movementId", (req) => {
     const id = parseInt(req.params.movementId);
     const movement = db
       .prepare("SELECT id, product_id, quantity, type, reference, cashier_id FROM stock_movements WHERE id = ?")
       .get(id);
     if (!movement)
-      return res.status(404).json({ success: false, error: "Movimiento no encontrado" });
+      return { status: 404, body: { success: false, error: "Movimiento no encontrado" } };
     if (movement.type !== "in" || movement.reference !== "App móvil")
-      return res.status(400).json({ success: false, error: "Este movimiento no se puede deshacer desde la app móvil" });
+      return { status: 400, body: { success: false, error: "Este movimiento no se puede deshacer desde la app móvil" } };
     if (movement.cashier_id != null && String(movement.cashier_id) !== String(req.cashierId))
-      return res.status(403).json({ success: false, error: "No autorizado para deshacer este movimiento" });
+      return { status: 403, body: { success: false, error: "No autorizado para deshacer este movimiento" } };
 
     db.transaction(() => {
       db.prepare("UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?").run(movement.quantity, movement.product_id);
@@ -917,14 +970,14 @@ const startServer = async (
     const product = db
       .prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price, min_stock FROM products WHERE id = ?")
       .get(movement.product_id);
-    res.json({ success: true, product, message: "Movimiento deshecho" });
-  }));
+    return { status: 200, body: { success: true, product, message: "Movimiento deshecho" } };
+  })));
 
   // Recepción en lote desde la app móvil: aplica varios productos en una transacción.
-  app.post("/api/products/stock/batch", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe((req, res) => {
+  app.post("/api/products/stock/batch", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe(idempotent("POST /api/products/stock/batch", (req) => {
     const items = Array.isArray(req.body.items) ? req.body.items : null;
     if (!items || items.length === 0)
-      return res.status(400).json({ success: false, error: "La lista de productos está vacía" });
+      return { status: 400, body: { success: false, error: "La lista de productos está vacía" } };
 
     const issues = [];
     let applied = 0;
@@ -966,7 +1019,7 @@ const startServer = async (
     runBatch();
 
     if (issues.length > 0 && applied === 0)
-      return res.status(400).json({ success: false, error: "Ningún producto pudo aplicarse", issues });
+      return { status: 400, body: { success: false, error: "Ningún producto pudo aplicarse", issues } };
 
     const appliedIds = items
       .map((it) => parseInt(it.product_id))
@@ -977,8 +1030,8 @@ const startServer = async (
           .all(...appliedIds)
       : [];
 
-    res.json({ success: true, applied, issues, products });
-  }));
+    return { status: 200, body: { success: true, applied, issues, products } };
+  })));
 
   // Venta desde el desktop_box (Entrega 2c-B). El parser global de body no se
   // toca: el límite virtual de 256KB se aplica aquí y el tope real de líneas

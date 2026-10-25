@@ -62,6 +62,8 @@ const CHECKS = [
   { file: "check-2-queue-folio.cjs" },
   { file: "check-3-promotion.cjs" },
   { file: "check-4-resilience.cjs" },
+  // App móvil: escrituras con Idempotency-Key.
+  { file: "check-5-movil-idempotencia.cjs" },
 ];
 
 const tcpFree = (port) =>
