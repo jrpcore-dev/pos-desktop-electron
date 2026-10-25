@@ -54,6 +54,7 @@ import {
   customerPriceForLine,
 } from "../utils/cartMath";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
+import { prepareTicketLogo } from "../utils/logo";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
 import { setSaleInProgress } from "../utils/posState";
 import {
@@ -431,7 +432,10 @@ const processSaleRef = useRef(null);
       if (name)
         setStoreSettings((prev) => ({ ...prev, name: name.toUpperCase() }));
       if (website) setStoreSettings((prev) => ({ ...prev, website }));
-      if (logo) setStoreSettings((prev) => ({ ...prev, logo }));
+      if (logo) {
+        const trimmed = await prepareTicketLogo(logo);
+        setStoreSettings((prev) => ({ ...prev, logo: trimmed }));
+      }
       setReceiptNotes({
         header: headerNote || "",
         footer: footerNote || "",

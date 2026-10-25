@@ -170,15 +170,56 @@ const nextPaint = `new Promise((resolve) => {
   requestAnimationFrame(() => requestAnimationFrame(done));
 })`;
 
+// ── Marca de verificación de la captura ──────────────────────────────────────
+// capturePage devuelve el ÚLTIMO cuadro que pintó el compositor, que puede
+// ser anterior al zoom o al scroll que se acaba de pedir (en equipos lentos
+// salía la primera franja sin zoom: el ticket "chiquito" a medio ancho y
+// luego el resto bien). Para no depender de tiempos, a la derecha del body
+// (fuera de lo que se imprime) se dibuja una columna de franjas negras y
+// blancas de MARKER_BAND_DIP en coordenadas del DOCUMENTO. Cada captura se
+// valida contra el patrón esperado para su posición: si el cuadro es viejo
+// (zoom o scroll anteriores) el patrón no coincide y se vuelve a capturar.
+const MARKER_DIP = 8;
+const MARKER_BAND_DIP = 16;
+const CAPTURE_MAX_ATTEMPTS = 20;
+
+// ¿La columna de marca en `bgra` (ancho `width`) coincide con el patrón
+// esperado para filas de documento desde `docY0`? Muestrea el centro de cada
+// banda (lejos de bordes con antialiasing).
+function markerMatches(bgra, width, rows, markerX, docY0) {
+  const x = markerX + (MARKER_DIP >> 1);
+  let samples = 0;
+  for (let r = 0; r < rows; r++) {
+    const docY = docY0 + r;
+    if (docY % MARKER_BAND_DIP !== MARKER_BAND_DIP >> 1) continue;
+    const p = (r * width + x) * 4;
+    const dark = 0.114 * bgra[p] + 0.587 * bgra[p + 1] + 0.299 * bgra[p + 2] < 128;
+    const expectDark = Math.floor(docY / MARKER_BAND_DIP) % 2 === 0;
+    if (dark !== expectDark) return false;
+    samples++;
+  }
+  return samples > 0;
+}
+
+// Copia las primeras `width` columnas de cada fila (descarta la marca).
+function cropColumns(bgra, fullWidth, width, rows) {
+  const out = Buffer.alloc(width * rows * 4);
+  for (let r = 0; r < rows; r++) {
+    bgra.copy(out, r * width * 4, r * fullWidth * 4, r * fullWidth * 4 + width * 4);
+  }
+  return out;
+}
+
 // Renderiza el HTML YA cargado en `win` a un bitmap BGRA de `dotsWidth`
 // columnas. El body (ancho fijo en mm) se pega a la izquierda y se aplica
 // zoom de página para que su ancho sea exactamente `dotsWidth` DIP; luego se
-// captura por franjas desplazando el scroll y se normaliza a 1 px = 1 punto
-// (en pantallas HiDPI capturePage devuelve píxeles físicos).
+// captura por franjas desplazando el scroll, se valida cada franja con la
+// marca y se normaliza a 1 px = 1 punto (en HiDPI capturePage devuelve
+// píxeles físicos).
 async function renderHtmlToBitmap(win, { dotsWidth, heightCssPx, nativeImage }) {
   const wc = win.webContents;
   await wc.insertCSS(
-    "html,body{margin:0!important}::-webkit-scrollbar{display:none}html{scrollbar-width:none}",
+    "html,body{margin:0!important}html{overflow-x:hidden;scrollbar-width:none}::-webkit-scrollbar{display:none}",
   );
   const bodyWidthCss = await wc.executeJavaScript(
     "document.body.getBoundingClientRect().width",
@@ -189,17 +230,19 @@ async function renderHtmlToBitmap(win, { dotsWidth, heightCssPx, nativeImage }) 
   const zoom = dotsWidth / bodyWidthCss;
   const totalDip = Math.ceil(heightCssPx * zoom);
   const sliceDip = Math.min(CAPTURE_SLICE_DIP, totalDip);
-  win.setContentSize(dotsWidth, sliceDip);
-  wc.setZoomFactor(zoom);
-  // El zoom se aplica de forma asíncrona: esperar a que el viewport refleje
-  // el ancho del body antes de capturar.
-  await wc.executeJavaScript(`(async () => {
-    for (let i = 0; i < 40; i++) {
-      if (Math.abs(window.innerWidth - ${bodyWidthCss}) < 2) break;
-      await ${nextPaint};
-    }
-    return window.innerWidth;
+  const fullWidth = dotsWidth + MARKER_DIP;
+  const bandCss = MARKER_BAND_DIP / zoom;
+  await wc.executeJavaScript(`(() => {
+    const m = document.createElement("div");
+    m.setAttribute("aria-hidden", "true");
+    m.style.cssText = "position:absolute;top:0;left:${bodyWidthCss}px;" +
+      "width:${MARKER_DIP / zoom}px;height:${totalDip / zoom}px;pointer-events:none;" +
+      "background:repeating-linear-gradient(to bottom,#000 0,#000 ${bandCss}px,#fff ${bandCss}px,#fff ${2 * bandCss}px)";
+    document.body.appendChild(m);
+    return true;
   })()`);
+  win.setContentSize(fullWidth, sliceDip);
+  wc.setZoomFactor(zoom);
 
   const out = Buffer.alloc(dotsWidth * totalDip * 4, 0xff);
   for (let y0 = 0; y0 < totalDip; y0 += sliceDip) {
@@ -214,23 +257,41 @@ async function renderHtmlToBitmap(win, { dotsWidth, heightCssPx, nativeImage }) 
     const offsetDip = Math.max(0, Math.round(y0 - scrollCss * zoom));
     const captureRows = Math.min(rows, sliceDip - offsetDip);
     if (captureRows <= 0) break;
-    let image = await wc.capturePage({
-      x: 0,
-      y: offsetDip,
-      width: dotsWidth,
-      height: captureRows,
-    });
-    if (!image || image.isEmpty()) {
-      throw new Error("La captura del ticket salió vacía.");
+
+    let bitmap = null;
+    for (let attempt = 1; attempt <= CAPTURE_MAX_ATTEMPTS; attempt++) {
+      let image = await wc.capturePage({
+        x: 0,
+        y: offsetDip,
+        width: fullWidth,
+        height: captureRows,
+      });
+      if (image && !image.isEmpty()) {
+        const size = image.getSize();
+        if (size.width !== fullWidth || size.height !== captureRows) {
+          image = nativeImage
+            .createFromBuffer(image.toPNG())
+            .resize({ width: fullWidth, height: captureRows, quality: "best" });
+        }
+        const candidate = image.toBitmap();
+        if (markerMatches(candidate, fullWidth, captureRows, dotsWidth, y0)) {
+          bitmap = candidate;
+          break;
+        }
+      }
+      // Cuadro viejo (o vacío): pedir repintado y esperar otro cuadro.
+      wc.invalidate?.();
+      await wc.executeJavaScript(nextPaint);
     }
-    const size = image.getSize();
-    if (size.width !== dotsWidth || size.height !== captureRows) {
-      image = nativeImage
-        .createFromBuffer(image.toPNG())
-        .resize({ width: dotsWidth, height: captureRows, quality: "best" });
+    if (!bitmap) {
+      throw new Error(
+        "No se pudo capturar el ticket completo (la ventana no terminó de dibujarse). Intenta de nuevo.",
+      );
     }
-    const bitmap = image.toBitmap();
-    bitmap.copy(out, y0 * dotsWidth * 4, 0, dotsWidth * captureRows * 4);
+    cropColumns(bitmap, fullWidth, dotsWidth, captureRows).copy(
+      out,
+      y0 * dotsWidth * 4,
+    );
   }
   return { bgra: out, width: dotsWidth, height: totalDip };
 }
@@ -247,5 +308,9 @@ module.exports = {
   toMonochrome,
   trimTrailingBlankRows,
   encodeRaster,
+  MARKER_DIP,
+  MARKER_BAND_DIP,
+  markerMatches,
+  cropColumns,
   renderHtmlToBitmap,
 };

@@ -231,8 +231,8 @@ function createPrintEngine(deps) {
     log = (...args) => console.log(...args),
   } = deps;
 
-  // Vista previa del ticket TAL COMO se manda a la térmica (1 bit), para el
-  // botón de prueba: separa "imagen mal generada" de "impresora no responde".
+  // Vista previa del último ticket TAL COMO se manda a la térmica (1 bit):
+  // separa "imagen mal generada" de "la impresora la interpreta mal".
   function saveMonoPreview({ bits, bytesPerRow, width, height }) {
     try {
       const bgra = Buffer.alloc(width * height * 4, 0xff);
@@ -387,9 +387,9 @@ function createPrintEngine(deps) {
         if (mono.height === 0) {
           throw new Error("El ticket rasterizado quedó en blanco.");
         }
-        if (overrides && Object.hasOwn(overrides, "paperWidthMm")) {
-          saveMonoPreview(mono);
-        }
+        // Siempre (también en ventas): si un ticket sale mal, la imagen
+        // EXACTA enviada queda en temp para comparar sin gastar papel.
+        saveMonoPreview(mono);
         const payload = raster.encodeRaster(mono, { cut: config.escposCut !== false });
         log(
           `[PRINT] ESC/POS raster ${mono.width}×${mono.height} puntos, ${payload.length} bytes`,

@@ -34,6 +34,7 @@ import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
+import { prepareTicketLogo } from "../utils/logo";
 import { Badge } from "./ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -245,7 +246,7 @@ const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => 
     const html = buildReceiptHTML({
       store: {
         name: (storeName || "MI TIENDA").toUpperCase(),
-        logo: storeLogo || "",
+        logo: await prepareTicketLogo(storeLogo),
       },
       headerNote: headerNote || "",
       footerNote: footerNote || "",

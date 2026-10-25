@@ -511,8 +511,12 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   }
 
   // 10b. Motor en modo ESC/POS: captura por franjas → sendRaw, sin print().
-  const makeRasterWindow = (heightCssPx) => {
-    const state = { destroyed: false, printCalls: [], captures: [], zoom: 1 };
+  // Fake de ventana: el contenido es negro y la columna de marca (x ≥ 576)
+  // dibuja franjas según la posición en el documento. Las primeras
+  // `staleCaptures` capturas simulan un cuadro VIEJO (sin zoom: la marca no
+  // está donde debe), como el ticket "chiquito" observado en el equipo real.
+  const makeRasterWindow = (heightCssPx, { staleCaptures = 0 } = {}) => {
+    const state = { destroyed: false, printCalls: [], captures: [], zoom: 1, scrollCss: 0, invalidations: 0 };
     const bodyWidth = 264;
     return {
       state,
@@ -527,14 +531,26 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
           if (code.includes("getBoundingClientRect().width")) return bodyWidth;
           if (code.includes("scrollTo")) {
             const y = Number(/scrollTo\(0, ([\d.]+)\)/.exec(code)[1]);
-            return Math.min(y, heightCssPx - state.size[1] / state.zoom);
+            state.scrollCss = Math.max(0, Math.min(y, heightCssPx - state.size[1] / state.zoom));
+            return state.scrollCss;
           }
+          if (code.includes("createElement")) return true;
+          if (code.includes("requestAnimationFrame") && !code.includes("scrollTo")) return true;
           if (code.includes("innerWidth")) return bodyWidth;
           return { hasContent: true, heightCssPx };
         },
+        invalidate: () => { state.invalidations++; },
         capturePage: async (rect) => {
           state.captures.push(rect);
+          const stale = state.captures.length <= staleCaptures;
           const bitmap = Buffer.alloc(rect.width * rect.height * 4, Buffer.from([0, 0, 0, 255]));
+          const docTop = Math.round(state.scrollCss * state.zoom) + rect.y;
+          for (let r = 0; r < rect.height; r++) {
+            const black = !stale && Math.floor((docTop + r) / 16) % 2 === 0;
+            for (let x = rect.width - raster.MARKER_DIP; x < rect.width; x++) {
+              bitmap.fill(black ? 0 : 255, (r * rect.width + x) * 4, (r * rect.width + x) * 4 + 3);
+            }
+          }
           return {
             isEmpty: () => false,
             getSize: () => ({ width: rect.width, height: rect.height }),
@@ -564,10 +580,59 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     check(win.state.printCalls.length === 0, "motor escpos: no usa webContents.print (driver)");
     const totalDip = Math.ceil(500 * (576 / 264));
     check(win.state.captures.length === Math.ceil(totalDip / 600), "motor escpos: captura por franjas", JSON.stringify(win.state.captures));
-    check(win.state.captures.every((c) => c.width === 576), "motor escpos: franjas de 576 puntos");
+    check(win.state.captures.every((c) => c.width === 576 + raster.MARKER_DIP), "motor escpos: franjas de 576 puntos + marca");
     const job = sentJobs[0].payload;
-    check(job.includes(Buffer.from([0x1d, 0x76, 0x30, 0x00, 72, 0])), "motor escpos: payload raster de 72 bytes por fila");
+    check(job.includes(Buffer.from([0x1d, 0x76, 0x30, 0x00, 72, 0])), "motor escpos: payload raster de 72 bytes por fila (la marca no se imprime)");
     check(win.state.destroyed, "motor escpos: la ventana se destruye al terminar");
+  }
+  {
+    const win = makeRasterWindow(500, { staleCaptures: 3 });
+    const sentJobs = [];
+    const engine = printing.createPrintEngine({
+      getPrinterConfig: () => ({ printerName: "POS-80", paperWidthMm: 80, printMode: "escpos" }),
+      listSystemPrinters: async () => [{ name: "POS-80", isDefault: true }],
+      createPrintWindow: () => win,
+      getTempPath: () => os.tmpdir(),
+      sendRaw: async (printer, payload) => { sentJobs.push(payload); return { ok: true, bytes: payload.length }; },
+      nativeImage: {},
+      log: () => {},
+    });
+    const res = await engine.printReceipt("<html></html>");
+    const totalDip = Math.ceil(500 * (576 / 264));
+    check(res.success === true && sentJobs.length === 1, "captura: cuadro viejo (sin zoom) se descarta y se reintenta", JSON.stringify(res));
+    check(win.state.captures.length === Math.ceil(totalDip / 600) + 3, "captura: 3 reintentos y luego franjas válidas", String(win.state.captures.length));
+    check(win.state.invalidations === 3, "captura: pide repintado en cada reintento");
+  }
+  {
+    const win = makeRasterWindow(500, { staleCaptures: 1000 });
+    let sent = 0;
+    const engine = printing.createPrintEngine({
+      getPrinterConfig: () => ({ printerName: "POS-80", paperWidthMm: 80, printMode: "escpos" }),
+      listSystemPrinters: async () => [{ name: "POS-80", isDefault: true }],
+      createPrintWindow: () => win,
+      getTempPath: () => os.tmpdir(),
+      sendRaw: async () => { sent++; return { ok: true }; },
+      nativeImage: {},
+      log: () => {},
+    });
+    const res = await engine.printReceipt("<html></html>");
+    check(res.success === false && /capturar el ticket completo/.test(res.error), "captura: cuadro siempre viejo → error claro", JSON.stringify(res));
+    check(sent === 0, "captura: nunca se imprime un ticket mal capturado");
+  }
+  {
+    // markerMatches puro: patrón correcto, desfasado (scroll viejo) y ausente.
+    const w = 4, rows = 64;
+    const paint = (offset) => {
+      const b = Buffer.alloc(w * rows * 4, 255);
+      for (let r = 0; r < rows; r++) {
+        if (Math.floor((r + offset) / 16) % 2 === 0) b.fill(0, (r * w + 2) * 4, (r * w + 2) * 4 + 3);
+      }
+      return b;
+    };
+    const markerX = 2 - (raster.MARKER_DIP >> 1);
+    check(raster.markerMatches(paint(0), w, rows, markerX, 0), "marca: coincide en su posición");
+    check(!raster.markerMatches(paint(0), w, rows, markerX, 16), "marca: detecta scroll desfasado");
+    check(!raster.markerMatches(Buffer.alloc(w * rows * 4, 255), w, rows, markerX, 0), "marca: detecta cuadro sin marca");
   }
   {
     const win = makeRasterWindow(300);
