@@ -55,6 +55,7 @@ import {
 import { cn } from "@/lib/utils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { fmtMoney } from "../utils/format";
+import { useCashier } from "../contexts/CashierContext";
 
 const productSchema = z.object({
   barcode: z.string().optional(),
@@ -358,6 +359,7 @@ const AddProductModal = ({
   catalogProduct = null,
 }) => {
   const isCatalogMode = !!catalogProduct && !editProduct;
+  const { cashier } = useCashier() || {};
   const [suppliers, setSuppliers] = useState([]);
   const [categories, setCategories] = useState([]);
   const [submitError, setSubmitError] = useState("");
@@ -382,7 +384,7 @@ const AddProductModal = ({
   const {
     control,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, dirtyFields },
     reset,
     watch,
     trigger,
@@ -797,6 +799,19 @@ const AddProductModal = ({
               .filter((t) => t.qty > 0 && t.price > 0)
           : [],
       };
+
+      if (editProduct) {
+        // Sin tocar stock ni unidad, no se envía: el backend conserva el actual
+        // (evita pisar ventas recientes y perder piezas sueltas de cajas).
+        const stockTouched =
+          dirtyFields.stock ||
+          dirtyFields.sale_unit ||
+          dirtyFields.box_qty ||
+          dirtyFields.pack_qty ||
+          dirtyFields.packs_per_box;
+        if (!stockTouched) delete productData.stock;
+        productData.cashier_id = cashier?.id || null;
+      }
 
       let result;
       if (isCatalogMode) {

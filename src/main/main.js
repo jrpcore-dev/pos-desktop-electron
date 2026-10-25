@@ -1153,6 +1153,7 @@ discount_percent,
       pack_qty,
       pack_price,
       prices,
+      cashier_id,
     } = product;
 
     const dup = db
@@ -1164,23 +1165,34 @@ discount_percent,
         error: "Ya existe otro producto con este código de barras",
       };
 
+    const current = db
+      .prepare("SELECT stock FROM products WHERE id = ?")
+      .get(id);
+    if (!current) return { success: false, error: "Producto no encontrado" };
+    // stock omitido = el usuario no lo tocó: se conserva el actual (no pisa
+    // ventas hechas mientras el formulario estaba abierto).
+    const parsedStock = parseFloat(stock);
+    const newStock = Number.isFinite(parsedStock) ? parsedStock : current.stock;
+    const diff = newStock - (Number(current.stock) || 0);
+
     const stmt = db.prepare(`UPDATE products SET
       barcode=?, name=?, search_name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
       expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, allow_manual_discount=?, promo_fixed_price=?, promo_start_date=?, promo_end_date=?, is_active=?, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
       WHERE id=?`);
+    const run = db.transaction(() => {
     const info = stmt.run(
       barcode || "",
       name,
       nomarize(name),
       brand,
       price,
-      stock,
+      newStock,
       category_id || null,
       supplier_id || null,
       expiry_date || null,
       image_path || null,
       cost_price || 0,
-      parseFloat(min_stock) > 0 ? parseFloat(min_stock) : autoMinStock(stock),
+      parseFloat(min_stock) > 0 ? parseFloat(min_stock) : autoMinStock(newStock),
       discount_percent || 0,
       has_discount ? 1 : 0,
       allow_manual_discount ? 1 : 0,
@@ -1195,8 +1207,21 @@ discount_percent,
       pack_price || 0,
       id,
     );
+    if (diff !== 0) {
+      db.prepare(
+        "INSERT INTO stock_movements (product_id, type, quantity, notes, cashier_id) VALUES (?, ?, ?, ?, ?)",
+      ).run(
+        id,
+        diff > 0 ? "in" : "out",
+        Math.abs(diff),
+        "Ajuste al editar producto",
+        cashier_id || null,
+      );
+    }
     savePrices(id, prices);
-    return info.changes > 0
+    return info.changes;
+    });
+    return run() > 0
       ? { success: true }
       : { success: false, error: "Producto no encontrado" };
   } catch (error) {
