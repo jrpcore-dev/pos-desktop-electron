@@ -44,9 +44,9 @@ export const promoActiveNow = (item) => {
 
 export const canManualDiscount = (item) => {
   if (item.allow_manual_discount !== 1) return false;
-  // Con precio especial del cliente no corre ninguna promoción.
-  if (item.customerPriced) return true;
   if (!promoActiveNow(item)) return true;
+  // Con precio de cliente sólo pueden correr mayoreo/combos (ver promoInfo).
+  if (item.customerPriced) return (item.prices || []).length === 0;
   if (item.discount_percent > 0) return false;
   if (item.promo_fixed_price > 0) return false;
   if ((item.prices || []).length > 0) return false;
@@ -62,21 +62,22 @@ export const piecePriceOf = (p) =>
   p.sale_unit === "boxpack" ? p.pack_price : p.price;
 
 export const promoInfo = (item, qty) => {
-  // El precio pactado con el cliente reemplaza promociones, % y mayoreo.
-  if (item.customerPriced) {
-    return { total: item.price * qty, unit: item.price, applied: null };
-  }
   const active = promoActiveNow(item);
+  // Con precio pactado con el cliente no aplican el precio fijo ni el % de la
+  // promoción; el mayoreo y los combos sí compiten y se cobra lo más bajo.
+  const customer = !!item.customerPriced;
   const autoOn =
-    active && (item.discount_percent > 0 || item.promo_fixed_price > 0);
+    !customer &&
+    active &&
+    (item.discount_percent > 0 || item.promo_fixed_price > 0);
 
-  if (active && item.promo_fixed_price > 0) {
+  if (!customer && active && item.promo_fixed_price > 0) {
     const unit = item.promo_fixed_price;
     return { total: unit * qty, unit, applied: { type: "fijo", qty: 0, price: unit } };
   }
 
   const baseUnit =
-    active && item.discount_percent > 0
+    !customer && active && item.discount_percent > 0
       ? calcFinalPrice(item.price, item.discount_percent)
       : item.price;
   const baseTotal = baseUnit * qty;

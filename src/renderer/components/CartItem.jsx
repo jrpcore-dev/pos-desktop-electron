@@ -76,7 +76,7 @@ const CartItem = React.memo(
     // Con precio de cliente la promoción del producto no aplica: no se anuncia.
     const promoPct = item.customerPriced ? 0 : item.discount_percent;
     const secondaryBadges = [];
-    if (item.customerPriced) secondaryBadges.push("Precio cliente");
+    if (item.customerPriced && !promo) secondaryBadges.push("Precio cliente");
     if (promoPct > 0) secondaryBadges.push(`-${promoPct}%`);
     if (item.discount > 0)
       secondaryBadges.push(`-${fmtMoneyAbs(item.discount)}`);
