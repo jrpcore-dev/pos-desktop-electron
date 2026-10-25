@@ -308,7 +308,6 @@ const Customers = () => {
 
   useEffect(() => {
     window.api.invoke("get-tiers").then(setTiers).catch(() => {});
-    loadCustomers();
   }, []);
 
   // In vivo: lista, escalas y excepciones por tabla; el sheet/formulario en
@@ -321,7 +320,16 @@ const Customers = () => {
     ["customers", "customer_prices", "customer_tiers", "tier_prices"],
   );
 
+  // Única carga de la lista: al montar va sin espera; después, cada búsqueda
+  // con debounce. Antes el montaje cargaba aparte y este efecto volvía a
+  // pedir "" a los 250 ms con skeleton: la tabla parpadeaba al entrar.
+  const firstLoad = useRef(true);
   useEffect(() => {
+    if (firstLoad.current) {
+      firstLoad.current = false;
+      loadCustomers(searchTerm);
+      return undefined;
+    }
     const t = setTimeout(() => loadCustomers(searchTerm), 250);
     return () => clearTimeout(t);
   }, [searchTerm]);
