@@ -22,6 +22,7 @@ import {
   BadgePercent,
   CalendarRange,
   TriangleAlert,
+  ClipboardList,
 } from "lucide-react";
 
 import { Button } from "./ui/button";
@@ -66,6 +67,9 @@ const productSchema = z.object({
     .min(1, "El precio es requerido")
     .refine((v) => parseFloat(v) > 0, "El precio debe ser mayor a 0"),
   stock: z.string().optional(),
+  // Contenedores: stock = cajas/paquetes completos; estos, lo suelto.
+  stock_pack: z.string().optional(),
+  stock_loose: z.string().optional(),
   supplier_id: z.string().optional(),
   category_id: z.string().optional(),
   cost_price: z.string().optional(),
@@ -84,16 +88,18 @@ const productSchema = z.object({
   packs_per_box: z.string().optional(),
 }).superRefine((data, ctx) => {
   if (data.sale_unit !== "weight") {
-    if (
-      data.stock !== "" &&
-      data.stock != null &&
-      !/^\d+$/.test(String(data.stock).trim())
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["stock"],
-        message: "Solo números enteros",
-      });
+    for (const key of ["stock", "stock_pack", "stock_loose"]) {
+      if (
+        data[key] !== "" &&
+        data[key] != null &&
+        !/^\d+$/.test(String(data[key]).trim())
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: "Solo números enteros",
+        });
+      }
     }
     if (
       data.min_stock !== "" &&
@@ -126,7 +132,7 @@ const productSchema = z.object({
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["pack_price"],
-        message: "Indica el precio del paquete",
+        message: "Indica el precio por pieza",
       });
     }
   }
@@ -135,10 +141,59 @@ const productSchema = z.object({
 const UNIT_OPTIONS = [
   { value: "piece", label: "Pieza" },
   { value: "weight", label: "Kilo" },
-  { value: "box", label: "Caja·Pz" },
-  { value: "package", label: "Paq·Pz" },
-  { value: "boxpack", label: "Caja·Paq·Pz" },
+  { value: "box", label: "Caja y pieza" },
+  { value: "package", label: "Paquete y pieza" },
+  { value: "boxpack", label: "Caja, paquete y pieza" },
 ];
+
+const toInt = (v) => parseInt(v, 10) || 0;
+const toNum = (v) => parseFloat(v) || 0;
+
+// Piezas totales del formulario: completos × contenido + lo suelto.
+const formStockPieces = (m, saleUnit) => {
+  if (saleUnit === "weight") return toNum(m.stock);
+  if (!isContainerUnit(saleUnit)) return toInt(m.stock);
+  const boxQty = effectiveBoxQty(m, saleUnit);
+  const packs = saleUnit === "boxpack" ? toInt(m.stock_pack) * toInt(m.pack_qty) : 0;
+  return toInt(m.stock) * boxQty + packs + toInt(m.stock_loose);
+};
+
+// Stock guardado (piezas) → campos del formulario sin perder lo suelto.
+const splitStock = (product) => {
+  const stock = Math.max(0, Number(product.stock) || 0);
+  if (!isContainerUnit(product.sale_unit) || !(product.box_qty > 0)) {
+    return { stock: String(stock), stock_pack: "", stock_loose: "" };
+  }
+  const boxes = Math.floor(stock / product.box_qty);
+  let rest = stock - boxes * product.box_qty;
+  let packs = 0;
+  if (product.sale_unit === "boxpack" && product.pack_qty > 0) {
+    packs = Math.floor(rest / product.pack_qty);
+    rest -= packs * product.pack_qty;
+  }
+  return {
+    stock: String(boxes),
+    stock_pack: packs ? String(packs) : "",
+    stock_loose: rest ? String(rest) : "",
+  };
+};
+
+// 603 piezas → "5 cajas · 3 piezas" (con paquetes en boxpack).
+const describePieces = (pieces, saleUnit, boxQty, packQty) => {
+  if (!isContainerUnit(saleUnit) || !(boxQty > 0)) return `${pieces} piezas`;
+  const labels = unitLabels(saleUnit);
+  const units = [[boxQty, labels.singular, labels.plural]];
+  if (saleUnit === "boxpack" && packQty > 0) units.push([packQty, "paquete", "paquetes"]);
+  units.push([1, "pieza", "piezas"]);
+  let rest = Math.round(pieces);
+  const parts = [];
+  for (const [size, one, many] of units) {
+    const n = Math.floor(rest / size);
+    rest -= n * size;
+    if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
+  }
+  return parts.join(" · ") || "0 piezas";
+};
 
 const effectiveBoxQty = (m, saleUnit) => {
   if (saleUnit === "boxpack") {
@@ -185,17 +240,6 @@ const calcPackMargin = (m, saleUnit) => {
   }
   const packCost = pieceCost * packQty;
   return ((packPrice - packCost) / packCost) * 100;
-};
-
-const computeStockPieces = (m, stock, saleUnit) => {
-  const boxQty =
-    saleUnit === "boxpack"
-      ? (parseInt(m.packs_per_box, 10) || 0) *
-        (parseInt(m.pack_qty, 10) || 0)
-      : parseInt(m.box_qty, 10) || 0;
-  return isContainerUnit(saleUnit)
-    ? (parseInt(stock, 10) || 0) * boxQty
-    : parseFloat(stock) || 0;
 };
 
 const FieldError = ({ message }) =>
@@ -292,60 +336,121 @@ const InventoryFields = ({
   stockStep,
   errors,
 }) => {
-  const stockStr = useWatch({ control, name: "stock" }) || "";
-  const minStockStr = useWatch({ control, name: "min_stock" }) || "";
-  const watchMargins = {
+  const [stockStr, packStr, looseStr, minStockStr] = useWatch({
+    control,
+    name: ["stock", "stock_pack", "stock_loose", "min_stock"],
+  });
+  const isContainer = isContainerUnit(saleUnit);
+  const m = {
+    stock: stockStr,
+    stock_pack: packStr,
+    stock_loose: looseStr,
     box_qty: wBoxQty,
     packs_per_box: wPacksPerBox,
     pack_qty: wPackQty,
   };
-  const watchedStockPieces = useMemo(
-    () => computeStockPieces(watchMargins, stockStr, saleUnit),
-    [wBoxQty, wPacksPerBox, wPackQty, stockStr, saleUnit],
+  const boxQty = effectiveBoxQty(m, saleUnit);
+  const packQty = toInt(wPackQty);
+  const pieces = formStockPieces(m, saleUnit);
+  const autoMin = Math.max(1, Math.floor(pieces * 0.4));
+  const minHelper =
+    pieces > 0 && !(toInt(minStockStr) > 0)
+      ? `Si lo dejas vacío: ${autoMin}${saleUnit === "weight" ? " kg" : " piezas"}`
+      : "Te avisamos cuando quede esto o menos";
+
+  const stockField = (name, label, step = 1) => (
+    <Controller
+      name={name}
+      control={control}
+      render={({ field }) => (
+        <NumberField
+          icon={Hash}
+          label={label}
+          value={field.value}
+          onChange={field.onChange}
+          stepper={step}
+          min={0}
+          step={step}
+          placeholder="0"
+          error={errors?.[name]?.message}
+        />
+      )}
+    />
   );
-  const watchedAutoMin = useMemo(
-    () => Math.max(1, Math.floor(watchedStockPieces * 0.4)),
-    [watchedStockPieces],
+
+  const minStockField = (
+    <Controller
+      name="min_stock"
+      control={control}
+      render={({ field }) => (
+        <NumberField
+          icon={Hash}
+          label={
+            saleUnit === "weight"
+              ? "Stock mínimo (kg)"
+              : isContainer
+                ? "Stock mínimo (en piezas)"
+                : "Stock mínimo"
+          }
+          value={field.value}
+          onChange={field.onChange}
+          min={0}
+          placeholder="0"
+          error={errors?.min_stock?.message}
+          helper={minHelper}
+        />
+      )}
+    />
   );
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      <Controller
-        name="stock"
-        control={control}
-        render={({ field }) => (
-          <NumberField
-            icon={Hash}
-            label={stockLabel}
-            value={field.value}
-            onChange={field.onChange}
-            stepper={stockStep}
-            min={0}
-            step={stockStep}
-            placeholder="0"
-            error={errors?.stock?.message}
-          />
+    <div className="space-y-4">
+      {/* Stock y mínimo en una sola fila (2×2 en caja, paquete y pieza). */}
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-4",
+          saleUnit === "box" || saleUnit === "package"
+            ? "sm:grid-cols-3"
+            : "sm:grid-cols-2",
         )}
-      />
-      <Controller
-        name="min_stock"
-        control={control}
-        render={({ field }) => (
-          <NumberField
-            icon={Hash}
-            label="Stock mínimo"
-            value={field.value}
-            onChange={field.onChange}
-            min={0}
-            placeholder="0"
-            error={errors?.min_stock?.message}
-            helper={
-              watchedStockPieces > 0 && !(parseInt(minStockStr, 10) > 0)
-                ? `Mínimo automático: ${watchedAutoMin}`
-                : "Alerta de stock bajo"
-            }
-          />
+      >
+        {isContainer ? (
+          <>
+            {stockField(
+              "stock",
+              saleUnit === "package" ? "Paquetes completos" : "Cajas completas",
+            )}
+            {saleUnit === "boxpack" &&
+              stockField("stock_pack", "Paquetes sueltos")}
+            {stockField("stock_loose", "Piezas sueltas")}
+          </>
+        ) : (
+          stockField("stock", stockLabel, stockStep)
         )}
-      />
+        {minStockField}
+      </div>
+
+      {isContainer && (
+        <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+          <span className="text-sm text-muted-foreground">Total en inventario</span>
+          <span className="text-right">
+            <span className="text-base font-bold tabular-nums text-foreground">
+              {pieces} piezas
+            </span>
+            {boxQty > 0 && pieces > 0 && (
+              <span className="block text-[0.8rem] text-muted-foreground">
+                = {describePieces(pieces, saleUnit, boxQty, packQty)}
+              </span>
+            )}
+            {!(boxQty > 0) && (
+              <span className="block text-[0.8rem] text-amber-600">
+                Indica primero cuántas piezas trae{" "}
+                {saleUnit === "package" ? "el paquete" : "la caja"}.
+              </span>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 };
@@ -397,6 +502,8 @@ const AddProductModal = ({
       brand: "",
       price: "",
       stock: "",
+      stock_pack: "",
+      stock_loose: "",
       supplier_id: "",
       category_id: "",
       cost_price: "",
@@ -498,6 +605,50 @@ const AddProductModal = ({
     () => effectiveBoxQty(watchMargins, wSaleUnit),
     [wBoxQty, wPacksPerBox, wPackQty, wSaleUnit],
   );
+
+  // "$240 la caja" → "= $20.00 por pieza", para comparar de un vistazo.
+  const perPieceHelper = (total, qty) => {
+    const t = toNum(total);
+    return t > 0 && qty > 0 ? `= ${fmtMoney(t / qty)} por pieza` : undefined;
+  };
+
+  // Precios incoherentes: comprar el contenedor no debe salir más caro que
+  // comprar su contenido suelto, ni venderse por debajo del costo.
+  const priceWarnings = useMemo(() => {
+    const out = [];
+    const su = wSaleUnit;
+    const boxP = toNum(wBoxPrice);
+    if (su === "box" || su === "package") {
+      const pieceP = toNum(wPrice);
+      const q = boxQtyDisplay;
+      if (boxP > 0 && pieceP > 0 && q > 0 && boxP > pieceP * q) {
+        const noun = su === "package" ? "El paquete" : "La caja";
+        out.push(
+          `${noun} (${fmtMoney(boxP)}) sale más cara que ${q} piezas sueltas (${fmtMoney(pieceP * q)}).`,
+        );
+      }
+    }
+    if (su === "boxpack") {
+      const packP = toNum(wPrice);
+      const pieceP = toNum(wPackPrice);
+      const packs = toInt(wPacksPerBox);
+      const pq = toInt(wPackQty);
+      if (boxP > 0 && packP > 0 && packs > 0 && boxP > packP * packs) {
+        out.push(
+          `La caja (${fmtMoney(boxP)}) sale más cara que ${packs} paquetes sueltos (${fmtMoney(packP * packs)}).`,
+        );
+      }
+      if (packP > 0 && pieceP > 0 && pq > 0 && packP > pieceP * pq) {
+        out.push(
+          `El paquete (${fmtMoney(packP)}) sale más caro que ${pq} piezas sueltas (${fmtMoney(pieceP * pq)}).`,
+        );
+      }
+    }
+    if (margin !== null && margin < 0) {
+      out.push("El precio de venta está por debajo del costo.");
+    }
+    return out;
+  }, [wSaleUnit, wBoxPrice, wPrice, wPackPrice, wPacksPerBox, wPackQty, boxQtyDisplay, margin]);
 
   const basePrice = useMemo(
     () => parseFloat(wPrice || "0") || 0,
@@ -620,17 +771,13 @@ const AddProductModal = ({
 
     const applyFormState = () => {
       if (editProduct) {
-        const isBox = isContainerUnit(editProduct.sale_unit);
         const boxQty = editProduct.box_qty || 0;
         reset({
           barcode: editProduct.barcode || "",
           name: editProduct.name || "",
           brand: editProduct.brand || "",
           price: editProduct.price?.toString() || "",
-          stock:
-            isBox && boxQty > 0
-              ? Math.floor(editProduct.stock / boxQty).toString()
-              : editProduct.stock?.toString() || "0",
+          ...splitStock(editProduct),
           supplier_id: editProduct.supplier_id?.toString() || "",
           category_id: editProduct.category_id?.toString() || "",
           cost_price: editProduct.cost_price?.toString() || "",
@@ -669,6 +816,8 @@ const AddProductModal = ({
           brand: catalogProduct.brand || "",
           price: "",
           stock: "",
+          stock_pack: "",
+          stock_loose: "",
           supplier_id: "",
           category_id: catalogProduct.category_id?.toString() || "",
           cost_price: "",
@@ -695,6 +844,8 @@ const AddProductModal = ({
           brand: "",
           price: "",
           stock: "",
+          stock_pack: "",
+          stock_loose: "",
           supplier_id: "",
           category_id: "",
           cost_price: "",
@@ -760,11 +911,7 @@ const AddProductModal = ({
         name: data.name.trim(),
         brand: data.brand.trim() || "Sin marca",
         price: parseFloat(data.price),
-        stock:
-          data.sale_unit === "weight"
-            ? parseFloat(data.stock) || 0
-            : (parseInt(data.stock, 10) || 0) *
-                (isContainerUnit(data.sale_unit) ? boxQty : 1),
+        stock: formStockPieces(data, data.sale_unit),
         supplier_id: data.supplier_id ? parseInt(data.supplier_id) : null,
         category_id: data.category_id ? parseInt(data.category_id) : null,
         cost_price: parseFloat(data.cost_price) || 0,
@@ -805,6 +952,8 @@ const AddProductModal = ({
         // (evita pisar ventas recientes y perder piezas sueltas de cajas).
         const stockTouched =
           dirtyFields.stock ||
+          dirtyFields.stock_pack ||
+          dirtyFields.stock_loose ||
           dirtyFields.sale_unit ||
           dirtyFields.box_qty ||
           dirtyFields.pack_qty ||
@@ -851,7 +1000,7 @@ const AddProductModal = ({
   };
 
   const su = wSaleUnit;
-  const { unitInfo, isBox, stockStep, stockLabel, costLabel, priceLabel, boxPriceLabel, boxQtyLabel, priceCols } = useMemo(() => {
+  const { unitInfo, isBox, stockStep, stockLabel, costLabel, priceLabel } = useMemo(() => {
     const info = unitLabels(su) || {};
     const isBoxUnit = isContainerUnit(su);
     const step = su === "weight" ? 0.1 : 1;
@@ -880,11 +1029,49 @@ const AddProductModal = ({
       stockLabel: sLabel,
       costLabel: cLabel,
       priceLabel: pLabel,
-      boxPriceLabel: info.priceContainer || "Precio",
-      boxQtyLabel: info.pzasPer || "Piezas/caja",
-      priceCols: isBoxUnit ? "sm:grid-cols-3" : "sm:grid-cols-2",
     };
   }, [su]);
+
+  const [wStock, wStockPack, wStockLoose] = useWatch({
+    control,
+    name: ["stock", "stock_pack", "stock_loose"],
+  });
+  const summaryPieces = formStockPieces(
+    { ...watchMargins, stock: wStock, stock_pack: wStockPack, stock_loose: wStockLoose },
+    su,
+  );
+  const saleSummary =
+    su === "weight"
+      ? "Por kilo"
+      : su === "piece"
+        ? "Por pieza"
+        : su === "boxpack"
+          ? boxQtyDisplay > 0
+            ? `Caja de ${toInt(wPacksPerBox)} paquetes de ${toInt(wPackQty)} pz, paquete o pieza`
+            : "Por caja, paquete o pieza"
+          : boxQtyDisplay > 0
+            ? `${unitInfo.containerNoun} de ${boxQtyDisplay} pz o pieza`
+            : `Por ${unitInfo.singular} o pieza`;
+  const stockSummary =
+    su === "weight"
+      ? `${toNum(wStock).toFixed(3)} kg`
+      : isBox && boxQtyDisplay > 0
+        ? `${summaryPieces} pz (${describePieces(summaryPieces, su, boxQtyDisplay, toInt(wPackQty))})`
+        : `${summaryPieces} pz`;
+  const money = (v) => (toNum(v) > 0 ? fmtMoney(toNum(v)) : "—");
+  const priceSummary =
+    su === "boxpack"
+      ? [
+          ["Precio caja", money(wBoxPrice)],
+          ["Precio paquete", money(wPrice)],
+          ["Precio pieza", money(wPackPrice)],
+        ]
+      : isBox
+        ? [
+            [`Precio ${unitInfo.singular}`, money(wBoxPrice)],
+            ["Precio pieza", money(wPrice)],
+          ]
+        : [[su === "weight" ? "Precio por kilo" : "Precio", money(wPrice)]];
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
@@ -913,8 +1100,8 @@ const AddProductModal = ({
               {isCatalogMode
                 ? "La identidad viene del catálogo; completa precio y unidad."
                 : editProduct
-                  ? "Modifique la información del producto"
-                  : "Complete la información del producto"}
+                  ? editProduct.name || "Modifica la información del producto"
+                  : "Completa la información del producto"}
             </DialogDescription>
           </div>
         </DialogHeader>
@@ -1088,7 +1275,9 @@ const AddProductModal = ({
                     <button
                       key={u.value}
                       type="button"
-                      onClick={() => setValue("sale_unit", u.value)}
+                      onClick={() =>
+                        setValue("sale_unit", u.value, { shouldDirty: true })
+                      }
                       className={cn(
                         "flex h-8 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors",
                         su === u.value
@@ -1115,19 +1304,108 @@ const AddProductModal = ({
                 )}
               </div>
 
-              <div className={`grid grid-cols-2 gap-4 ${priceCols}`}>
+              {/* Paso 1 (contenedores): qué trae, antes de los precios. */}
+              {isBox && (
+                <div className="space-y-3 rounded-lg border border-border bg-card/50 p-3">
+                  {su === "boxpack" && (
+                    <>
+                      <span className="text-sm font-semibold text-foreground">
+                        Paquete (unidad media)
+                      </span>
+                      <p className="text-[0.8rem] text-muted-foreground">
+                        La caja se vende completa, por paquetes o por pieza suelta.
+                        Ej: caja con 12 paquetes de 10 piezas → 120 piezas por caja.
+                      </p>
+                    </>
+                  )}
+                  {su === "boxpack" ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Controller
+                        name="packs_per_box"
+                        control={control}
+                        render={({ field }) => (
+                          <NumberField
+                            icon={Hash}
+                            label="Paquetes por caja"
+                            value={field.value}
+                            onChange={field.onChange}
+                            min={1}
+                            placeholder="Ej: 12"
+                            error={errors.packs_per_box?.message}
+                          />
+                        )}
+                      />
+                      <Controller
+                        name="pack_qty"
+                        control={control}
+                        render={({ field }) => (
+                          <NumberField
+                            icon={Hash}
+                            label="Piezas por paquete"
+                            value={field.value}
+                            onChange={field.onChange}
+                            min={1}
+                            placeholder="Ej: 10"
+                            error={errors.pack_qty?.message}
+                          />
+                        )}
+                      />
+                      <div className="space-y-1.5">
+                        <Label className="font-medium text-muted-foreground">
+                          Piezas por caja
+                        </Label>
+                        <div className="flex h-9 items-center gap-1 rounded-lg border border-border bg-muted/40 px-3 text-sm font-semibold tabular-nums">
+                          {boxQtyDisplay > 0 ? boxQtyDisplay : "—"}
+                          <span className="text-[0.75rem] font-normal text-muted-foreground">
+                            (se calcula sola)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <Controller
+                      name="box_qty"
+                      control={control}
+                      render={({ field }) => (
+                        <NumberField
+                          icon={Hash}
+                          label={`Piezas por ${unitInfo.singular}`}
+                          value={field.value}
+                          onChange={field.onChange}
+                          min={1}
+                          placeholder="Ej: 12"
+                          className="sm:max-w-xs"
+                        />
+                      )}
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* Paso 2: precios, con su equivalencia por pieza. */}
+              <div
+                className={cn(
+                  "grid grid-cols-1 gap-4",
+                  su === "boxpack"
+                    ? "sm:grid-cols-2"
+                    : isBox
+                      ? "sm:grid-cols-3"
+                      : "sm:grid-cols-2",
+                )}
+              >
                 {isBox && (
                   <Controller
                     name="box_price"
                     control={control}
                     render={({ field }) => (
                       <NumberField
-                        label={boxPriceLabel}
+                        label={`Precio por ${unitInfo.singular}`}
                         value={field.value}
                         onChange={field.onChange}
                         min={0}
                         step={0.01}
                         placeholder="0.00"
+                        helper={perPieceHelper(wBoxPrice, boxQtyDisplay)}
                       />
                     )}
                   />
@@ -1145,9 +1423,31 @@ const AddProductModal = ({
                       step={0.01}
                       placeholder="0.00"
                       error={errors.price?.message}
+                      helper={
+                        su === "boxpack"
+                          ? perPieceHelper(wPrice, toInt(wPackQty))
+                          : undefined
+                      }
                     />
                   )}
                 />
+                {su === "boxpack" && (
+                  <Controller
+                    name="pack_price"
+                    control={control}
+                    render={({ field }) => (
+                      <NumberField
+                        label="Precio por pieza"
+                        value={field.value}
+                        onChange={field.onChange}
+                        min={0}
+                        step={0.01}
+                        placeholder="0.00"
+                        error={errors.pack_price?.message}
+                      />
+                    )}
+                  />
+                )}
                 <Controller
                   name="cost_price"
                   control={control}
@@ -1159,101 +1459,24 @@ const AddProductModal = ({
                       min={0}
                       step={0.01}
                       placeholder="0.00"
+                      helper={
+                        isBox
+                          ? perPieceHelper(wCostPrice, boxQtyDisplay)
+                          : undefined
+                      }
                     />
                   )}
                 />
               </div>
 
-              {(isBox || su === "boxpack") && (
-                <div className="rounded-lg border border-border bg-card/50 p-3">
-                  {su === "boxpack" ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">
-                          Paquete (unidad media)
-                        </span>
-                      </div>
-                      <p className="text-[0.8rem] text-muted-foreground">
-                        La caja se vende completa, por paquetes o por pieza suelta.
-                        Ej: caja con 12 paquetes de 10 piezas → 120 piezas por caja.
-                      </p>
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <Controller
-                          name="packs_per_box"
-                          control={control}
-                          render={({ field }) => (
-                            <NumberField
-                              icon={Hash}
-                              label="Paquetes por caja"
-                              value={field.value}
-                              onChange={field.onChange}
-                              min={1}
-                              placeholder="Ej: 12"
-                              error={errors.packs_per_box?.message}
-                            />
-                          )}
-                        />
-                        <Controller
-                          name="pack_qty"
-                          control={control}
-                          render={({ field }) => (
-                            <NumberField
-                              icon={Hash}
-                              label="Piezas/paquete"
-                              value={field.value}
-                              onChange={field.onChange}
-                              min={1}
-                              placeholder="Ej: 10"
-                              error={errors.pack_qty?.message}
-                            />
-                          )}
-                        />
-                        <Controller
-                          name="pack_price"
-                          control={control}
-                          render={({ field }) => (
-                            <NumberField
-                              label="Precio por pieza"
-                              value={field.value}
-                              onChange={field.onChange}
-                              min={0}
-                              step={0.01}
-                              placeholder="0.00"
-                              error={errors.pack_price?.message}
-                            />
-                          )}
-                        />
-                        <div className="flex flex-col justify-end pb-1">
-                          <Label className="font-medium text-muted-foreground">
-                            Piezas por caja
-                          </Label>
-                          <div className="flex h-9 items-center gap-1 rounded-lg border border-border bg-background px-3 text-sm font-semibold">
-                            {boxQtyDisplay > 0 ? boxQtyDisplay : "—"}
-                            <span className="text-[0.75rem] font-normal text-muted-foreground">
-                              (calculado)
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <Controller
-                      name="box_qty"
-                      control={control}
-                      render={({ field }) => (
-                        <NumberField
-                          icon={Hash}
-                          label={boxQtyLabel}
-                          value={field.value}
-                          onChange={field.onChange}
-                          min={1}
-                          placeholder="Ej: 10"
-                          helper="Ej: 10 pz"
-                          className="max-w-xs"
-                        />
-                      )}
-                    />
-                  )}
+              {priceWarnings.length > 0 && (
+                <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[0.8rem] text-amber-700 dark:text-amber-400">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="space-y-0.5">
+                    {priceWarnings.map((w) => (
+                      <p key={w}>{w}</p>
+                    ))}
+                  </div>
                 </div>
               )}
             </section>
@@ -1261,7 +1484,10 @@ const AddProductModal = ({
             <Separator />
 
             <section className="space-y-4">
-              <SectionTitle icon={Warehouse} title="Inventario inicial" />
+              <SectionTitle
+                icon={Warehouse}
+                title={editProduct ? "Inventario" : "Inventario inicial"}
+              />
               <InventoryFields
                 control={control}
                 saleUnit={su}
@@ -1669,29 +1895,59 @@ const AddProductModal = ({
             </section>
           </div>
 
-          <div className="mt-6 flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
-              <TrendingUp className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-sm font-bold text-foreground">
-                Margen Calculado
-              </p>
-              <p className="text-[0.8rem] text-muted-foreground">
-                Basado en costo y venta:{" "}
-                <span className="font-extrabold text-emerald-600">
-                  {margin !== null ? `${margin.toFixed(1)}%` : "—"}
-                </span>
-                {packMargin !== null && (
-                  <span className="mt-0.5 block">
-                    Margen paquete:{" "}
-                    <span className="font-extrabold text-emerald-600">
-                      {packMargin.toFixed(1)}%
-                    </span>
-                  </span>
-                )}
-              </p>
+          {/* Resumen: lo que se va a guardar, para revisarlo de un vistazo. */}
+          <div className="mt-6 rounded-lg border border-border bg-muted/40 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-primary" />
+              <p className="text-sm font-bold text-foreground">Resumen</p>
             </div>
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Se vende</dt>
+                <dd className="text-right font-medium text-foreground">
+                  {saleSummary}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">
+                  {editProduct ? "Inventario" : "Inventario inicial"}
+                </dt>
+                <dd className="text-right font-medium tabular-nums text-foreground">
+                  {stockSummary}
+                </dd>
+              </div>
+              {priceSummary.map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-3">
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className="text-right font-medium tabular-nums text-foreground">
+                    {value}
+                  </dd>
+                </div>
+              ))}
+              <div className="flex justify-between gap-3">
+                <dt className="flex items-center gap-1 text-muted-foreground">
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  Ganancia
+                </dt>
+                <dd
+                  className={cn(
+                    "text-right font-extrabold tabular-nums",
+                    margin === null
+                      ? "text-muted-foreground"
+                      : margin < 0
+                        ? "text-destructive"
+                        : "text-emerald-600",
+                  )}
+                >
+                  {margin !== null ? `${margin.toFixed(1)}%` : "—"}
+                  {packMargin !== null && (
+                    <span className="ml-1 text-[0.75rem] font-semibold text-muted-foreground">
+                      (paquete {packMargin.toFixed(1)}%)
+                    </span>
+                  )}
+                </dd>
+              </div>
+            </dl>
           </div>
         </div>
 
