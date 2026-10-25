@@ -461,7 +461,7 @@ const startServer = async (
     const term = `%${nomarize(q.trim())}%`;
     const rawTerm = `%${q.trim()}%`;
     const products = db.prepare(`
-      SELECT id, barcode, name, price, stock, cost_price, sale_unit, min_stock, box_qty, box_price
+      SELECT id, barcode, name, price, stock, cost_price, sale_unit, min_stock, box_qty, box_price, pack_qty, pack_price
       FROM products
       WHERE (nomar(name) LIKE ? OR barcode LIKE ?) AND is_active = 1
       ORDER BY name LIMIT 30
@@ -512,7 +512,7 @@ const startServer = async (
       parseFloat(box_price) || 0
     );
 
-    const product = db.prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price FROM products WHERE id = ?").get(result.lastInsertRowid);
+    const product = db.prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price, pack_qty, pack_price FROM products WHERE id = ?").get(result.lastInsertRowid);
     return { status: 200, body: { success: true, product, message: "Producto registrado correctamente" } };
   })));
 
@@ -533,7 +533,7 @@ const startServer = async (
     const runTxn = db.transaction(() => {
       const enteredCost = parseFloat(cost) || 0;
       const isBox =
-        (product.sale_unit === "box" || product.sale_unit === "package") &&
+        (product.sale_unit === "box" || product.sale_unit === "package" || product.sale_unit === "boxpack") &&
         product.box_qty > 0;
       // The user enters the TOTAL cost of this purchase; if empty, use cost_price × quantity
       const totalCost =
@@ -575,7 +575,7 @@ const startServer = async (
           .run(openReg ? openReg.id : null, totalCost, reason, id, qty);
       }
 
-      return db.prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, category_id, min_stock, box_qty, box_price FROM products WHERE id = ?").get(id);
+      return db.prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, category_id, min_stock, box_qty, box_price, pack_qty, pack_price FROM products WHERE id = ?").get(id);
     });
 
     const updated = runTxn();
@@ -968,7 +968,7 @@ const startServer = async (
     })();
 
     const product = db
-      .prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price, min_stock FROM products WHERE id = ?")
+      .prepare("SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price, pack_qty, pack_price, min_stock FROM products WHERE id = ?")
       .get(movement.product_id);
     return { status: 200, body: { success: true, product, message: "Movimiento deshecho" } };
   })));
@@ -999,7 +999,7 @@ const startServer = async (
         }
         const enteredCost = parseFloat(it.cost) || 0;
         const isBox =
-          (product.sale_unit === "box" || product.sale_unit === "package") && product.box_qty > 0;
+          (product.sale_unit === "box" || product.sale_unit === "package" || product.sale_unit === "boxpack") && product.box_qty > 0;
         const totalCost =
           enteredCost > 0
             ? enteredCost
@@ -1026,7 +1026,7 @@ const startServer = async (
       .filter((pid) => !issues.some((i) => i.product_id === pid));
     const products = appliedIds.length
       ? db
-          .prepare(`SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price FROM products WHERE id IN (${appliedIds.map(() => "?").join(",")})`)
+          .prepare(`SELECT id, barcode, name, price, stock, cost_price, sale_unit, box_qty, box_price, pack_qty, pack_price FROM products WHERE id IN (${appliedIds.map(() => "?").join(",")})`)
           .all(...appliedIds)
       : [];
 

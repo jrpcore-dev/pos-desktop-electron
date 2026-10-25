@@ -162,6 +162,21 @@ const movementsOf = (id) =>
   r = await req("DELETE", `/api/stock/movements/${mov.id}`, { key: `undo-${mov.id}` });
   check(r.status === 200 && r.replay && stockOf(2) === 50, "reenvío de deshacer → replay, no 404 ni doble resta", `${r.status} replay=${r.replay} pan=${stockOf(2)}`);
 
+  // 9 · caja·paquete·pieza ("boxpack"): la búsqueda trae los datos del paquete
+  // y el costo de una recepción sin costo capturado se calcula por caja.
+  db.prepare(
+    `INSERT INTO products (id, barcode, name, price, stock, sale_unit, cost_price, box_qty, box_price, pack_qty, pack_price)
+     VALUES (50,'050','Galletas',35,0,'boxpack',240,60,300,6,7)`,
+  ).run();
+  r = await req("GET", "/api/products/search?q=Galletas");
+  const found = r.data && r.data.products && r.data.products[0];
+  check(!!found && found.pack_qty === 6 && found.pack_price === 7, "la búsqueda devuelve pack_qty y pack_price", JSON.stringify(found));
+  r = await req("PATCH", "/api/products/50/stock", { key: "k-boxpack", body: { quantity: 18, cost: 0, notes: "", registerExpense: false } });
+  const bpMov = db.prepare("SELECT cost FROM stock_movements WHERE product_id = 50 ORDER BY id DESC LIMIT 1").get();
+  check(r.status === 200 && stockOf(50) === 18, "boxpack: 3 paquetes (18 pz) suman 18 piezas", `${r.status} stock=${stockOf(50)}`);
+  check(!!bpMov && Math.abs(bpMov.cost - 72) < 0.001, "boxpack: costo = $240/caja ÷ 60 × 18 = $72", JSON.stringify(bpMov));
+  check(r.data && r.data.product && r.data.product.pack_qty === 6, "la respuesta del stock incluye pack_qty", JSON.stringify(r.data && r.data.product));
+
   await apiServer.stopServer();
   db.close();
 
