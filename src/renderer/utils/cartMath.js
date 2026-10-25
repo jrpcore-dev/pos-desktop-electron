@@ -1,13 +1,27 @@
 export const calcFinalPrice = (price, discount) =>
   price * (1 - (discount || 0) / 100);
 
-export const resolveUnitPrice = (product, pricing) => {
-  if (!product || typeof product.id !== "number" || !pricing) return product?.price;
+// Precio especial del cliente (excepción o nivel) para el producto, o null.
+export const customerPriceOf = (product, pricing) => {
+  if (!product || typeof product.id !== "number" || !pricing) return null;
   const ex = pricing.exceptions && pricing.exceptions[product.id];
   if (ex != null) return ex;
   const tp = pricing.tierPrices && pricing.tierPrices[product.id];
   if (tp != null) return tp;
-  return product.price;
+  return null;
+};
+
+export const resolveUnitPrice = (product, pricing) =>
+  customerPriceOf(product, pricing) ?? product?.price;
+
+// El precio especial se captura sobre `product.price`: por pieza (o kilo), y
+// por paquete en caja·paquete·pieza. Sólo aplica a esa unidad; una caja nunca
+// se cobra al precio especial de una pieza.
+export const customerPriceForLine = (product, pricing, { isBox, isPack } = {}) => {
+  const special = customerPriceOf(product, pricing);
+  if (special == null || isBox) return null;
+  const priceIsPack = product.sale_unit === "boxpack";
+  return !!isPack === priceIsPack ? special : null;
 };
 
 const todayISO = () => {
@@ -30,6 +44,8 @@ export const promoActiveNow = (item) => {
 
 export const canManualDiscount = (item) => {
   if (item.allow_manual_discount !== 1) return false;
+  // Con precio especial del cliente no corre ninguna promoción.
+  if (item.customerPriced) return true;
   if (!promoActiveNow(item)) return true;
   if (item.discount_percent > 0) return false;
   if (item.promo_fixed_price > 0) return false;
@@ -46,6 +62,10 @@ export const piecePriceOf = (p) =>
   p.sale_unit === "boxpack" ? p.pack_price : p.price;
 
 export const promoInfo = (item, qty) => {
+  // El precio pactado con el cliente reemplaza promociones, % y mayoreo.
+  if (item.customerPriced) {
+    return { total: item.price * qty, unit: item.price, applied: null };
+  }
   const active = promoActiveNow(item);
   const autoOn =
     active && (item.discount_percent > 0 || item.promo_fixed_price > 0);

@@ -73,9 +73,11 @@ const CartItem = React.memo(
       ? "min-w-[52px]"
       : "min-w-[30px]";
 
+    // Con precio de cliente la promoción del producto no aplica: no se anuncia.
+    const promoPct = item.customerPriced ? 0 : item.discount_percent;
     const secondaryBadges = [];
-    if (item.discount_percent > 0)
-      secondaryBadges.push(`-${item.discount_percent}%`);
+    if (item.customerPriced) secondaryBadges.push("Precio cliente");
+    if (promoPct > 0) secondaryBadges.push(`-${promoPct}%`);
     if (item.discount > 0)
       secondaryBadges.push(`-${fmtMoneyAbs(item.discount)}`);
     if (promo)
@@ -134,7 +136,7 @@ const CartItem = React.memo(
           </div>
 
           <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
-            {item.discount_percent > 0 || item.discount > 0 || promo ? (
+            {promoPct > 0 || item.discount > 0 || promo ? (
               <>
                 <span className="line-through">{fmtMoney(item.price)}</span>{" "}
                 {fmtMoney(fp)}

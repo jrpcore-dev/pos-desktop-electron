@@ -51,7 +51,7 @@ import {
   lineTotal,
   lineUnitPrice,
   committedStockFor,
-  resolveUnitPrice,
+  customerPriceForLine,
 } from "../utils/cartMath";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
@@ -298,6 +298,8 @@ const processSaleRef = useRef(null);
     const cartForSale = cart.map((it) => ({
       ...it,
       finalPrice: lineUnitPrice(it, it.quantity),
+      // Con precio de cliente el % de la promoción no se aplicó.
+      ...(it.customerPriced ? { discount_percent: 0 } : {}),
     }));
     const result = await window.api.invoke("record-sale", {
       cart: cartForSale,
@@ -902,16 +904,21 @@ if (e.key === "Tab" && !isEditable) {
     setCart((prev) =>
       prev.map((it) => {
         if (it.isManual || typeof it.id !== "number") return it;
-        const base =
-          resolveUnitPrice(
-            { id: it.id, price: it.catalogPrice ?? it.price },
-            nextPricing,
-          ) ?? it.price;
-        if (base === it.price) return it;
+        const catalog = it.catalogPrice ?? it.price;
+        const special = customerPriceForLine(it, nextPricing, {
+          isBox: it.isBoxItem,
+          isPack: it.isPackItem,
+        });
+        const base = special ?? catalog;
+        const customerPriced = special != null;
+        if (base === it.price && customerPriced === !!it.customerPriced) return it;
         return {
           ...it,
           price: base,
-          finalPrice: calcFinalPrice(base, it.discount_percent),
+          customerPriced,
+          finalPrice: customerPriced
+            ? base
+            : calcFinalPrice(base, it.discount_percent),
         };
       }),
     );
@@ -988,13 +995,16 @@ if (e.key === "Tab" && !isEditable) {
       setBoxChoiceDialog({ open: true, product, qty });
       return;
     }
-    const basePrice = resolveUnitPrice(product, pricing);
-    const effectivePrice = calcFinalPrice(basePrice, product.discount_percent);
+    const special = customerPriceForLine(product, pricing);
+    const basePrice = special ?? product.price;
+    const effectivePrice =
+      special ?? calcFinalPrice(basePrice, product.discount_percent);
     const productWithDiscount = {
       ...product,
       price: basePrice,
       finalPrice: effectivePrice,
       catalogPrice: product.price,
+      customerPriced: special != null,
     };
 
     if (product.isManual) {
@@ -1061,13 +1071,16 @@ if (e.key === "Tab" && !isEditable) {
       showNotification("Stock insuficiente", "warning");
       return;
     }
-    const weightBase = resolveUnitPrice(product, pricing);
-    const effectivePrice = calcFinalPrice(weightBase, product.discount_percent);
+    const weightSpecial = customerPriceForLine(product, pricing);
+    const weightBase = weightSpecial ?? product.price;
+    const effectivePrice =
+      weightSpecial ?? calcFinalPrice(weightBase, product.discount_percent);
     const productWithWeight = {
       ...product,
       price: weightBase,
       finalPrice: effectivePrice,
       catalogPrice: product.price,
+      customerPriced: weightSpecial != null,
       quantity: kg,
       isWeightItem: true,
     };
@@ -1120,10 +1133,10 @@ if (e.key === "Tab" && !isEditable) {
       : isPack
         ? packPriceOf(product)
         : piecePriceOf(product);
-    const unitPrice =
-      resolveUnitPrice({ ...product, price: chosenUnitPrice }, pricing) ??
-      chosenUnitPrice;
-    const effectivePrice = calcFinalPrice(unitPrice, product.discount_percent);
+    const lineSpecial = customerPriceForLine(product, pricing, { isBox, isPack });
+    const unitPrice = lineSpecial ?? chosenUnitPrice;
+    const effectivePrice =
+      lineSpecial ?? calcFinalPrice(unitPrice, product.discount_percent);
     const item = {
       ...product,
       finalPrice: effectivePrice,
@@ -1132,6 +1145,7 @@ if (e.key === "Tab" && !isEditable) {
       isPackItem: isPack,
       price: unitPrice,
       catalogPrice: chosenUnitPrice,
+      customerPriced: lineSpecial != null,
       prices: product.prices || [],
     };
     setCart((prev) => {
@@ -1361,7 +1375,7 @@ if (e.key === "Tab" && !isEditable) {
       prev.map((it) => {
         if (lineKeyOf(it) !== lineKeyOf(item)) return it;
         const fp =
-          it.discount_percent > 0
+          it.discount_percent > 0 && !it.customerPriced
             ? calcFinalPrice(it.price, it.discount_percent)
             : it.price;
         return { ...it, discount: 0, finalPrice: fp };
@@ -1422,7 +1436,7 @@ if (e.key === "Tab" && !isEditable) {
     const effTotal = method === "cash" ? roundCash(total) : total;
     const showDiscounts = cart.some(
       (i) =>
-        i.discount_percent > 0 ||
+        (i.discount_percent > 0 && !i.customerPriced) ||
         i.discount > 0 ||
         promoInfo(i, i.quantity).applied,
     );
@@ -1450,7 +1464,7 @@ if (e.key === "Tab" && !isEditable) {
             : `Oferta ${promo.qty} x ${fmtMoney(promo.price)}`
         : null;
       const discountParts = [];
-      if (item.discount_percent > 0)
+      if (item.discount_percent > 0 && !item.customerPriced)
         discountParts.push(`-${item.discount_percent}%`);
       if (item.discount > 0) discountParts.push(`-${fmtMoneyAbs(item.discount)}`);
 
