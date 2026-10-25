@@ -925,9 +925,9 @@ ipcMain.handle("get-products", async (event, params) => {
     .prepare(
       `
     SELECT p.id, p.name, p.barcode, p.price, p.stock, p.cost_price, p.sale_unit,
-           p.min_stock, p.box_qty, p.box_price, p.pack_qty, p.discount_percent,
+           p.min_stock, p.box_qty, p.box_price, p.pack_qty, p.pack_price, p.discount_percent,
            p.has_discount, p.allow_manual_discount, p.promo_fixed_price, p.promo_start_date, p.promo_end_date, p.supplier_id, p.category_id,
-           p.brand, p.image_path,
+           p.brand, p.image_path, p.expiry_date,
            c.name as category_name, s.name as supplier_name
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
@@ -1166,9 +1166,13 @@ discount_percent,
       };
 
     const current = db
-      .prepare("SELECT stock FROM products WHERE id = ?")
+      .prepare("SELECT stock, expiry_date, image_path FROM products WHERE id = ?")
       .get(id);
     if (!current) return { success: false, error: "Producto no encontrado" };
+    // Campos que el formulario no envía se conservan (antes se borraban la
+    // imagen y la caducidad en cada edición).
+    const keep = (key, value) =>
+      key in product ? value || null : current[key] ?? null;
     // stock omitido = el usuario no lo tocó: se conserva el actual (no pisa
     // ventas hechas mientras el formulario estaba abierto).
     const parsedStock = parseFloat(stock);
@@ -1189,8 +1193,8 @@ discount_percent,
       newStock,
       category_id || null,
       supplier_id || null,
-      expiry_date || null,
-      image_path || null,
+      keep("expiry_date", expiry_date),
+      keep("image_path", image_path),
       cost_price || 0,
       parseFloat(min_stock) > 0 ? parseFloat(min_stock) : autoMinStock(newStock),
       discount_percent || 0,

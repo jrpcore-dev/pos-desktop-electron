@@ -122,6 +122,89 @@ const calcMarginPct = (p) => {
 
 const fmtKg = (kg) => (Math.round(kg * 1000) / 1000).toFixed(3);
 
+// Unidades en que se captura una entrada/salida de stock, de mayor a menor.
+// `factor` = piezas que representa 1 unidad. Vacío si se captura directo.
+const stockEntryUnits = (p) => {
+  if (!isContainerUnit(p?.sale_unit) || !(p.box_qty > 0)) return [];
+  const labels = unitLabels(p.sale_unit);
+  const units = [
+    {
+      value: "box",
+      label: p.sale_unit === "package" ? "Paquetes" : "Cajas",
+      one: labels.singular,
+      many: labels.plural,
+      factor: p.box_qty,
+    },
+  ];
+  if (p.sale_unit === "boxpack" && p.pack_qty > 0) {
+    units.push({
+      value: "pack",
+      label: "Paquetes",
+      one: "paquete",
+      many: "paquetes",
+      factor: p.pack_qty,
+    });
+  }
+  units.push({ value: "pz", label: "Piezas", one: "pieza", many: "piezas", factor: 1 });
+  return units;
+};
+
+const entryUnit = (p, mode) =>
+  stockEntryUnits(p).find((u) => u.value === mode) || {
+    value: "pz",
+    label: "Piezas",
+    one: "pieza",
+    many: "piezas",
+    factor: 1,
+  };
+
+// 123 piezas → "1 caja · 2 paquetes · 3 piezas"
+const pieceBreakdown = (p, pieces) => {
+  let rest = Math.max(0, Math.round(pieces));
+  const parts = [];
+  for (const u of stockEntryUnits(p)) {
+    const n = Math.floor(rest / u.factor);
+    rest -= n * u.factor;
+    if (n > 0) parts.push(`${n} ${n === 1 ? u.one : u.many}`);
+  }
+  return parts.join(" · ") || "0 piezas";
+};
+
+// Selector Cajas / Paquetes / Piezas según cómo se vende el producto.
+const StockUnitToggle = ({ product, value, onChange }) => {
+  const units = stockEntryUnits(product);
+  if (!units.length) return null;
+  return (
+    <div className="flex justify-center">
+      <div className="flex h-9 w-fit items-center rounded-lg bg-muted p-1 text-muted-foreground">
+        {units.map((u) => (
+          <button
+            key={u.value}
+            type="button"
+            onClick={() => onChange(u.value)}
+            className={cn(
+              "rounded-lg px-4 py-1 text-sm font-medium transition-colors",
+              value === u.value
+                ? "bg-background text-foreground shadow"
+                : "hover:text-foreground",
+            )}
+          >
+            {u.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// "Cantidad (cajas)" / "(paquetes)" / "(piezas)" / "(kg)".
+const entryQtyLabel = (product, mode, fallback) =>
+  stockEntryUnits(product).length
+    ? `Cantidad (${entryUnit(product, mode).many})`
+    : product.sale_unit === "weight"
+      ? "Cantidad (kg)"
+      : fallback;
+
 const stockUnit = (p) => {
   if (p.sale_unit === "weight") return "kg";
   if (isContainerUnit(p.sale_unit)) return unitLabels(p.sale_unit).plural;
@@ -944,7 +1027,7 @@ const Inventory = () => {
     const actualQty =
       isContainerUnit(selectedProduct.sale_unit) && selectedProduct.box_qty > 0
         ? stockQuantity *
-          (stockUnitMode === "pz" ? 1 : selectedProduct.box_qty)
+          entryUnit(selectedProduct, stockUnitMode).factor
         : stockQuantity;
     const costNum = parseFloat(stockCost) || 0;
     const totalCost =
@@ -996,13 +1079,22 @@ const Inventory = () => {
       isContainerUnit(selectedProduct.sale_unit) &&
       selectedProduct.box_qty > 0;
     const costNum = parseFloat(stockCost) || 0;
-    if (costNum > 0) {
-      const expected = (selectedProduct.cost_price || 0) * stockQuantity;
+    // cost_price está en la unidad del producto (por caja/paquete si es
+    // contenedor): se compara y se recalcula sobre las piezas reales, sin
+    // importar si la cantidad se capturó en cajas, paquetes o piezas.
+    const pieces = addPiezas;
+    const piecesPerCost = isBox ? selectedProduct.box_qty : 1;
+    if (costNum > 0 && pieces > 0) {
+      const expected =
+        ((selectedProduct.cost_price || 0) / piecesPerCost) * pieces;
       const diff = costNum - expected;
       if (Math.abs(diff) >= 1) {
         setStockCostConfirm({
           oldCost: selectedProduct.cost_price || 0,
-          newCost: Math.round((costNum / stockQuantity + Number.EPSILON) * 100) / 100,
+          newCost:
+            Math.round(
+              ((costNum / pieces) * piecesPerCost + Number.EPSILON) * 100,
+            ) / 100,
           direction: diff > 0 ? "subio" : "bajo",
           isBox,
           saleUnit: selectedProduct.sale_unit,
@@ -1040,7 +1132,7 @@ const Inventory = () => {
     const actualQty =
       isContainerUnit(selectedProduct.sale_unit) && selectedProduct.box_qty > 0
         ? (parseFloat(reduceQty) || 0) *
-          (reduceUnitMode === "pz" ? 1 : selectedProduct.box_qty)
+          entryUnit(selectedProduct, reduceUnitMode).factor
         : parseFloat(reduceQty) || 0;
     setRemovingStock(true);
     try {
@@ -1066,13 +1158,13 @@ const Inventory = () => {
   const reducePiezas =
     isContainerUnit(selectedProduct?.sale_unit) && selectedProduct?.box_qty > 0
       ? (parseFloat(reduceQty) || 0) *
-        (reduceUnitMode === "pz" ? 1 : selectedProduct.box_qty)
+        entryUnit(selectedProduct, reduceUnitMode).factor
       : parseFloat(reduceQty) || 0;
 
   const addPiezas =
     isContainerUnit(selectedProduct?.sale_unit) && selectedProduct?.box_qty > 0
       ? (parseFloat(stockQuantity) || 0) *
-        (stockUnitMode === "pz" ? 1 : selectedProduct.box_qty)
+        entryUnit(selectedProduct, stockUnitMode).factor
       : parseFloat(stockQuantity) || 0;
 
   const exportInventoryCSV = async () => {
@@ -1888,46 +1980,13 @@ const Inventory = () => {
             {selectedProduct && (
               <div className="space-y-5">
                 <div className="space-y-1.5">
-                  {isContainerUnit(selectedProduct.sale_unit) &&
-                    selectedProduct.box_qty > 0 && (
-                      <div className="flex justify-center">
-                        <div className="flex h-9 w-fit items-center rounded-lg bg-muted p-1 text-muted-foreground">
-                          <button
-                            type="button"
-                            onClick={() => setStockUnitMode("box")}
-                            className={cn(
-                              "rounded-lg px-4 py-1 text-sm font-medium transition-colors",
-                              stockUnitMode === "box"
-                                ? "bg-background text-foreground shadow"
-                                : "hover:text-foreground",
-                            )}
-                          >
-                            Cajas
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setStockUnitMode("pz")}
-                            className={cn(
-                              "rounded-lg px-4 py-1 text-sm font-medium transition-colors",
-                              stockUnitMode === "pz"
-                                ? "bg-background text-foreground shadow"
-                                : "hover:text-foreground",
-                            )}
-                          >
-                            Piezas
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  <StockUnitToggle
+                    product={selectedProduct}
+                    value={stockUnitMode}
+                    onChange={setStockUnitMode}
+                  />
                   <Label htmlFor="add-stock-qty">
-                    {isContainerUnit(selectedProduct.sale_unit) &&
-                    selectedProduct.box_qty > 0
-                      ? stockUnitMode === "pz"
-                        ? "Cantidad (piezas)"
-                        : "Cantidad (cajas)"
-                      : selectedProduct.sale_unit === "weight"
-                        ? "Cantidad (kg)"
-                        : "Cantidad (pzas)"}
+                    {entryQtyLabel(selectedProduct, stockUnitMode, "Cantidad (pzas)")}
                   </Label>
                   <Input
                     id="add-stock-qty"
@@ -1946,24 +2005,11 @@ const Inventory = () => {
                       {stockQtyError}
                     </p>
                   )}
-                  {isContainerUnit(selectedProduct.sale_unit) &&
-                    selectedProduct.box_qty > 0 &&
+                  {stockEntryUnits(selectedProduct).length > 0 &&
                     parseInt(stockQuantity) > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        {stockUnitMode === "pz"
-                          ? `${parseInt(stockQuantity) || 0} piezas = ${
-                              ((parseInt(stockQuantity) || 0) /
-                                selectedProduct.box_qty) %
-                                1 ===
-                              0
-                                ? (parseInt(stockQuantity) || 0) /
-                                  selectedProduct.box_qty
-                                : (
-                                    (parseInt(stockQuantity) || 0) /
-                                    selectedProduct.box_qty
-                                  ).toFixed(2)
-                            } cajas`
-                          : `= ${(parseInt(stockQuantity) || 0) * selectedProduct.box_qty} piezas`}
+                        = {pieceBreakdown(selectedProduct, addPiezas)}
+                        {stockUnitMode !== "pz" && ` (${addPiezas} piezas)`}
                       </p>
                     )}
                 </div>
@@ -2318,57 +2364,24 @@ const Inventory = () => {
             {selectedProduct && (
               <div className="space-y-5">
                 <div className="space-y-1.5">
-                  {isContainerUnit(selectedProduct.sale_unit) &&
-                    selectedProduct.box_qty > 0 && (
-                      <div className="flex justify-center">
-                        <div className="flex h-9 w-fit items-center rounded-lg bg-muted p-1 text-muted-foreground">
-                          <button
-                            type="button"
-                            onClick={() => setReduceUnitMode("box")}
-                            className={cn(
-                              "rounded-lg px-4 py-1 text-sm font-medium transition-colors",
-                              reduceUnitMode === "box"
-                                ? "bg-background text-foreground shadow"
-                                : "hover:text-foreground",
-                            )}
-                          >
-                            Cajas
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setReduceUnitMode("pz")}
-                            className={cn(
-                              "rounded-lg px-4 py-1 text-sm font-medium transition-colors",
-                              reduceUnitMode === "pz"
-                                ? "bg-background text-foreground shadow"
-                                : "hover:text-foreground",
-                            )}
-                          >
-                            Piezas
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  <StockUnitToggle
+                    product={selectedProduct}
+                    value={reduceUnitMode}
+                    onChange={setReduceUnitMode}
+                  />
                   <Label htmlFor="reduce-qty">
-                    {isContainerUnit(selectedProduct.sale_unit) &&
-                    selectedProduct.box_qty > 0
-                      ? reduceUnitMode === "pz"
-                        ? "Cantidad (piezas)"
-                        : "Cantidad (cajas)"
-                      : "Cantidad a reducir"}
+                    {entryQtyLabel(selectedProduct, reduceUnitMode, "Cantidad a reducir")}
                   </Label>
                   <Input
                     id="reduce-qty"
                     type="number"
                     min={1}
                     max={
-                      isContainerUnit(selectedProduct.sale_unit) &&
-                      selectedProduct.box_qty > 0
-                        ? reduceUnitMode === "pz"
-                          ? selectedProduct.stock
-                          : Math.floor(
-                              selectedProduct.stock / selectedProduct.box_qty,
-                            )
+                      stockEntryUnits(selectedProduct).length
+                        ? Math.floor(
+                            selectedProduct.stock /
+                              entryUnit(selectedProduct, reduceUnitMode).factor,
+                          )
                         : selectedProduct.sale_unit === "weight"
                           ? undefined
                           : selectedProduct.stock
@@ -2395,28 +2408,11 @@ const Inventory = () => {
                     <p className="text-xs font-semibold text-red-600 dark:text-red-400">
                       Supera el stock disponible ({stockDisplay(selectedProduct)}).
                     </p>
-                  ) : isContainerUnit(selectedProduct.sale_unit) &&
-                    selectedProduct.box_qty > 0 &&
+                  ) : stockEntryUnits(selectedProduct).length > 0 &&
                     parseFloat(reduceQty) > 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      {reduceUnitMode === "pz" ? (
-                        <>
-                          {parseInt(reduceQty) || 0} piezas ={" "}
-                          {((parseInt(reduceQty) || 0) /
-                            selectedProduct.box_qty) %
-                            1 ===
-                          0
-                            ? (parseInt(reduceQty) || 0) /
-                              selectedProduct.box_qty
-                            : (
-                                (parseInt(reduceQty) || 0) /
-                                selectedProduct.box_qty
-                              ).toFixed(2)}{" "}
-                          cajas
-                        </>
-                      ) : (
-                        <>= {reducePiezas} piezas</>
-                      )}
+                      = {pieceBreakdown(selectedProduct, reducePiezas)}
+                      {reduceUnitMode !== "pz" && ` (${reducePiezas} piezas)`}
                     </p>
                   ) : null}
                 </div>
