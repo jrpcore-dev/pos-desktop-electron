@@ -13,7 +13,11 @@ module.exports = {
     icon: "./build/Icon.ico",
     extraResource: ["./build/Icon.ico", "./bd sku.xlsx", "./app-update.yml"],
   },
-  rebuildConfig: {},
+  // serialport trae binarios N-API precompilados (válidos para cualquier
+  // Electron): recompilarlo sólo exige Python/VS Build Tools sin necesidad.
+  rebuildConfig: {
+    ignoreModules: ["@serialport/bindings-cpp"],
+  },
   makers: [
     new NsisMaker(),
     {

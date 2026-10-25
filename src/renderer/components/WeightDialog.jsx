@@ -21,10 +21,15 @@ const WeightDialog = ({
   onWeightChange,
   onConfirm,
   isDark = false,
+  // { stable, overload } mientras el peso viene de la báscula; null si es manual.
+  scaleStatus = null,
 }) => {
   const inputRef = useRef(null);
   const kg = parseFloat(weightAmount) || 0;
   const [confirming, setConfirming] = useState(false);
+  // Sólo se cobra un peso de báscula ya estabilizado.
+  const scaleBlocked =
+    !!scaleStatus && (scaleStatus.overload || !scaleStatus.stable);
 
   const effectivePrice = useMemo(() => {
     if (!product) return 0;
@@ -50,7 +55,7 @@ const WeightDialog = ({
     if (e.key === "Enter" && kg > 0) {
       e.preventDefault();
       e.stopPropagation();
-      if (confirming) return;
+      if (confirming || scaleBlocked) return;
       setConfirming(true);
       setTimeout(() => setConfirming(false), 400);
       onConfirm();
@@ -124,7 +129,26 @@ const WeightDialog = ({
                   className="h-16 rounded-xl bg-field pl-12 pr-4 text-center text-3xl font-bold tabular-nums"
                 />
               </div>
-              {errorMessage ? (
+              {scaleStatus?.overload ? (
+                <p
+                  role="alert"
+                  className="text-center text-xs font-medium text-destructive"
+                >
+                  Sobrecarga en la báscula: retira peso.
+                </p>
+              ) : scaleStatus ? (
+                <p
+                  aria-live="polite"
+                  className={cn(
+                    "text-center text-xs font-medium",
+                    scaleStatus.stable ? "text-success" : "text-warning"
+                  )}
+                >
+                  {scaleStatus.stable
+                    ? "Peso estable · desde la báscula"
+                    : "Estabilizando peso…"}
+                </p>
+              ) : errorMessage ? (
                 <p
                   id="weight-amount-error"
                   role="alert"
@@ -175,7 +199,7 @@ const WeightDialog = ({
             type="button"
             variant="outline"
             className="h-11 flex-1 border-success bg-success/5 text-success hover:bg-success/10 hover:text-success"
-            disabled={!weightAmount || kg <= 0 || confirming}
+            disabled={!weightAmount || kg <= 0 || confirming || scaleBlocked}
             onClick={onConfirm}
           >
             <Scale size={16} />

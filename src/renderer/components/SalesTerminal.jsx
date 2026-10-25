@@ -56,6 +56,7 @@ import {
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
 import { setSaleInProgress } from "../utils/posState";
+import { getScaleConfig, toDriverConfig } from "../utils/scaleConfig";
 
 let roundEnabled = true;
 let roundStep = 0.5;
@@ -186,6 +187,8 @@ const SalesTerminal = () => {
     product: null,
   });
   const [weightAmount, setWeightAmount] = useState("");
+  const [scaleLive, setScaleLive] = useState(null);
+  const manualWeightRef = useRef(false);
   const [boxChoiceDialog, setBoxChoiceDialog] = useState({
     open: false,
     product: null,
@@ -785,24 +788,36 @@ if (e.key === "Tab" && !isEditable) {
     if (!weightDialog.open || !weightDialog.product) return;
     let cancelled = false;
 
+    manualWeightRef.current = false;
+    setScaleLive(null);
+
+    // Si el cajero escribe un peso a mano, la báscula ya no lo sobrescribe.
     const unsub = window.api.on("weight-update", (data) => {
-      if (!cancelled && data.weight >= 0) {
-        setWeightAmount(data.weight.toFixed(3));
+      if (cancelled || manualWeightRef.current) return;
+      if (data.overload) {
+        setScaleLive({ stable: false, overload: true });
+        return;
       }
+      if (data.weight >= 0) setWeightAmount(data.weight.toFixed(3));
+      setScaleLive({ stable: data.stable !== false, overload: false });
     });
 
     (async () => {
       try {
-        const port = localStorage.getItem("scalePort");
-        const baud = localStorage.getItem("scaleBaud") || "115200";
-        if (!port) return;
-        await window.api.invoke("start-weight-stream", port, parseInt(baud));
+        const cfg = getScaleConfig();
+        if (!cfg.port) return;
+        await window.api.invoke(
+          "start-weight-stream",
+          cfg.port,
+          toDriverConfig(cfg),
+        );
       } catch (e) {}
     })();
 
     return () => {
       cancelled = true;
       unsub();
+      setScaleLive(null);
       window.api.invoke("stop-weight-stream");
     };
   }, [weightDialog.open, weightDialog.product]);
@@ -1828,7 +1843,12 @@ if (e.key === "Tab" && !isEditable) {
         }}
         product={weightDialog.product}
         weightAmount={weightAmount}
-        onWeightChange={(v) => setWeightAmount(v)}
+        onWeightChange={(v) => {
+          manualWeightRef.current = true;
+          setScaleLive(null);
+          setWeightAmount(v);
+        }}
+        scaleStatus={scaleLive}
         onConfirm={confirmWeightProduct}
         isDark={isDark}
       />

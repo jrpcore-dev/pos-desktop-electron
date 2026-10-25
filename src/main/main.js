@@ -6147,365 +6147,120 @@ ipcMain.handle("complete-task", async (event, id) => {
 });
 
 // ─── BASCULA (SCALE) ────────────────────────────────────────
+// Driver en ./scale.js: el puerto queda abierto (serialport nativo), con
+// protocolo configurable/autodetectado y lecturas con estabilidad.
 
-const { execSync, spawn } = require("child_process");
-
-let scaleConnected = false;
-let scalePortPath = "";
-let scaleBaudRate = 115200;
-let scaleProcess = null;
-let scaleFailCount = 0;
-const SCALE_MAX_CONSECUTIVE_FAILS = 3;
-const SCALE_STREAM_MAX_RETRIES = 3;
+const scale = require("./scale");
 
 const logScale = (msg) =>
   console.log(`[SCALE] ${new Date().toISOString()} ${msg}`);
 
-// Registra SOLO transiciones reales + motivo exacto.
-const updateScaleConnection = (connected, reason) => {
-  if (scaleConnected === connected) return;
-  scaleConnected = connected;
-  logScale(
-    connected ? `connected via ${reason}` : `disconnected via ${reason}`,
-  );
-};
+const scaleDriver = new scale.ScaleDriver({ log: logScale });
+// Ventana de la caja que abrió el stream (no "la primera ventana").
+let scaleStreamWin = null;
 
-// Debounce: 3 fallos CONSECUTIVOS antes de marcar desconectada.
-// Mantiene el estado actual en fallos aislados (transitorios).
-const onScaleProbeFailure = (why) => {
-  scaleFailCount += 1;
-  logScale(
-    `probe failure ${scaleFailCount}/${SCALE_MAX_CONSECUTIVE_FAILS}: ${why}`,
-  );
-  if (scaleFailCount >= SCALE_MAX_CONSECUTIVE_FAILS) {
-    updateScaleConnection(false, why);
-    scalePortPath = "";
-  }
-};
+const scaleTarget = () =>
+  scaleStreamWin && !scaleStreamWin.isDestroyed() ? scaleStreamWin : null;
 
-const psReadWeightAsync = (port, baud) => {
-  const script = `
-    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $ErrorActionPreference = "Stop"
-    try {
-      $port = New-Object System.IO.Ports.SerialPort "${port}", ${baud}, None, 8, One
-      $port.ReadTimeout = 100
-      $port.Open()
-      Write-Output "SCALE_OK"
-      Start-Sleep -Milliseconds 200
-      $port.DiscardInBuffer()
-      $port.Write("P")
-      $data = ""
-      $deadline = (Get-Date).AddSeconds(5)
-      while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 50
-        while ($port.BytesToRead -gt 0) {
-          $data += [char]$port.ReadByte()
-        }
-        if ($data -match "\\r" -or $data -match "\\n") { break }
-      }
-      $port.Close()
-      Write-Output $data
-    } catch {
-      Write-Output "SCALE_ERR: $($_.Exception.Message)"
-    }
-  `;
-  const tmpFile = path.join(app.getPath("userData"), "scale-read.ps1");
-  fs.writeFileSync(tmpFile, script, "utf-8");
-  return new Promise((resolve, reject) => {
-    const proc = spawn("powershell", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      tmpFile,
-    ]);
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (d) => {
-      stdout += d;
-    });
-    proc.stderr.on("data", (d) => {
-      stderr += d;
-    });
-    const timer = setTimeout(() => {
-      try {
-        proc.kill();
-      } catch {}
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {}
-      reject(new Error(stderr.trim() || "Timeout leyendo báscula"));
-    }, 8000);
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {}
-      reject(err);
-    });
-    proc.on("close", () => {
-      clearTimeout(timer);
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {}
-      const lines = stdout.split(/\r?\n/);
-      const first = (lines[0] || "").trim();
-      if (first.startsWith("SCALE_ERR:")) {
-        resolve({ ok: false, raw: first.slice("SCALE_ERR:".length).trim() });
-      } else if (first === "SCALE_OK") {
-        resolve({ ok: true, raw: lines.slice(1).join("\n").trim() });
-      } else {
-        resolve({ ok: true, raw: stdout.trim() });
-      }
-    });
-  });
-};
+scaleDriver.on("reading", (r) => {
+  if (scaleDriver.pollTimer) scaleTarget()?.webContents.send("weight-update", r);
+});
+scaleDriver.on("error", (err) => {
+  logScale(`error: ${err.message}`);
+  scaleTarget()?.webContents.send("scale-error", `Báscula: ${err.message}`);
+});
+scaleDriver.on("close", () => {
+  logScale(`puerto cerrado (${scaleDriver.path || "?"})`);
+  scaleTarget()?.webContents.send("scale-error", "Báscula desconectada");
+});
 
-const psContinuousScript = (port, baud, retries = SCALE_STREAM_MAX_RETRIES) => `
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-  $port = New-Object System.IO.Ports.SerialPort "${port}", ${baud}, None, 8, One
-  $port.ReadTimeout = -1
-  try {
-    $port.Open()
-  } catch {
-    Write-Output "SCALE_TRANSIENT_ABORT: $($_.Exception.Message)"
-    exit 1
+const scaleReadingResult = (r) => {
+  if (!r) {
+    return {
+      success: false,
+      error: "Puerto abierto, sin lectura (revisa baud, formato y protocolo)",
+    };
   }
-  Start-Sleep -Milliseconds 200
-  $port.DiscardInBuffer()
-  $errorStreak = 0
-  while ($true) {
-    $failed = $false
-    $errMsg = ""
-    try {
-      if ($port.BytesToRead -eq 0) {
-        $port.Write("P")
-      }
-      $data = ""
-      while ($port.BytesToRead -gt 0) {
-        $bytes = $port.ReadByte()
-        if ($bytes -eq 13 -or $bytes -eq 10) {
-          if ($data.Length -gt 0) {
-            Write-Output $data
-            $data = ""
-          }
-        } else {
-          $data += [char]$bytes
-        }
-      }
-      if ($data.Length -gt 0) {
-        Write-Output $data
-      }
-    } catch {
-      $failed = $true
-      $errMsg = $_.Exception.Message
-    }
-    if ($failed) {
-      $errorStreak++
-      if ($errorStreak -gt ${retries}) {
-        Write-Output "SCALE_TRANSIENT_ABORT: $errMsg"
-        break
-      }
-      Write-Output "SCALE_TRANSIENT: $errMsg"
-      Start-Sleep -Milliseconds 500
-    } else {
-      $errorStreak = 0
-      Start-Sleep -Milliseconds 50
-    }
+  if (r.overload) {
+    return { success: false, error: "Sobrecarga en la báscula", raw: r.raw };
   }
-`;
+  return {
+    success: true,
+    weight: r.weight,
+    stable: r.stable,
+    raw: r.raw,
+    profile: scaleDriver.profile,
+  };
+};
 
 ipcMain.handle("list-serial-ports", async () => {
   try {
-    const result = execSync(
-      `powershell -NoProfile -Command "[System.IO.Ports.SerialPort]::GetPortNames() | ForEach-Object { \\"\\"" + $_ + \\"\\"" }"`,
-      { encoding: "utf-8", timeout: 5000 },
-    ).trim();
-    if (!result) return [];
-    const names = result.split(/\r?\n/).filter(Boolean);
-    return names.map((p) => ({
-      path: p.trim(),
-      manufacturer: "",
-      friendlyName: p.trim(),
-    }));
+    return await scale.listPorts();
   } catch (error) {
+    logScale(`list-ports error: ${error.message}`);
     return [];
   }
 });
 
-ipcMain.handle("connect-scale", async (event, portPath, baudRate = 115200) => {
-  const baud = parseInt(baudRate) || 115200;
+// cfg: { baudRate, profile, format } (o un número = baud, compatibilidad).
+ipcMain.handle("connect-scale", async (event, portPath, cfg) => {
   try {
-    const probe = await psReadWeightAsync(portPath, baud);
-    if (!probe.ok) {
-      onScaleProbeFailure(
-        `probe-fail: ${probe.raw || "No se pudo abrir el puerto"}`,
-      );
-      return {
-        success: false,
-        error: probe.raw || "No se pudo abrir el puerto",
-      };
-    }
-    scaleFailCount = 0;
-    updateScaleConnection(
-      true,
-      `probe (lectura ${probe.raw.trim() || "sin peso"})`,
-    );
-    scalePortPath = portPath;
-    scaleBaudRate = baud;
-    const match = probe.raw.match(/(-?\d+\.?\d*)/);
-    const weight = match ? parseFloat(match[1]) : null;
-    return {
-      success: true,
-      raw: probe.raw,
-      weight,
-      error: probe.raw
-        ? undefined
-        : "Puerto abierto, sin lectura (revisa baud/protocolo)",
-    };
+    await scaleDriver.open(portPath, cfg);
+    logScale(`conectada ${portPath} ${JSON.stringify(scaleDriver.config)}`);
+    const r = await scaleDriver.read();
+    const result = scaleReadingResult(r);
+    // El puerto abrió: queda conectada aunque aún no haya lectura (aviso).
+    return result.success
+      ? result
+      : { success: true, weight: null, raw: r?.raw || "", error: result.error };
   } catch (error) {
-    onScaleProbeFailure(`probe-error: ${error.message || "No se pudo conectar"}`);
+    logScale(`connect error: ${error.message}`);
+    await scaleDriver.close();
     return { success: false, error: error.message || "No se pudo conectar" };
   }
 });
 
 ipcMain.handle("read-weight", async () => {
-  if (!scaleConnected || !scalePortPath) {
+  if (!scaleDriver.isOpen) {
     return { success: false, error: "Bascula no conectada" };
   }
   try {
-    const probe = await psReadWeightAsync(
-      scalePortPath,
-      scaleBaudRate || 115200,
-    );
-    if (!probe.ok) {
-      logScale(`read-weight probe-fail: ${probe.raw || "No se pudo abrir el puerto"}`);
-      return {
-        success: false,
-        error: probe.raw || "No se pudo abrir el puerto",
-      };
-    }
-    const match = probe.raw.match(/(-?\d+\.?\d*)/);
-    if (match) {
-      return { success: true, weight: parseFloat(match[1]), raw: probe.raw };
-    }
-    return { success: false, error: "No se pudo leer el peso", raw: probe.raw };
+    return scaleReadingResult(await scaleDriver.read());
   } catch (error) {
-    logScale(`read-weight error: ${error.message}`);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle("disconnect-scale", async () => {
-  if (scaleProcess) {
-    scaleProcess.kill();
-    scaleProcess = null;
-  }
-  scaleFailCount = 0;
-  updateScaleConnection(false, "user-disconnect");
-  scalePortPath = "";
+  scaleStreamWin = null;
+  await scaleDriver.close();
+  logScale("user-disconnect");
   return { success: true };
 });
 
-ipcMain.handle(
-  "start-weight-stream",
-  async (event, portPath, baudRate = 115200) => {
-    try {
-      if (scaleProcess) {
-        scaleProcess.kill();
-        scaleProcess = null;
-      }
-      const script = psContinuousScript(
-        portPath,
-        parseInt(baudRate),
-        SCALE_STREAM_MAX_RETRIES,
-      );
-      const tmpFile = path.join(app.getPath("userData"), "scale-stream.ps1");
-      fs.writeFileSync(tmpFile, script, "utf-8");
-      scaleProcess = spawn("powershell", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        tmpFile,
-      ]);
-      scaleFailCount = 0;
-      updateScaleConnection(true, "start-stream");
-      scalePortPath = portPath;
-      scaleBaudRate = parseInt(baudRate) || 115200;
-      const win = BrowserWindow.getAllWindows()[0];
-      let lastStreamTransient = "";
-      const scaleSendError = (msg) => {
-        console.error("[SCALE STDERR]", msg);
-        if (win && !win.isDestroyed()) {
-          win.webContents.send("scale-error", msg);
-        }
-      };
-      scaleProcess.stderr.on("data", (data) => {
-        scaleSendError(String(data).trim());
-      });
-      scaleProcess.on("error", (err) => {
-        scaleSendError(err.message);
-        scaleProcess = null;
-        updateScaleConnection(false, `stream-spawn-error: ${err.message}`);
-      });
-      scaleProcess.on("close", (code) => {
-        console.log("[SCALE CLOSED] code:", code);
-        scaleProcess = null;
-        updateScaleConnection(
-          false,
-          `stream-close-code:${code}${
-            lastStreamTransient
-              ? ` (previo transitorio: ${lastStreamTransient})`
-              : ""
-          }`,
-        );
-      });
-      scaleProcess.stdout.on("data", (data) => {
-        const lines = String(data).split(/\r?\n/).filter(Boolean);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("SCALE_TRANSIENT_ABORT:")) {
-            lastStreamTransient = trimmed.slice("SCALE_TRANSIENT_ABORT:".length).trim();
-            logScale(`stream agotó reintentos transitorios: ${lastStreamTransient}`);
-          } else if (trimmed.startsWith("SCALE_TRANSIENT:")) {
-            lastStreamTransient = trimmed.slice("SCALE_TRANSIENT:".length).trim();
-            logScale(`stream transitorio, reintentando: ${lastStreamTransient}`);
-            if (win && !win.isDestroyed()) {
-              win.webContents.send(
-                "scale-error",
-                "Báscula: interferencia transitoria, reintentando...",
-              );
-            }
-          } else if (win && !win.isDestroyed()) {
-            const match = trimmed.match(/^-?\d+\.?\d*$/);
-            if (match) {
-              win.webContents.send("weight-update", {
-                weight: parseFloat(match[0]),
-                raw: trimmed,
-              });
-            }
-          }
-        }
-      });
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error.message };
+ipcMain.handle("start-weight-stream", async (event, portPath, cfg) => {
+  try {
+    const wanted = scale.normalizeConfig(cfg);
+    const sameConfig =
+      JSON.stringify(wanted) === JSON.stringify(scaleDriver.config);
+    if (!scaleDriver.isOpen || scaleDriver.path !== portPath || !sameConfig) {
+      await scaleDriver.open(portPath, wanted);
     }
-  },
-);
+    scaleStreamWin = BrowserWindow.fromWebContents(event.sender);
+    scaleDriver.startStream();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 
 ipcMain.handle("stop-weight-stream", async () => {
-  if (scaleProcess) {
-    scaleProcess.kill();
-    scaleProcess = null;
-  }
+  scaleDriver.stopStream();
   return { success: true };
 });
 
 ipcMain.handle("is-scale-connected", async () => {
-  return { connected: scaleConnected };
+  return { connected: scaleDriver.isOpen, profile: scaleDriver.profile };
 });
 
 // ─── IMPRESIÓN DE TICKETS (WINDOWS SPOOLER + DRIVER DE LA IMPRESORA) ─────

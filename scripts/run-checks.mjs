@@ -55,6 +55,7 @@ const CHECKS = [
   { file: "check-4c-offline-queue.cjs" },
   { file: "check-6g-promotion.cjs" },
   { file: "check-print.cjs" },
+  { file: "check-scale.cjs" },
   // Auditoría multicaja (fases 0-4).
   { file: "check-0-taecel-folio.cjs" },
   { file: "check-1-security.cjs" },

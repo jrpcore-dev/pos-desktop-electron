@@ -17,7 +17,7 @@ export default defineConfig({
       fileName: () => "main.js",
     },
     rollupOptions: {
-      external: ["electron", "better-sqlite3", "electron-updater", "express"],
+      external: ["electron", "better-sqlite3", "electron-updater", "express", "serialport"],
     },
   },
   plugins: [
