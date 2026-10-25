@@ -634,6 +634,23 @@ const createServiceTransactions = ({
         break;
       }
     }
+    // Servicio de monto libre (CFE, agua…): el SKU puede ser el del carrier
+    // mismo. Si no hay match por producto, se resuelve por carrier para que el
+    // importe que capturó el cajero sí llegue al RequestTXN.
+    if (!operator) {
+      operator = (catalog.operators || []).find(
+        (op) => op.key === productCode || op.id === productCode,
+      ) || null;
+      if (operator && operator.freeAmount) {
+        // Con monto libre el `productCode` que viaja a Taecel es el id del
+        // carrier; el producto sólo aporta nombre y categoryId para el ledger.
+        product =
+          (operator.products || [])[0] ||
+          { sku: operator.id, name: operator.name, categoryId: operator.categoryId, amountCents: 0 };
+      } else {
+        operator = null;
+      }
+    }
     if (!operator || !product) {
       return {
         ok: false,
@@ -709,7 +726,11 @@ const createServiceTransactions = ({
     const referenceHash = sha256(reference);
     const referenceMasked = maskReference(reference);
     const referenceEnc = taecel.encryptReference(reference);
-    const description = product.name || `${operator.name} ${moneyCents(amountCents)}`;
+    // Con monto libre el nombre del producto no trae importe: se agrega aquí
+    // para que el ledger y el ticket lo muestren completos.
+    const description = freeAmount
+      ? `${product.name} ${moneyCents(amountCents)}`
+      : product.name || `${operator.name} ${moneyCents(amountCents)}`;
 
     const insert = db.prepare(
       `INSERT INTO service_transactions (

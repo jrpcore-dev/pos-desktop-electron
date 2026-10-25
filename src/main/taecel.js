@@ -331,11 +331,11 @@ const normalizeCatalog = (data, fetchedAt = Date.now()) => {
       .filter((p) => p.carrierId === id)
       .sort((a, b) => a.amountCents - b.amountCents || a.name.localeCompare(b.name));
 
-    // Fase 1: sólo tiempo aire y paquetes. Los carriers sin productos de esas
-    // categorías no aparecen en la rejilla (servicios/tarjetas quedan para
-    // la siguiente fase).
-    const phase1 = products.filter((p) => p.categoryId === 1 || p.categoryId === 2);
-    if (!phase1.length) continue;
+    // Todas las categorías del catálogo de la cuenta: tiempo aire (1), paquetes
+    // (2), pago de servicios (3) y tarjetas de regalo (4). Los carriers sin
+    // productos no aparecen en la rejilla.
+    const sellable = products.filter((p) => Number(p.categoryId) > 0);
+    if (!sellable.length) continue;
 
     carriers.push({
       id,
@@ -387,7 +387,7 @@ const normalizeCatalog = (data, fetchedAt = Date.now()) => {
             confirmar: true,
             iniCero: false,
           },
-      products: phase1.map((p) => ({
+      products: sellable.map((p) => ({
         sku: p.sku,
         code: p.code,
         name: p.name,
@@ -418,7 +418,7 @@ const normalizeCatalog = (data, fetchedAt = Date.now()) => {
       fetchedAt,
       carrierCount: carriers.length,
       productCount: allProducts.length,
-      phase1Products: carriers.reduce((acc, c) => acc + c.products.length, 0),
+      sellableProducts: carriers.reduce((acc, c) => acc + c.products.length, 0),
     },
   };
 };
