@@ -279,11 +279,22 @@ const normalizeCatalog = (data, fetchedAt = Date.now()) => {
     if (!code) continue;
     const categoryId = Number(raw.CategoriaID ?? raw.categoriaId ?? 0);
     const amountCents = parseMoneyToCents(raw.Monto ?? raw.monto);
-    if (!Number.isFinite(amountCents) || amountCents <= 0) continue;
+    // Monto 0 es un servicio de monto libre (CFE, Sky, Telmex…): el importe lo
+    // captura el cajero. Se conserva marcado; el carrier decide abajo si lo
+    // vende así o lo descarta. Montos vacíos o negativos siguen fuera.
+    if (!Number.isFinite(amountCents) || amountCents < 0) continue;
+    const openAmount = amountCents === 0;
     allProducts.push({
       code,
       sku: code,
-      name: String(raw.Descripcion || raw.Nombre || `Recarga $${(amountCents / 100).toFixed(2)}`).trim(),
+      name: String(
+        raw.Descripcion ||
+          raw.Nombre ||
+          (openAmount
+            ? String(raw.Carrier || raw.carrier || "Pago de servicio")
+            : `Recarga $${(amountCents / 100).toFixed(2)}`),
+      ).trim(),
+      openAmount,
       description: String(raw.Descripcion || "").trim(),
       vigencia: String(raw.Vigencia || "").trim(),
       amountCents,
@@ -327,8 +338,14 @@ const normalizeCatalog = (data, fetchedAt = Date.now()) => {
     const name = String(raw.Nombre || raw.nombre || "").trim() || `Carrier ${id}`;
     const carrierType = Number(raw.Tipo ?? 0) || 0;
     const commission = Array.isArray(raw.Comision) ? raw.Comision[0] : raw.Comision;
-    const products = allProducts
-      .filter((p) => p.carrierId === id)
+    const own = allProducts.filter((p) => p.carrierId === id);
+    // Monto libre: Tipo=1 o un pago de servicio publicado con monto 0. Sólo en
+    // ese caso valen los productos en 0; en recargas, paquetes y tarjetas un
+    // monto 0 es un producto roto y se descarta como antes.
+    const freeAmount =
+      carrierType === 1 || (categoryId === 3 && own.some((p) => p.openAmount));
+    const products = own
+      .filter((p) => freeAmount || !p.openAmount)
       .sort((a, b) => a.amountCents - b.amountCents || a.name.localeCompare(b.name));
 
     // Todas las categorías del catálogo de la cuenta: tiempo aire (1), paquetes
@@ -348,7 +365,7 @@ const normalizeCatalog = (data, fetchedAt = Date.now()) => {
       kind: meta.kind,
       variant: meta.variant,
       type: carrierType,
-      freeAmount: carrierType === 1,
+      freeAmount,
       feeCents: 0,
       commission: commission
         ? {
