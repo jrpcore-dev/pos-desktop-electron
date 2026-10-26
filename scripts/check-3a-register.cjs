@@ -162,23 +162,32 @@ const cashRegisterRow = (db, id) =>
   // HEAD: no queda delta sin commitear. Si una entrega nueva toca el esquema,
   // declara aquí sus statements.
   // Alertas inteligentes (product_lots, insights.payload) ya está en HEAD.
-  // Fiado: tabla `customer_credit_movements` con sus dos índices; `customers`
-  // gana credit_enabled/credit_limit y `sales` credit_amount/credit_paid/
-  // credit_paid_method (SQLite reescribe sus CREATE TABLE: alta y baja).
+  // Fiado (customer_credit_movements y columnas de crédito) ya está en HEAD.
+  // Promociones avanzadas: tablas `group_promos`, `bundles` y `bundle_items`
+  // (con su índice) replicadas, así que cada una gana sus 3 triggers de
+  // change_log y su `_touch`; `product_prices` gana `unit` y los triggers de
+  // `settings` se reescriben porque la clave `promos_advanced` se comparte
+  // (SQLite reescribe esos CREATE: alta y baja).
   const DDL_AGREGADO = [
-    /^CREATE TABLE customer_credit_movements\b/,
-    /^CREATE INDEX idx_credit_movements_customer\b/,
-    /^CREATE INDEX idx_credit_movements_register\b/,
-    /^CREATE TABLE customers\b[\s\S]*\bcredit_limit\b/,
-    /^CREATE TABLE sales\b[\s\S]*\bcredit_paid_method\b/,
+    /^CREATE TABLE product_prices\b[\s\S]*\bunit\b/,
+    /^CREATE TABLE (group_promos|bundles|bundle_items)\b/,
+    /^CREATE INDEX idx_bundle_items_bundle\b/,
+    /^CREATE TRIGGER trg_change_log_(group_promos|bundles|bundle_items)_(insert|update|delete|touch)\b/,
+    /^CREATE TRIGGER trg_change_log_settings_(insert|update|delete)\b[\s\S]*'promos_advanced'/,
   ];
-  const DDL_BORRADO = [/^CREATE TABLE customers\b/, /^CREATE TABLE sales\b/];
+  // Cuántos statements produce cada patrón (los de arriba agrupan varios).
+  const DDL_AGREGADO_TOTAL = 1 + 3 + 1 + 12 + 3;
+  const DDL_BORRADO = [
+    /^CREATE TABLE product_prices\b/,
+    /^CREATE TRIGGER trg_change_log_settings_(insert|update|delete)\b/,
+  ];
+  const DDL_BORRADO_TOTAL = 1 + 3;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
   for (const s of d.removed) console.log("    - " + s.replace(/\s+/g, " ").slice(0, 200));
   check(
-    d.added.length === DDL_AGREGADO.length && d.removed.length === DDL_BORRADO.length,
+    d.added.length === DDL_AGREGADO_TOTAL && d.removed.length === DDL_BORRADO_TOTAL,
     "diff del DDL = el declarado (sin altas ni bajas extra)",
     `agregados=${d.added.length} borrados=${d.removed.length}`,
   );
@@ -302,6 +311,20 @@ const cashRegisterRow = (db, id) =>
         ? []
         : ["+ sales.credit_paid_method|TEXT|nn=0|dflt=null"]),
     ];
+    // Promociones avanzadas · tablas de grupo y paquetes, y `unit` en las
+    // promos por cantidad. Delta 0 si la app ya corrió con esta entrega.
+    const ESPERADO_PROMOS = [
+      ...["group_promos", "bundles", "bundle_items"].flatMap((t) =>
+        Array.isArray(before.cols[t])
+          ? []
+          : [`+ tabla nueva ${t}`, ...(after.cols[t] || []).map((c) => `+ ${t}.${c}`)],
+      ),
+      ...(colDe(before.cols.product_prices, "unit")
+        ? []
+        : (after.cols.product_prices || [])
+            .filter((c) => c.split("|")[0] === "unit")
+            .map((c) => `+ product_prices.${c}`)),
+    ];
     const ESPERADO_3D = (yaTieneLog
       ? []
       : [
@@ -342,7 +365,7 @@ const cashRegisterRow = (db, id) =>
     // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
     // falta migrar) más el de 3d más el de 3g.
     const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B)
-      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO)
+      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO, ESPERADO_PROMOS)
       .sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
@@ -366,6 +389,8 @@ const cashRegisterRow = (db, id) =>
       // Fiado: movimientos por cliente y por caja.
       "customer_credit_movements.idx_credit_movements_customer",
       "customer_credit_movements.idx_credit_movements_register",
+      // Promociones avanzadas: lugares de cada paquete.
+      "bundle_items.idx_bundle_items_bundle",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

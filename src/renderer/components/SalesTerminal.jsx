@@ -49,11 +49,13 @@ import {
   lineKeyOf,
   packPriceOf,
   piecePriceOf,
-  promoInfo,
   lineTotal,
   lineUnitPrice,
   committedStockFor,
   customerPriceForLine,
+  applyPromotions,
+  linePromo,
+  promoLabel as promoLabelOf,
 } from "../utils/cartMath";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { prepareTicketLogo } from "../utils/logo";
@@ -246,12 +248,37 @@ const SalesTerminal = () => {
 
 const processSaleRef = useRef(null);
 
+  // Promociones avanzadas (categoría/marca y paquetes). Se leen de la BD local
+  // (en una caja, replicada del Host) y se recargan cuando cambian.
+  const [promoEngine, setPromoEngine] = useState(null);
+  const loadPromoEngine = useCallback(async () => {
+    try {
+      const res = await window.api.invoke("get-promotions");
+      if (res?.success) setPromoEngine(res);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    loadPromoEngine();
+  }, [loadPromoEngine]);
+  useDbChanges(loadPromoEngine, [
+    "group_promos",
+    "bundles",
+    "bundle_items",
+    "settings",
+  ]);
+  // Carrito con las promos avanzadas aplicadas: es lo que se ve, se cobra y se
+  // imprime. `cart` (lo guardado) nunca lleva el reparto de paquetes.
+  const pricedCart = useMemo(
+    () => applyPromotions(cart, promoEngine),
+    [cart, promoEngine],
+  );
+
   const cartSummary = useMemo(() => {
-    const subtotal = cart.reduce(
+    const subtotal = pricedCart.reduce(
       (s, item) => s + item.price * (item.quantity || 1),
       0,
     );
-    const total = cart.reduce(
+    const total = pricedCart.reduce(
       (s, item) => s + lineTotal(item, item.quantity || 1),
       0,
     );
@@ -262,7 +289,7 @@ const processSaleRef = useRef(null);
       total,
       discountTotal
     };
-  }, [cart]);
+  }, [pricedCart]);
 
   const subtotal = cartSummary.subtotal;
   const total = cartSummary.total;
@@ -313,7 +340,7 @@ const processSaleRef = useRef(null);
       warnRegisterClosed();
       return;
     }
-    const cartForSale = cart.map((it) => ({
+    const cartForSale = pricedCart.map((it) => ({
       ...it,
       finalPrice: lineUnitPrice(it, it.quantity),
       // Con precio de cliente el % de la promoción no se aplicó.
@@ -1495,14 +1522,15 @@ if (e.key === "Tab" && !isEditable) {
   const generateReceiptHTML = (method, paperWidthMm, creditInfo) => {
     const effSubtotal = method === "cash" ? roundCash(subtotal) : subtotal;
     const effTotal = method === "cash" ? roundCash(total) : total;
-    const showDiscounts = cart.some(
+    const showDiscounts = pricedCart.some(
       (i) =>
         (i.discount_percent > 0 && !i.customerPriced) ||
         i.discount > 0 ||
-        promoInfo(i, i.quantity).applied,
+        i.bundleUnits > 0 ||
+        linePromo(i),
     );
-    const items = cart.map((item) => {
-      const promo = promoInfo(item, item.quantity).applied;
+    const items = pricedCart.map((item) => {
+      const promo = linePromo(item);
       const fp = lineUnitPrice(item, item.quantity);
       const lt = lineTotal(item, item.quantity);
       const unit = item.isWeightItem
@@ -1517,13 +1545,15 @@ if (e.key === "Tab" && !isEditable) {
         : item.quantity;
       const name =
         item.name.length > 24 ? item.name.substring(0, 22) + ".." : item.name;
-      const promoLabel = promo
-        ? promo.type === "mayoreo"
-          ? `Mayoreo desde ${promo.qty} pz`
-          : promo.type === "fijo"
-            ? `Precio fijo ${fmtMoney(promo.price)}`
-            : `Oferta ${promo.qty} x ${fmtMoney(promo.price)}`
-        : null;
+      const bundleText =
+        item.bundleUnits > 0
+          ? item.bundleUnits < item.quantity
+            ? `${item.bundleUnits} en paquete ${item.bundleLabel}`
+            : `Paquete ${item.bundleLabel}`
+          : null;
+      const promoText = promoLabelOf(promo);
+      const promoLabel =
+        [bundleText, promoText].filter(Boolean).join(" · ") || null;
       const discountParts = [];
       if (item.discount_percent > 0 && !item.customerPriced)
         discountParts.push(`-${item.discount_percent}%`);
@@ -1693,7 +1723,7 @@ if (e.key === "Tab" && !isEditable) {
               <p className="text-sm text-muted-foreground">Sin productos</p>
             </div>
           ) : (
-            cart.map((item, index) => {
+            pricedCart.map((item, index) => {
               const lineKey = lineKeyOf(item);
               const removing = removingKeys.has(lineKey);
               return (

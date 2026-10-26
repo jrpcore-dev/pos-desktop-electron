@@ -6,7 +6,8 @@ import { fmtMoney, fmtMoneyAbs } from "@/utils/format";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import {
   canManualDiscount,
-  promoInfo,
+  linePromo,
+  promoLabel,
   lineTotal,
   lineUnitPrice,
 } from "../utils/cartMath";
@@ -63,7 +64,8 @@ const CartItem = React.memo(
     flash = false,
   }) => {
     const roundValue = round || ((v) => v);
-    const promo = promoInfo(item, item.quantity).applied;
+    const promo = linePromo(item);
+    const fullyBundled = item.bundleUnits > 0 && item.bundleUnits >= item.quantity;
     const fp = lineUnitPrice(item, item.quantity);
     const unitBadge = unitBadgeLabel(item);
     const qtyDisplay = item.isWeightItem
@@ -73,21 +75,25 @@ const CartItem = React.memo(
       ? "min-w-[52px]"
       : "min-w-[30px]";
 
-    // Con precio de cliente la promoción del producto no aplica: no se anuncia.
-    const promoPct = item.customerPriced ? 0 : item.discount_percent;
+    // El % propio sólo se anuncia si es el que se cobró: no con precio de
+    // cliente, ni si ganó la promo de categoría/marca, ni todo en paquete.
+    const promoPct =
+      item.customerPriced || promo?.type === "grupo" || fullyBundled
+        ? 0
+        : item.discount_percent;
     const secondaryBadges = [];
-    if (item.customerPriced && !promo) secondaryBadges.push("Precio cliente");
+    if (item.customerPriced && !promo && !item.bundleUnits)
+      secondaryBadges.push("Precio cliente");
     if (promoPct > 0) secondaryBadges.push(`-${promoPct}%`);
     if (item.discount > 0)
       secondaryBadges.push(`-${fmtMoneyAbs(item.discount)}`);
-    if (promo)
-      secondaryBadges.push(
-        promo.type === "mayoreo"
-          ? `Mayoreo ${promo.qty}+`
-          : promo.type === "fijo"
-            ? `Fijo ${fmtMoney(promo.price)}`
-            : `Oferta ${promo.qty}×${fmtMoney(promo.price)}`,
-      );
+    if (promo) secondaryBadges.push(promoLabel(promo));
+    const bundleBadge =
+      item.bundleUnits > 0
+        ? fullyBundled
+          ? `Paquete ${item.bundleLabel}`
+          : `${item.bundleUnits} en ${item.bundleLabel}`
+        : null;
 
     const unitSuffix = item.isWeightItem
       ? "/ kg"
@@ -133,10 +139,22 @@ const CartItem = React.memo(
                 {secondaryBadges.join(" · ")}
               </span>
             )}
+            {bundleBadge && (
+              <span
+                className={cn(
+                  badgeBase,
+                  "max-w-[130px] truncate bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                )}
+                title={bundleBadge}
+              >
+                <Package size={12} />
+                {bundleBadge}
+              </span>
+            )}
           </div>
 
           <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
-            {promoPct > 0 || item.discount > 0 || promo ? (
+            {promoPct > 0 || item.discount > 0 || promo || bundleBadge ? (
               <>
                 <span className="line-through">{fmtMoney(item.price)}</span>{" "}
                 {fmtMoney(fp)}

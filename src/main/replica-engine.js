@@ -47,6 +47,9 @@ const SWAP_ORDER = [
   "tier_prices",
   "customer_prices",
   "cashiers",
+  "group_promos",
+  "bundles",
+  "bundle_items",
 ];
 
 const fail = (code, error, extra = {}) => ({ success: false, code, error, ...extra });

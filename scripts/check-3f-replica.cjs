@@ -58,6 +58,12 @@ const TRIGGER_COUNT_SQL =
   "SELECT COUNT(*) c FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_change_log%'";
 const countTriggers = (db) => db.prepare(TRIGGER_COUNT_SQL).get().c;
 const logCount = (db) => db.prepare("SELECT COUNT(*) c FROM change_log").get().c;
+
+// 3 por tabla replicada (insert/update/delete) + 1 de salida por tabla con
+// filtro (products) + 1 `*_touch` por tabla de entidad. Se deriva del esquema:
+// una tabla replicada nueva no obliga a tocar este número a mano.
+const EXPECTED_TRIGGERS =
+  dbSchema.REPLICATED_TABLES.length * 3 + 1 + dbSchema.UPDATED_AT_TABLES.length;
 const tombstones = (db, tbl, rowId) =>
   db
     .prepare(
@@ -79,14 +85,14 @@ const tombstones = (db, tbl, rowId) =>
       check(has, `columna updated_at en ${tbl}`);
     }
     check(
-      dbSchema.UPDATED_AT_TABLES.length === 8 &&
+      dbSchema.UPDATED_AT_TABLES.length === dbSchema.REPLICATED_TABLES.length - 1 &&
         !dbA.prepare("PRAGMA table_info(settings)").all().some((c) => c.name === "updated_at"),
       "settings NO lleva updated_at (es clave/valor, no entidad)",
       JSON.stringify(dbSchema.UPDATED_AT_TABLES),
     );
     check(
-      countTriggers(dbA) === 36,
-      "36 triggers: 28 de 3d/3e + 8 `*_touch` de 3f (uno por tabla de entidad)",
+      countTriggers(dbA) === EXPECTED_TRIGGERS,
+      `${EXPECTED_TRIGGERS} triggers: 3 por tabla + salida + un *_touch por tabla de entidad`,
       String(countTriggers(dbA)),
     );
     // El `*_touch` va aparte y NO plegado en el de `_update` para poder llevar
@@ -253,7 +259,7 @@ const tombstones = (db, tbl, rowId) =>
     // idempotencia de la recuperación completa.
     dbSchema.ensureChangeLog(dbA);
     dbSchema.ensureChangeLog(dbA);
-    check(countTriggers(dbA) === 36, "ensureChangeLog idempotente: 36 triggers", String(countTriggers(dbA)));
+    check(countTriggers(dbA) === EXPECTED_TRIGGERS, `ensureChangeLog idempotente: ${EXPECTED_TRIGGERS} triggers`, String(countTriggers(dbA)));
     check(
       dbA
         .prepare(`SELECT COUNT(*) c FROM ${dbSchema.TOMBSTONE_TABLE}`)

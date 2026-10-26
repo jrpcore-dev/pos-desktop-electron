@@ -111,6 +111,12 @@ const countTriggers = (db) =>
     )
     .get().c;
 
+// 3 por tabla replicada (insert/update/delete) + 1 de salida por tabla con
+// filtro (products) + 1 `*_touch` por tabla de entidad. Se deriva del esquema:
+// una tabla replicada nueva no obliga a tocar este número a mano.
+const EXPECTED_TRIGGERS =
+  dbSchema.REPLICATED_TABLES.length * 3 + 1 + dbSchema.UPDATED_AT_TABLES.length;
+
 const dropTriggers = (db) => {
   for (const t of db
     .prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_change_log%'")
@@ -125,10 +131,10 @@ const dropTriggers = (db) => {
   const dbA = fixture.createFileDb(path.join(TMP, "host.db"));
   seedHost(dbA);
 
-  check(countTriggers(dbA) === 36, "36 triggers de change_log (28 de 3d/3e + 8 `*_touch` de 3f)", String(countTriggers(dbA)));
+  check(countTriggers(dbA) === EXPECTED_TRIGGERS, `${EXPECTED_TRIGGERS} triggers de change_log (3 por tabla + salida + *_touch)`, String(countTriggers(dbA)));
   dbSchema.ensureChangeLog(dbA);
   dbSchema.ensureChangeLog(dbA);
-  check(countTriggers(dbA) === 36, "ensureChangeLog es idempotente (2 pasadas)", String(countTriggers(dbA)));
+  check(countTriggers(dbA) === EXPECTED_TRIGGERS, "ensureChangeLog es idempotente (2 pasadas)", String(countTriggers(dbA)));
 
   const logAll = () => dbA.prepare("SELECT seq, tbl, row_id, op FROM change_log").all();
   const seqBefore = logAll().length;
@@ -297,7 +303,7 @@ const dropTriggers = (db) => {
       JSON.stringify({ before, after }),
     );
     check(integrity === "ok", "integrity_check = ok tras la migración", String(integrity));
-    check(countTriggers(rdb) === 36, "la BD real gana los 36 triggers", String(countTriggers(rdb)));
+    check(countTriggers(rdb) === EXPECTED_TRIGGERS, `la BD real gana los ${EXPECTED_TRIGGERS} triggers`, String(countTriggers(rdb)));
     check(
       changeLogCols.join(",") === "seq,tbl,row_id,op,ts",
       "change_log tiene exactamente seq,tbl,row_id,op,ts",

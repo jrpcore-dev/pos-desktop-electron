@@ -720,19 +720,32 @@ app.on("second-instance", () => {
 
 // ─── PRODUCTS ───────────────────────────────────────────────
 
+// Promos por cantidad de un producto (ver db-schema: product_prices).
+const PRICE_TIER_TYPES = ["mayoreo", "combo", "llevapaga", "piezan"];
+const PRICE_TIER_UNITS = ["piece", "box", "pack", "weight"];
+
 const savePrices = (productId, prices) => {
   const txn = db.transaction(() => {
     db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(
       productId,
     );
     const stmt = db.prepare(
-      "INSERT INTO product_prices (product_id, type, qty, price) VALUES (?, ?, ?, ?)",
+      "INSERT INTO product_prices (product_id, type, qty, price, unit) VALUES (?, ?, ?, ?, ?)",
     );
     for (const p of prices || []) {
-      const type = p.type === "mayoreo" ? "mayoreo" : "combo";
-      const qty = Math.max(1, parseInt(p.qty) || 1);
+      const type = PRICE_TIER_TYPES.includes(p.type) ? p.type : "combo";
+      const unit = PRICE_TIER_UNITS.includes(p.unit) ? p.unit : "piece";
+      // Por kilo la cantidad admite decimales ("desde 2.5 kg").
+      const qty =
+        unit === "weight" ? parseFloat(p.qty) || 0 : parseInt(p.qty, 10) || 0;
       const price = parseFloat(p.price) || 0;
-      if (qty > 0 && price > 0) stmt.run(productId, type, qty, price);
+      if (!(qty > 0) || !(price > 0)) continue;
+      // lleva `qty`, paga `price` unidades enteras: 3×2 sí, 2×3 no.
+      if (type === "llevapaga" && !(Number.isInteger(price) && price < qty)) continue;
+      // cada `qty`-ésima unidad con `price`% menos.
+      if (type === "piezan" && !(qty >= 2 && price <= 100)) continue;
+      if ((type === "llevapaga" || type === "piezan") && unit === "weight") continue;
+      stmt.run(productId, type, qty, price, unit);
     }
   });
   txn();
@@ -742,7 +755,7 @@ const attachPrices = (products) => {
   if (!products || !products.length) return products;
   const rows = db
     .prepare(
-      `SELECT product_id, type, qty, price FROM product_prices WHERE product_id IN (${products.map(() => "?").join(",")}) ORDER BY product_id, qty`,
+      `SELECT product_id, type, qty, price, unit FROM product_prices WHERE product_id IN (${products.map(() => "?").join(",")}) ORDER BY product_id, qty`,
     )
     .all(...products.map((p) => p.id));
   const map = {};
@@ -751,6 +764,7 @@ const attachPrices = (products) => {
       type: r.type,
       qty: r.qty,
       price: r.price,
+      unit: r.unit || "piece",
     });
   }
   for (const p of products) p.prices = map[p.id] || [];
@@ -1711,6 +1725,228 @@ ipcMain.handle("get-customer-pricing", async (event, customerId) => {
         tierPrices.map((r) => [r.product_id, r.price]),
       ),
     };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ─── PROMOCIONES AVANZADAS ─────────────────────────────────────────────────
+// Promos por categoría/marca y paquetes. Se leen en la propia caja (tablas
+// replicadas) y se escriben en el Host. Con el setting `promos_advanced`
+// apagado el carrito no las aplica, pero se conservan.
+const promosAdvancedOn = () =>
+  db.prepare("SELECT value FROM settings WHERE key = 'promos_advanced'").get()
+    ?.value === "true";
+
+const loadBundles = () => {
+  const bundles = db.prepare("SELECT * FROM bundles ORDER BY name COLLATE NOCASE").all();
+  const items = db
+    .prepare(
+      `SELECT bi.bundle_id, bi.slot, bi.qty, bi.product_id, p.name, p.price, p.sale_unit, p.is_active
+       FROM bundle_items bi LEFT JOIN products p ON p.id = bi.product_id
+       ORDER BY bi.bundle_id, bi.slot, p.name`,
+    )
+    .all();
+  const byBundle = {};
+  for (const it of items) {
+    const slots = (byBundle[it.bundle_id] = byBundle[it.bundle_id] || {});
+    const slot = (slots[it.slot] = slots[it.slot] || { slot: it.slot, qty: it.qty, products: [] });
+    slot.products.push({
+      id: it.product_id,
+      name: it.name || "(producto eliminado)",
+      price: it.price || 0,
+      sale_unit: it.sale_unit,
+      is_active: it.is_active === 1,
+    });
+  }
+  return bundles.map((b) => ({
+    ...b,
+    slots: Object.values(byBundle[b.id] || {}).sort((a, c) => a.slot - c.slot),
+  }));
+};
+
+ipcMain.handle("get-promotions", async () => {
+  try {
+    const groupPromos = db
+      .prepare(
+        `SELECT g.*, c.name AS category_name FROM group_promos g
+         LEFT JOIN categories c ON c.id = g.category_id
+         ORDER BY g.is_active DESC, g.id DESC`,
+      )
+      .all();
+    const brands = db
+      .prepare(
+        `SELECT brand, COUNT(*) AS products FROM products
+         WHERE is_active = 1 AND TRIM(COALESCE(brand, '')) NOT IN ('', 'Sin marca')
+         GROUP BY brand ORDER BY brand COLLATE NOCASE`,
+      )
+      .all();
+    return {
+      success: true,
+      enabled: promosAdvancedOn(),
+      groupPromos,
+      bundles: loadBundles(),
+      brands,
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Tablero: todas las promos configuradas en productos.
+ipcMain.handle("get-product-promos", async () => {
+  try {
+    const products = db
+      .prepare(
+        `SELECT p.id, p.name, p.barcode, p.brand, p.price, p.sale_unit, p.box_qty, p.box_price,
+                p.pack_qty, p.pack_price, p.has_discount, p.discount_percent, p.promo_fixed_price,
+                p.promo_start_date, p.promo_end_date, c.name AS category_name
+         FROM products p LEFT JOIN categories c ON c.id = p.category_id
+         WHERE p.is_active = 1 AND p.has_discount = 1 AND (
+           p.discount_percent > 0 OR p.promo_fixed_price > 0 OR
+           EXISTS (SELECT 1 FROM product_prices pp WHERE pp.product_id = p.id))
+         ORDER BY p.name COLLATE NOCASE`,
+      )
+      .all();
+    return { success: true, products: attachPrices(products) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("save-group-promo", async (event, promo = {}) => {
+  try {
+    const scope = promo.scope === "brand" ? "brand" : "category";
+    const percent = parseFloat(promo.percent);
+    if (!(percent > 0 && percent < 100)) {
+      return { success: false, error: "El descuento debe estar entre 1% y 99%" };
+    }
+    const categoryId = scope === "category" ? parseInt(promo.category_id, 10) || null : null;
+    const brand = scope === "brand" ? String(promo.brand || "").trim() : "";
+    if (scope === "category" && !categoryId) {
+      return { success: false, error: "Elige la categoría" };
+    }
+    if (scope === "brand" && !brand) return { success: false, error: "Elige la marca" };
+    const start = promo.start_date || "";
+    const end = promo.end_date || "";
+    if (start && end && start > end) {
+      return { success: false, error: "La fecha de inicio es posterior a la de fin" };
+    }
+    const values = [
+      String(promo.name || "").trim(),
+      scope,
+      categoryId,
+      brand,
+      percent,
+      start,
+      end,
+      promo.is_active === false || promo.is_active === 0 ? 0 : 1,
+    ];
+    if (promo.id) {
+      db.prepare(
+        `UPDATE group_promos SET name=?, scope=?, category_id=?, brand=?, percent=?,
+           start_date=?, end_date=?, is_active=? WHERE id=?`,
+      ).run(...values, promo.id);
+      return { success: true, id: promo.id };
+    }
+    const info = db
+      .prepare(
+        `INSERT INTO group_promos (name, scope, category_id, brand, percent, start_date, end_date, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(...values);
+    return { success: true, id: info.lastInsertRowid };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("delete-group-promo", async (event, id) => {
+  try {
+    db.prepare("DELETE FROM group_promos WHERE id = ?").run(id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// bundle: { id?, name, price, start_date, end_date, is_active,
+//           slots: [{ qty, productIds: [..] }] }
+ipcMain.handle("save-bundle", async (event, bundle = {}) => {
+  try {
+    const name = String(bundle.name || "").trim();
+    const price = parseFloat(bundle.price);
+    const slots = (Array.isArray(bundle.slots) ? bundle.slots : [])
+      .map((s) => ({
+        qty: Math.max(1, parseInt(s.qty, 10) || 1),
+        productIds: [...new Set((s.productIds || []).map(Number).filter((n) => n > 0))],
+      }))
+      .filter((s) => s.productIds.length > 0);
+    if (!name) return { success: false, error: "Ponle nombre al paquete" };
+    if (!(price > 0)) return { success: false, error: "Indica el precio del paquete" };
+    const units = slots.reduce((n, s) => n + s.qty, 0);
+    if (units < 2) {
+      return { success: false, error: "Un paquete lleva al menos 2 productos" };
+    }
+    const seen = new Set();
+    for (const s of slots) {
+      for (const id of s.productIds) {
+        if (seen.has(id)) {
+          return { success: false, error: "Un producto no puede estar en dos lugares del paquete" };
+        }
+        seen.add(id);
+      }
+    }
+    const start = bundle.start_date || "";
+    const end = bundle.end_date || "";
+    if (start && end && start > end) {
+      return { success: false, error: "La fecha de inicio es posterior a la de fin" };
+    }
+    const active = bundle.is_active === false || bundle.is_active === 0 ? 0 : 1;
+    const txn = db.transaction(() => {
+      let id = bundle.id;
+      if (id) {
+        db.prepare(
+          "UPDATE bundles SET name=?, price=?, start_date=?, end_date=?, is_active=? WHERE id=?",
+        ).run(name, price, start, end, active, id);
+        db.prepare("DELETE FROM bundle_items WHERE bundle_id = ?").run(id);
+      } else {
+        id = db
+          .prepare(
+            "INSERT INTO bundles (name, price, start_date, end_date, is_active) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(name, price, start, end, active).lastInsertRowid;
+      }
+      const ins = db.prepare(
+        "INSERT INTO bundle_items (bundle_id, slot, qty, product_id) VALUES (?, ?, ?, ?)",
+      );
+      slots.forEach((s, i) => {
+        for (const pid of s.productIds) ins.run(id, i, s.qty, pid);
+      });
+      return id;
+    });
+    return { success: true, id: txn() };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("set-bundle-active", async (event, id, active) => {
+  try {
+    db.prepare("UPDATE bundles SET is_active = ? WHERE id = ?").run(active ? 1 : 0, id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("delete-bundle", async (event, id) => {
+  try {
+    db.transaction(() => {
+      db.prepare("DELETE FROM bundle_items WHERE bundle_id = ?").run(id);
+      db.prepare("DELETE FROM bundles WHERE id = ?").run(id);
+    })();
+    return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
   }

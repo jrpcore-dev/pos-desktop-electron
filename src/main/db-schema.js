@@ -762,6 +762,49 @@ const runMigrations = (db) => {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_product_prices_product ON product_prices(product_id)`,
   );
+  // Tipos nuevos (mismas columnas, otro significado):
+  //   'llevapaga' -> lleva `qty`, paga `price` unidades (2×1, 3×2)
+  //   'piezan'    -> cada `qty`-ésima unidad con `price`% de descuento
+  // `unit`: a qué renglón aplica (piece | box | pack | weight).
+  ensureColumn("product_prices", "unit", "TEXT DEFAULT 'piece'");
+
+  // ─── PROMOCIONES AVANZADAS (setting `promos_advanced`) ───────────────────
+  // Promos de varios productos. Sin FOREIGN KEY: la réplica reemplaza tablas
+  // enteras en la caja y una FK hacia `products` complicaría el intercambio.
+  // % a toda una categoría o marca.
+  db.exec(`CREATE TABLE IF NOT EXISTS group_promos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT '',
+    scope TEXT NOT NULL DEFAULT 'category',
+    category_id INTEGER,
+    brand TEXT DEFAULT '',
+    percent REAL NOT NULL DEFAULT 0,
+    start_date TEXT DEFAULT '',
+    end_date TEXT DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  // Paquete: productos distintos por un precio. Las filas de `bundle_items`
+  // con el mismo `slot` son alternativas ("Refresco: Coca, Sprite o Fanta").
+  db.exec(`CREATE TABLE IF NOT EXISTS bundles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT '',
+    price REAL NOT NULL DEFAULT 0,
+    start_date TEXT DEFAULT '',
+    end_date TEXT DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS bundle_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bundle_id INTEGER NOT NULL,
+    slot INTEGER NOT NULL DEFAULT 0,
+    qty INTEGER NOT NULL DEFAULT 1,
+    product_id INTEGER NOT NULL
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items(bundle_id)`,
+  );
 
   // Migration: allow_manual_discount (permiso explícito de descuento manual en caja).
   // Separation of concerns: antes, el permiso se infería como
@@ -941,6 +984,9 @@ const REPLICATED_TABLES = [
   "tier_prices",
   "customer_prices",
   "cashiers",
+  "group_promos",
+  "bundles",
+  "bundle_items",
   "settings",
 ];
 const REPLICATED_DENY_COLUMNS = ["cost_price"]; // costos: no viajan a la caja
@@ -979,6 +1025,8 @@ const REPLICATED_SETTINGS_KEYS = [
   "rounding_mode",
   "sale_without_stock",
   "pin_for_void",
+  // Promos que cambian lo que se cobra: todas las cajas deben cobrar igual.
+  "promos_advanced",
 ];
 // 3e · Fila replicable por tabla (fuente única de verdad). Las tablas no
 // listadas replican TODAS sus filas. Lo consumen por igual los triggers, el

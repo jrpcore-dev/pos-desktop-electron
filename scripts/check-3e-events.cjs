@@ -128,6 +128,12 @@ const TRIGGER_COUNT_SQL =
   "SELECT COUNT(*) c FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_change_log%'";
 const countTriggers = (db) => db.prepare(TRIGGER_COUNT_SQL).get().c;
 
+
+// 3 por tabla replicada (insert/update/delete) + 1 de salida por tabla con
+// filtro (products) + 1 `*_touch` por tabla de entidad. Se deriva del esquema:
+// una tabla replicada nueva no obliga a tocar este número a mano.
+const EXPECTED_TRIGGERS =
+  dbSchema.REPLICATED_TABLES.length * 3 + 1 + dbSchema.UPDATED_AT_TABLES.length;
 (async () => {
   const dbA = fixture.createFileDb(path.join(TMP, "host.db"));
 
@@ -502,7 +508,7 @@ const countTriggers = (db) => db.prepare(TRIGGER_COUNT_SQL).get().c;
       JSON.stringify(r.data).slice(0, 160),
     );
 
-    check(countTriggers(dbA) === 36, "endBulk restaura los 36 triggers", String(countTriggers(dbA)));
+    check(countTriggers(dbA) === EXPECTED_TRIGGERS, `endBulk restaura los ${EXPECTED_TRIGGERS} triggers`, String(countTriggers(dbA)));
     n = logAll().length;
     addProduct.run("B-2", "Tras el lote", 1, 1, 1, 0);
     check(logAll().length === n + 1, "tras el lote los triggers vuelven a registrar", `${logAll().length - n}`);
@@ -536,7 +542,7 @@ const countTriggers = (db) => db.prepare(TRIGGER_COUNT_SQL).get().c;
       "…y adelanta el hueco MÁS ALLÁ de lo perdido (nada queda mudo)",
       `${recFirst} > ${lost}`,
     );
-    check(countTriggers(dbC) === 36, "…y restaura los 36 triggers", String(countTriggers(dbC)));
+    check(countTriggers(dbC) === EXPECTED_TRIGGERS, `…y restaura los ${EXPECTED_TRIGGERS} triggers`, String(countTriggers(dbC)));
     dbC.close();
   } catch (err) {
     fail++;

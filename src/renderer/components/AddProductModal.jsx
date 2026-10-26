@@ -146,6 +146,67 @@ const UNIT_OPTIONS = [
   { value: "boxpack", label: "Caja, paquete y pieza" },
 ];
 
+// Promos por cantidad (product_prices). `kg` = disponible en productos por kilo.
+const TIER_TYPES = [
+  {
+    value: "mayoreo",
+    label: "MAYOREO",
+    cls: "bg-blue-500/15 text-blue-600",
+    kg: true,
+    help: "Precio especial por unidad desde esa cantidad.",
+  },
+  {
+    value: "combo",
+    label: "COMBO",
+    cls: "bg-amber-500/15 text-amber-600",
+    kg: true,
+    help: "Precio fijo por esa cantidad; el sobrante se cobra a precio normal.",
+  },
+  {
+    value: "llevapaga",
+    label: "LLEVA Y PAGA",
+    cls: "bg-violet-500/15 text-violet-600",
+    help: "2×1, 3×2… sobre el precio actual: si cambias el precio, la promo se ajusta sola.",
+  },
+  {
+    value: "piezan",
+    label: "PIEZA N AL %",
+    cls: "bg-teal-500/15 text-teal-600",
+    help: "Cada N-ésima unidad con ese % de descuento (ej. la 2ª al 50%).",
+  },
+];
+
+// A qué renglón puede aplicar una promo según cómo se vende el producto.
+// Vacío = sólo hay una opción (pieza o kilo) y no se pregunta.
+const tierUnitOptions = (saleUnit) => {
+  if (saleUnit === "box") return [{ value: "piece", label: "Pieza" }, { value: "box", label: "Caja" }];
+  if (saleUnit === "package") return [{ value: "piece", label: "Pieza" }, { value: "box", label: "Paquete" }];
+  if (saleUnit === "boxpack")
+    return [
+      { value: "piece", label: "Pieza" },
+      { value: "pack", label: "Paquete" },
+      { value: "box", label: "Caja" },
+    ];
+  return [];
+};
+
+const tierUnitOf = (tier, saleUnit) => {
+  if (saleUnit === "weight") return "weight";
+  const opts = tierUnitOptions(saleUnit);
+  return opts.some((o) => o.value === tier.unit) ? tier.unit : "piece";
+};
+
+const tierUnitNoun = (unit, saleUnit, n = 2) => {
+  const one = n === 1;
+  if (unit === "weight") return "kg";
+  if (unit === "pack") return one ? "paquete" : "paquetes";
+  if (unit === "box") {
+    if (saleUnit === "package") return one ? "paquete" : "paquetes";
+    return one ? "caja" : "cajas";
+  }
+  return one ? "pieza" : "piezas";
+};
+
 const toInt = (v) => parseInt(v, 10) || 0;
 const toNum = (v) => parseFloat(v) || 0;
 
@@ -477,7 +538,7 @@ const AddProductModal = ({
   const addPriceTier = () =>
     setPriceTiers((prev) => [
       ...prev,
-      { type: "combo", qty: "", price: "" },
+      { type: "combo", qty: "", price: "", unit: "" },
     ]);
   const updatePriceTier = (index, field, value) =>
     setPriceTiers((prev) =>
@@ -693,27 +754,41 @@ const AddProductModal = ({
   if (promoPercent > 0 && !isFixedMode) promoChips.push(`-${promoPercent}%`);
   if (promoFixed > 0 && isFixedMode) promoChips.push(`Fijo ${fmtMoney(promoFixed)}`);
   priceTiers.forEach((t) => {
-    const q = parseInt(t.qty, 10) || 0;
-    const p = parseFloat(t.price) || 0;
+    const q = toNum(t.qty);
+    const p = toNum(t.price);
     if (q <= 0 || p <= 0) return;
-    if (t.type === "combo") promoChips.push(`${q}×${fmtMoney(p)}`);
-    else promoChips.push(`Mayoreo ${q}+`);
+    const unit = tierUnitOf(t, wSaleUnit);
+    const suffix = tierUnitOptions(wSaleUnit).length
+      ? ` (${tierUnitNoun(unit, wSaleUnit, 1)})`
+      : "";
+    if (t.type === "combo") promoChips.push(`${q} por ${fmtMoney(p)}${suffix}`);
+    else if (t.type === "llevapaga") promoChips.push(`${q}×${p}${suffix}`);
+    else if (t.type === "piezan") promoChips.push(`${q}ª al -${p}%${suffix}`);
+    else promoChips.push(`Mayoreo ${q}+${suffix}`);
   });
   if (wAllowManual && !manualBlocked) promoChips.push("Manual en caja");
   const tierIssues = [];
   const seenTiers = new Set();
   priceTiers.forEach((t) => {
-    const q = parseInt(t.qty, 10) || 0;
+    const q = toNum(t.qty);
+    const p = toNum(t.price);
     if (q <= 0) return;
-    const key = `${t.type}:${q}`;
+    const unit = tierUnitOf(t, wSaleUnit);
+    const key = `${t.type}:${unit}:${q}`;
     if (seenTiers.has(key)) {
       tierIssues.push(
-        t.type === "combo"
-          ? `La promo de ${q} se repite. Cambia la cantidad o elimina una.`
-          : `El mayoreo desde ${q} se repite. Cambia el rango o elimina uno.`,
+        t.type === "mayoreo"
+          ? `El mayoreo desde ${q} se repite. Cambia el rango o elimina uno.`
+          : `La promo de ${q} se repite. Cambia la cantidad o elimina una.`,
       );
     }
     seenTiers.add(key);
+    if (t.type === "llevapaga" && p > 0 && !(Number.isInteger(p) && p < q)) {
+      tierIssues.push(`En "lleva ${q} y paga ${p}" lo que paga debe ser menos de lo que lleva.`);
+    }
+    if (t.type === "piezan" && p > 0 && (q < 2 || p > 100)) {
+      tierIssues.push("En \"pieza N al %\" la pieza va desde la 2ª y el descuento hasta 100%.");
+    }
   });
   const effective =
     promoFixed > 0 ? promoFixed : basePrice * (1 - promoPercent / 100);
@@ -729,19 +804,35 @@ const AddProductModal = ({
           : wAllowManual
             ? "Con 0% el descuento manual en caja controla esta promoción."
             : "Con 0% no se aplica ningún descuento.";
+  // Precio normal de la unidad a la que aplica la promo (pieza, caja…).
+  const tierBasePrice = (unit) =>
+    unit === "box"
+      ? toNum(wBoxPrice)
+      : unit === "piece" && wSaleUnit === "boxpack"
+        ? toNum(wPackPrice)
+        : toNum(wPrice);
   const tierPreview = (t) => {
-    const q = parseInt(t.qty, 10) || 0;
-    const p = parseFloat(t.price) || 0;
+    const q = toNum(t.qty);
+    const p = toNum(t.price);
     if (q <= 0 || p <= 0) return null;
+    const unit = tierUnitOf(t, wSaleUnit);
+    const base = tierBasePrice(unit);
+    const one = tierUnitNoun(unit, wSaleUnit, 1);
     if (t.type === "combo") {
       const per = p / q;
-      return basePrice > 0
-        ? `≈ ${fmtMoney(per)}/pieza (ahorro ${fmtMoney(basePrice - per)})`
-        : `≈ ${fmtMoney(per)}/pieza`;
+      return base > 0
+        ? `≈ ${fmtMoney(per)}/${one} (ahorra ${fmtMoney(base * q - p)})`
+        : `≈ ${fmtMoney(per)}/${one}`;
     }
-    return basePrice > 0
-      ? `Ahorro de ${fmtMoney(basePrice - p)}/pieza`
-      : null;
+    if (t.type === "llevapaga") {
+      if (!(p < q) || !(base > 0)) return null;
+      return `Lleva ${q} por ${fmtMoney(base * p)} (ahorra ${fmtMoney(base * (q - p))})`;
+    }
+    if (t.type === "piezan") {
+      if (!(base > 0) || p > 100) return null;
+      return `La ${q}ª sale a ${fmtMoney(base * (1 - p / 100))} (ahorra ${fmtMoney((base * p) / 100)})`;
+    }
+    return base > 0 ? `Ahorra ${fmtMoney(base - p)} por ${one}` : null;
   };
 
   const statusPill = (() => {
@@ -805,6 +896,7 @@ const AddProductModal = ({
             type: p.type,
             qty: String(p.qty),
             price: String(p.price),
+            unit: p.unit || "piece",
           })),
         );
         setPromoOpen(!!editProduct.has_discount);
@@ -938,12 +1030,22 @@ const AddProductModal = ({
             : 0,
         prices: data.has_discount
           ? priceTiers
-              .map((t) => ({
-                type: t.type === "mayoreo" ? "mayoreo" : "combo",
-                qty: parseInt(t.qty) || 0,
-                price: parseFloat(t.price) || 0,
-              }))
-              .filter((t) => t.qty > 0 && t.price > 0)
+              .map((t) => {
+                const unit = tierUnitOf(t, data.sale_unit);
+                return {
+                  type: TIER_TYPES.some((x) => x.value === t.type) ? t.type : "combo",
+                  unit,
+                  qty: unit === "weight" ? toNum(t.qty) : toInt(t.qty),
+                  price: toNum(t.price),
+                };
+              })
+              // Lleva y paga / pieza N no existen por kilo.
+              .filter(
+                (t) =>
+                  t.qty > 0 &&
+                  t.price > 0 &&
+                  !(t.unit === "weight" && (t.type === "llevapaga" || t.type === "piezan")),
+              )
           : [],
       };
 
@@ -1742,8 +1844,8 @@ const AddProductModal = ({
                               Sin promos configuradas
                             </p>
                             <p className="text-[0.75rem] text-muted-foreground/70 mt-0.5">
-                              Haz clic en <strong>"Agregar"</strong> para crear una promo
-                              o precio de mayoreo.
+                              Haz clic en <strong>"Agregar"</strong> para crear un mayoreo,
+                              combo, 2×1 o 2ª al %.
                             </p>
                           </div>
                         ) : (
@@ -1759,33 +1861,23 @@ const AddProductModal = ({
                                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[0.7rem] font-bold text-primary">
                                       {i + 1}
                                     </span>
-                                    <div className="flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5">
-                                      <button
-                                        type="button"
-                                        disabled={tiersBlocked}
-                                        onClick={() => updatePriceTier(i, "type", "combo")}
-                                        className={cn(
-                                          "rounded-md px-2.5 py-1 text-[0.7rem] font-semibold transition-colors disabled:opacity-50",
-                                          tier.type === "combo"
-                                            ? "bg-amber-500/15 text-amber-600"
-                                            : "text-muted-foreground hover:text-foreground"
-                                        )}
-                                      >
-                                        COMBO
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={tiersBlocked}
-                                        onClick={() => updatePriceTier(i, "type", "mayoreo")}
-                                        className={cn(
-                                          "rounded-md px-2.5 py-1 text-[0.7rem] font-semibold transition-colors disabled:opacity-50",
-                                          tier.type === "mayoreo"
-                                            ? "bg-blue-500/15 text-blue-600"
-                                            : "text-muted-foreground hover:text-foreground"
-                                        )}
-                                      >
-                                        MAYOREO
-                                      </button>
+                                    <div className="flex flex-wrap items-center rounded-lg border border-border/60 bg-muted/40 p-0.5">
+                                      {TIER_TYPES.filter((x) => su !== "weight" || x.kg).map((x) => (
+                                        <button
+                                          key={x.value}
+                                          type="button"
+                                          disabled={tiersBlocked}
+                                          onClick={() => updatePriceTier(i, "type", x.value)}
+                                          className={cn(
+                                            "rounded-md px-2.5 py-1 text-[0.7rem] font-semibold transition-colors disabled:opacity-50",
+                                            tier.type === x.value
+                                              ? x.cls
+                                              : "text-muted-foreground hover:text-foreground",
+                                          )}
+                                        >
+                                          {x.label}
+                                        </button>
+                                      ))}
                                     </div>
                                   </div>
                                   <STooltip>
@@ -1808,35 +1900,75 @@ const AddProductModal = ({
                                   </STooltip>
                                 </div>
 
-                                {/* Campos */}
-                                <div className="grid grid-cols-2 gap-2">
-                                  <NumberField
-                                    icon={Hash}
-                                    label={tier.type === "combo" ? "Cantidad" : "Desde"}
-                                    value={tier.qty}
-                                    onChange={(e) => updatePriceTier(i, "qty", e.target.value)}
-                                    min={1}
-                                    placeholder="0"
-                                    disabled={tiersBlocked}
-                                  />
-                                  <NumberField
-                                    icon={DollarSign}
-                                    label={tier.type === "mayoreo" ? "Precio / pieza ($)" : "Precio total ($)"}
-                                    value={tier.price}
-                                    onChange={(e) => updatePriceTier(i, "price", e.target.value)}
-                                    min={0}
-                                    step={0.01}
-                                    placeholder="0.00"
-                                    disabled={tiersBlocked}
-                                  />
-                                </div>
+                                {/* A qué unidad aplica (sólo productos por caja/paquete) */}
+                                {tierUnitOptions(su).length > 0 && (
+                                  <div className="mb-2 flex items-center gap-2">
+                                    <span className="text-[0.75rem] font-medium text-muted-foreground">
+                                      Aplica a
+                                    </span>
+                                    <div className="flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5">
+                                      {tierUnitOptions(su).map((o) => (
+                                        <button
+                                          key={o.value}
+                                          type="button"
+                                          disabled={tiersBlocked}
+                                          onClick={() => updatePriceTier(i, "unit", o.value)}
+                                          className={cn(
+                                            "rounded-md px-2.5 py-1 text-[0.7rem] font-semibold transition-colors disabled:opacity-50",
+                                            tierUnitOf(tier, su) === o.value
+                                              ? "bg-background text-foreground shadow"
+                                              : "text-muted-foreground hover:text-foreground",
+                                          )}
+                                        >
+                                          {o.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Campos (su significado depende del tipo) */}
+                                {(() => {
+                                  const noun = tierUnitNoun(tierUnitOf(tier, su), su);
+                                  const isKg = su === "weight";
+                                  const [qtyLabel, priceLabel, priceIcon, priceStep] =
+                                    tier.type === "llevapaga"
+                                      ? ["Lleva", "Paga", Hash, 1]
+                                      : tier.type === "piezan"
+                                        ? ["Pieza número", "Descuento (%)", Percent, 1]
+                                        : tier.type === "combo"
+                                          ? [`Lleva (${noun})`, "Por ($)", DollarSign, 0.01]
+                                          : [`Desde (${noun})`, "Precio c/u ($)", DollarSign, 0.01];
+                                  return (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <NumberField
+                                        icon={Hash}
+                                        label={qtyLabel}
+                                        value={tier.qty}
+                                        onChange={(e) => updatePriceTier(i, "qty", e.target.value)}
+                                        min={tier.type === "piezan" ? 2 : 1}
+                                        step={isKg ? 0.1 : 1}
+                                        placeholder={tier.type === "piezan" ? "2" : "0"}
+                                        disabled={tiersBlocked}
+                                      />
+                                      <NumberField
+                                        icon={priceIcon}
+                                        label={priceLabel}
+                                        value={tier.price}
+                                        onChange={(e) => updatePriceTier(i, "price", e.target.value)}
+                                        min={0}
+                                        step={priceStep}
+                                        placeholder={priceStep === 1 ? "0" : "0.00"}
+                                        disabled={tiersBlocked}
+                                      />
+                                    </div>
+                                  );
+                                })()}
 
                                 {/* Preview */}
                                 <div className="mt-2 space-y-1">
                                   <p className="text-[0.7rem] leading-relaxed text-muted-foreground">
-                                    {tier.type === "combo"
-                                      ? "Precio fijo por esa cantidad; el sobrante se cobra a precio normal."
-                                      : "Precio especial por pieza desde esa cantidad."}
+                                    {(TIER_TYPES.find((x) => x.value === tier.type) || TIER_TYPES[1]).help}
                                   </p>
                                   {tierPreview(tier) && (
                                     <p className="flex items-center gap-1 text-[0.72rem] font-medium text-emerald-600">

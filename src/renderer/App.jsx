@@ -22,6 +22,7 @@ const BackupRestore = React.lazy(() => import("./components/BackupRestore"));
 const Cashiers = React.lazy(() => import("./components/Cashiers"));
 const ConfigurationScreen = React.lazy(() => import("./components/ConfigurationScreen"));
 const Categories = React.lazy(() => import("./components/Categories"));
+const Promotions = React.lazy(() => import("./components/Promotions"));
 const Transacciones = React.lazy(() => import("./components/Transacciones"));
 const ServicesScreen = React.lazy(() =>
   import("./components/servicios/ServicesScreen")
@@ -285,6 +286,7 @@ const AppInner = () => {
             <Route path="catalog" element={<Navigate to="catalog-reference" replace />} />
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="categories" element={<Categories />} />
+            <Route path="promotions" element={<Promotions />} />
             <Route path="stock-movements" element={<StockMovements />} />
             <Route path="transacciones" element={<Transacciones />} />
             <Route path="servicios" element={<ServicesScreen />} />

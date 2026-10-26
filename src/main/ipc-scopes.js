@@ -133,6 +133,8 @@ const CLASSIFICATION_BASE = {
   "get-product-day-summary": SCOPES.HOST_READ,
   "get-products": SCOPES.HOST_READ,
   "get-products-by-ids": SCOPES.HOST_READ,
+  "get-promotions": SCOPES.HOST_READ,
+  "get-product-promos": SCOPES.HOST_READ,
   "get-recent-customers": SCOPES.HOST_READ,
   "get-setting": SCOPES.HOST_READ,
   "get-tier-prices": SCOPES.HOST_READ,

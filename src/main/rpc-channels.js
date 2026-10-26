@@ -94,6 +94,12 @@ const RPC_CHANNELS = new Set([
   "delete-customer-price",
   "set-tier-price",
   "delete-tier-price",
+  // ── promociones avanzadas (categoría/marca y paquetes) ────────────────────
+  "save-group-promo",
+  "delete-group-promo",
+  "save-bundle",
+  "set-bundle-active",
+  "delete-bundle",
   // ── proveedores ───────────────────────────────────────────────────────────
   "get-suppliers",
   "add-supplier",
