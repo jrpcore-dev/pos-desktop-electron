@@ -160,24 +160,28 @@ const QuickProductsGrid = React.memo(
 
     return (
       <div className="flex flex-col items-center px-4 pb-2 pt-1">
-        <div className="grid w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className="mb-3 grid w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
           <div />
           <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
             <Flame size={16} className="text-warning" aria-hidden />
             Productos rápidos
           </div>
           <div className="flex items-center justify-end gap-1.5">
-            <button type="button" onClick={() => setPickerOpen(true)} title="Fijar producto a accesos rápidos"
+            <Hint label="Fijar producto a accesos rápidos">
+            <button type="button" onClick={() => setPickerOpen(true)}
               className="inline-flex h-9 cursor-pointer items-center gap-1 rounded-md border border-border bg-muted px-2.5 text-xs font-semibold text-foreground transition-colors duration-150 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Plus size={14} />
               Agregar
             </button>
+            </Hint>
             {onOpenServicios && (
-              <button type="button" onClick={onOpenServicios} title="Recargas y pagos de servicios"
+              <Hint label="Recargas y pagos de servicios">
+              <button type="button" onClick={onOpenServicios}
                 className="inline-flex h-9 cursor-pointer items-center gap-1 rounded-md border border-dashed border-primary/40 bg-primary/5 px-2.5 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/70 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <Zap size={14} aria-hidden />
                 Servicios
               </button>
+              </Hint>
             )}
           </div>
         </div>
@@ -228,7 +232,7 @@ const QuickProductsGrid = React.memo(
                     />
                   )}
                   {p.isTop && (
-                    <span className="absolute -left-1 -top-1 inline-flex items-center gap-0.5 rounded-md bg-warning px-1 py-px text-[10px] font-bold text-warning-foreground shadow-sm">
+                    <span className="absolute left-0.5 top-0.5 inline-flex items-center gap-0.5 rounded-md bg-warning px-1 py-px text-[10px] font-bold text-warning-foreground shadow-sm">
                       <Flame size={10} aria-hidden />
                       Top
                     </span>
