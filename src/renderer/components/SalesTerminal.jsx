@@ -1038,6 +1038,15 @@ if (e.key === "Tab" && !isEditable) {
     repriceCart(null);
   };
 
+  // Clientes apagado en Funciones: un carrito que ya tenía cliente lo
+  // soltaría oculto pero seguiría cobrando su precio especial y la venta
+  // quedaría a su nombre. Se quita y los precios vuelven a los normales.
+  const clearCustomerRef = useRef(clearCustomer);
+  clearCustomerRef.current = clearCustomer;
+  useEffect(() => {
+    if (!features.customers && customer) clearCustomerRef.current();
+  }, [features.customers, customer]);
+
   const checkRegisterOpen = async () => {
     try {
       const res = await window.api.invoke("get-cash-register-status", {
