@@ -1280,14 +1280,14 @@ const Inventory = () => {
           <>
             <SButton
               variant="outline"
-              size="sm"
+              className="shrink-0"
               onClick={exportInventoryCSV}
             >
-              <Download className="mr-1.5 h-4 w-4" />
+              <Download className="h-4 w-4" />
               Exportar
             </SButton>
-            <SButton size="sm" onClick={() => setIsModalOpen(true)}>
-              <PlusCircle className="mr-1.5 h-4 w-4" />
+            <SButton className="shrink-0" onClick={() => setIsModalOpen(true)}>
+              <PlusCircle className="h-4 w-4" />
               Nuevo Producto
               <KbdGroup className="ml-1">
                 <Kbd className="h-[18px] rounded-[6px] border border-slate-200/60 bg-slate-300/35 px-1.5 font-sans text-[12px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(0,0,0,0.2)]">

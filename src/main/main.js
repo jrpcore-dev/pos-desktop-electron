@@ -1017,6 +1017,9 @@ ipcMain.handle("get-all-products", async () => {
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN suppliers s ON p.supplier_id = s.id
+    -- Sólo los productos de la tienda (mismo criterio que la lista de
+    -- Inventario): fuera el catálogo de referencia y los eliminados.
+    WHERE p.is_active = 1
     ORDER BY p.name ASC
   `,
     )
