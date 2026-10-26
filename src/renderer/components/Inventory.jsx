@@ -32,6 +32,7 @@ import {
   Layers,
   Loader2,
   X,
+  CalendarClock,
 } from "lucide-react";
 import AddProductModal from "./AddProductModal";
 import { CardSkeleton } from "./Skeletons";
@@ -94,6 +95,7 @@ import { mxToday, formatMXTime } from "../utils/dateUtils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { getStockStatus } from "./ui/stock-status";
 import { StatCard } from "./ui/stat-card";
+import { Calendar } from "./ui/calendar";
 import { promoInfo } from "../utils/cartMath";
 
 import PageHeader from "./PageHeader";
@@ -745,6 +747,9 @@ const Inventory = () => {
   const [stockQuantity, setStockQuantity] = useState("");
   const [stockQtyError, setStockQtyError] = useState("");
   const [stockCost, setStockCost] = useState("");
+  // Caducidad opcional del lote que entra ("YYYY-MM-DD" o "").
+  const [stockExpiry, setStockExpiry] = useState("");
+  const [stockExpiryOpen, setStockExpiryOpen] = useState(false);
   const [stockRegisterExpense, setStockRegisterExpense] = useState(
     () => localStorage.getItem("stockRegisterExpense") === "true",
   );
@@ -998,6 +1003,7 @@ const Inventory = () => {
     setStockQuantity("");
     setStockQtyError("");
     setStockCost("");
+    setStockExpiry("");
     setStockRegisterExpense(false);
     setStockUnitMode("box");
     setStockModalOpen(true);
@@ -1066,6 +1072,7 @@ const Inventory = () => {
         cashierId: cashier?.id,
         registerExpense: stockRegisterExpense,
         updateCostPrice,
+        expiryDate: stockExpiry || undefined,
       });
       if (result.success) {
         setStockModalOpen(false);
@@ -2063,6 +2070,67 @@ const Inventory = () => {
                         {stockUnitMode !== "pz" && ` (${addPiezas} piezas)`}
                       </p>
                     )}
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                  <div className="min-w-0">
+                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                      Caducidad
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Opcional. Te avisamos antes de que venza.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Popover open={stockExpiryOpen} onOpenChange={setStockExpiryOpen}>
+                      <PopoverTrigger asChild>
+                        <SButton
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "h-9 gap-1.5",
+                            stockExpiry && "border-warning/50 text-foreground",
+                          )}
+                        >
+                          <CalendarClock className="text-muted-foreground" />
+                          {stockExpiry
+                            ? new Date(`${stockExpiry}T12:00:00`).toLocaleDateString("es-MX", {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              })
+                            : "Sin fecha"}
+                        </SButton>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="z-[1310] w-auto p-0">
+                        <Calendar
+                          mode="single"
+                          selected={stockExpiry ? new Date(`${stockExpiry}T12:00:00`) : undefined}
+                          defaultMonth={stockExpiry ? new Date(`${stockExpiry}T12:00:00`) : undefined}
+                          disabled={{ before: new Date(`${mxToday()}T12:00:00`) }}
+                          onSelect={(d) => {
+                            if (d) {
+                              const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                              setStockExpiry(iso);
+                            }
+                            setStockExpiryOpen(false);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    {stockExpiry && (
+                      <button
+                        type="button"
+                        aria-label="Quitar fecha de caducidad"
+                        title="Quitar fecha"
+                        onClick={() => setStockExpiry("")}
+                        className="flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="rounded-lg border border-border bg-muted/40 p-3">

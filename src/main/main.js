@@ -35,6 +35,7 @@ const boxRpc = require("./box-rpc-client");
 const offlineQueue = require("./offline-queue");
 // Bloque 6 · respaldos verificados y retención (24 + 8).
 const backupService = require("./backup-service");
+const smartAlerts = require("./smart-alerts");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -537,6 +538,20 @@ app.on("ready", async () => {
     migrateRegisterContinuity();
     maybeRunAutoBackup();
     setInterval(maybeRunAutoBackup, 15 * 60 * 1000);
+
+    // Alertas inteligentes (caducidad, stock sin movimiento, pedido
+    // sugerido): las genera el Host; las cajas las leen por RPC. Primera
+    // pasada con retraso para no competir con el arranque.
+    const runSmartAlerts = () => {
+      if (deviceRole !== ipcScopes.ROLES.HOST) return;
+      try {
+        smartAlerts.generateSmartAlerts(db);
+      } catch (err) {
+        console.error("[alertas] generación fallida:", err && err.message);
+      }
+    };
+    setTimeout(runSmartAlerts, 30 * 1000);
+    setInterval(runSmartAlerts, 60 * 60 * 1000);
   }
   // Bloque 6 · la caja designada revisa si hay respaldo nuevo. Fase 3 · va
   // FUERA del bloque anterior: una caja siempre es `boxDevice`, así que ahí
@@ -1801,6 +1816,7 @@ ipcMain.handle(
       registerExpense,
       supplierId,
       updateCostPrice,
+      expiryDate,
     },
   ) => {
     const txn = db.transaction(() => {
@@ -1863,6 +1879,14 @@ ipcMain.handle(
         qty,
         productId,
       );
+      // Caducidad opcional: un lote por entrada (ver smart-alerts.js).
+      if (expiryDate) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(expiryDate)))
+          throw new Error("Fecha de caducidad no válida");
+        db.prepare(
+          "INSERT INTO product_lots (product_id, quantity, expiry_date) VALUES (?, ?, ?)",
+        ).run(productId, qty, String(expiryDate));
+      }
       db.prepare(
         "INSERT INTO stock_movements (product_id, type, quantity, cost, notes, cashier_id, supplier_id) VALUES (?, 'in', ?, ?, ?, ?, ?)",
       ).run(
@@ -4212,9 +4236,25 @@ ipcMain.handle("mark-insight", async (event, { id, status }) => {
   }
 });
 
+// Botones de los avisos: reducir (merma), rebajar, ya no hay, descartar.
+ipcMain.handle("insight-action", async (event, args = {}) => {
+  try {
+    const result = smartAlerts.applyInsightAction(db, args);
+    return { success: true, ...result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Pulso semanal real: compara últimos 7 días contra los 7 anteriores
 ipcMain.handle("run-weekly-pulse", async () => {
   try {
+    // El botón "generar ahora" también refresca las alertas inteligentes.
+    try {
+      smartAlerts.generateSmartAlerts(db);
+    } catch (err) {
+      console.error("[alertas] generación fallida:", err && err.message);
+    }
     const weekKey = new Date().toISOString().slice(0, 10);
     const range = (daysAgo, span) => {
       const to = new Date(Date.now() - daysAgo * 86400000 - 6 * 3600000);

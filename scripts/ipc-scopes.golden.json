@@ -88,6 +88,7 @@
   "import-catalog-data": "host_write",
   "import-products-content": "rpc",
   "import-products-data": "host_write",
+  "insight-action": "rpc",
   "is-first-time": "system",
   "is-scale-connected": "system",
   "list-sale-devices": "rpc",

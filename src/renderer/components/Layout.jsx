@@ -40,6 +40,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { useCashier } from "../contexts/CashierContext";
+import InsightItem from "./InsightItem";
 import { useDbChanges } from "../lib/useDbChanges";
 import { useThemeMode } from "../contexts/ThemeContext";
 import { formatMXTime } from "../utils/dateUtils";
@@ -906,6 +907,12 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     if (today.success) setTodayTasksCount(today.tasks.length);
   };
 
+  // Quita un aviso resuelto (acción aplicada o descartado) de la bandeja.
+  const removeInsight = useCallback((id) => {
+    setInsights((prev) => prev.filter((x) => x.id !== id));
+    setInsightsUnread((n) => Math.max(0, n - 1));
+  }, []);
+
   const handleRefreshPulse = useCallback(async () => {
     try {
       const r = await window.api.invoke("run-weekly-pulse");
@@ -1286,63 +1293,43 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                     )}
                   </button>
                 </PopoverTrigger>
-                <PopoverContent align="end" sideOffset={8} className="w-[340px] p-0">
+                <PopoverContent align="end" sideOffset={8} className="w-[380px] p-0">
                   {insightsUnread > 0 && (
                     <>
                       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
                         <span className="text-sm font-semibold text-foreground">
-                          Pulso del negocio
+                          Avisos del negocio
                         </span>
                         <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary tabular-nums">
                           {insightsUnread} sin leer
                         </span>
                       </div>
                       <div className="p-3">
-                        <ul className="flex max-h-[320px] flex-col gap-2 overflow-y-auto">
+                        <ul className="flex max-h-[420px] flex-col gap-2 overflow-y-auto">
                           {insights.map((ins) => (
-                            <li
+                            <InsightItem
                               key={ins.id}
-                              className={cn(
-                                "rounded-md border border-border p-2.5 text-left transition-colors hover:bg-muted/50",
-                                ins.status === "unread" &&
-                                  "border-l-2 border-l-primary",
-                              )}
-                            >
-                              <button
-                                className="w-full cursor-pointer text-left"
-                                onClick={async () => {
-                                  await window.api.invoke("mark-insight", {
-                                    id: ins.id,
-                                    status: "actioned",
-                                  });
-                                  setInsights((prev) =>
-                                    prev.filter((x) => x.id !== ins.id),
-                                  );
-                                  setInsightsUnread((n) =>
-                                    Math.max(0, n - 1),
-                                  );
-                                  setInsightsOpen(false);
-                                  navigate(ins.route || "/reports");
-                                }}
-                              >
-                                <p className="text-[14px] font-semibold text-foreground">
-                                  {ins.title}
-                                </p>
-                                <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                                  {ins.body}
-                                </p>
-                                <p className="mt-1 text-[11px] font-medium text-primary">
-                                  Ver detalle →
-                                </p>
-                              </button>
-                            </li>
+                              insight={ins}
+                              isAdmin={cashier?.role === "admin"}
+                              cashierId={cashier?.id}
+                              onResolved={removeInsight}
+                              onNavigate={async (item) => {
+                                await window.api.invoke("mark-insight", {
+                                  id: item.id,
+                                  status: "actioned",
+                                });
+                                removeInsight(item.id);
+                                setInsightsOpen(false);
+                                navigate(item.route || "/reports");
+                              }}
+                            />
                           ))}
                         </ul>
                         <button
                           className="mt-2 w-full cursor-pointer border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
                           onClick={handleRefreshPulse}
                         >
-                          Generar pulso semanal ahora
+                          Actualizar avisos ahora
                         </button>
                       </div>
                     </>

@@ -161,8 +161,15 @@ const cashRegisterRow = (db, id) =>
   // (`service_transactions`, `sale_items.service_transaction_id`) ya están en
   // HEAD: no queda delta sin commitear. Si una entrega nueva toca el esquema,
   // declara aquí sus statements.
-  const DDL_AGREGADO = [];
-  const DDL_BORRADO = [];
+  // Alertas inteligentes: tabla `product_lots` (caducidad por lote) con su
+  // índice, e `insights` gana `payload` (SQLite reescribe su CREATE TABLE:
+  // alta y baja del mismo statement).
+  const DDL_AGREGADO = [
+    /^CREATE TABLE product_lots\b/,
+    /^CREATE INDEX idx_product_lots_product\b/,
+    /^CREATE TABLE insights\b[\s\S]*\bpayload\b/,
+  ];
+  const DDL_BORRADO = [/^CREATE TABLE insights\b/];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -258,6 +265,17 @@ const cashRegisterRow = (db, id) =>
         ? []
         : ["+ sale_items.service_transaction_id|INTEGER|nn=0|dflt=null"]),
     ];
+    // Alertas inteligentes · lotes con caducidad y `insights.payload`. Si la
+    // app ya corrió con esta entrega en esta máquina, el delta es 0.
+    const ESPERADO_ALERTAS = [
+      ...(Array.isArray(before.cols.product_lots)
+        ? []
+        : [
+            "+ tabla nueva product_lots",
+            ...(after.cols.product_lots || []).map((c) => `+ product_lots.${c}`),
+          ]),
+      ...(colDe(before.cols.insights, "payload") ? [] : ["+ insights.payload|TEXT|nn=0|dflt=null"]),
+    ];
     const ESPERADO_3D = (yaTieneLog
       ? []
       : [
@@ -298,7 +316,7 @@ const cashRegisterRow = (db, id) =>
     // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
     // falta migrar) más el de 3d más el de 3g.
     const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B)
-      .concat(ESPERADO_3G, ESPERADO_TAECEL)
+      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS)
       .sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
@@ -317,6 +335,8 @@ const cashRegisterRow = (db, id) =>
       ...after.indexes.filter(
         (i) => i.startsWith("service_transactions.") || i === "sale_items.idx_sale_items_service_tx",
       ),
+      // Alertas inteligentes: índice de lotes por producto.
+      "product_lots.idx_product_lots_product",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

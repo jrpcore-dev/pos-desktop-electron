@@ -90,6 +90,7 @@ export const invoke = [
   "import-catalog-data",
   "import-products-content",
   "import-products-data",
+  "insight-action",
   "is-first-time",
   "is-scale-connected",
   "list-sale-devices",

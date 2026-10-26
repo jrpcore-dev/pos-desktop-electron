@@ -251,6 +251,22 @@ const createTables = (db) => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // ─── LOTES CON CADUCIDAD ───────────────────────────────────────
+  // Una fila por entrada de stock con fecha de caducidad (add-stock con
+  // expiryDate). No se descuenta al vender: lo que queda de cada lote se
+  // estima con PEPS a partir del stock actual (ver smart-alerts.js), así las
+  // ventas y la réplica no cambian. Vive sólo en el Host (no se replica).
+  //   status: active · consumed (la estimación llegó a 0) · cleared (el
+  //   usuario indicó que ya no hay o lo mandó a merma).
+  db.exec(`CREATE TABLE IF NOT EXISTS product_lots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    quantity REAL NOT NULL,
+    expiry_date TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    received_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   // Migration: add register_id to sales
   const sCols2 = db.prepare("PRAGMA table_info(sales)").all();
   if (!sCols2.find((c) => c.name === "register_id")) {
@@ -487,6 +503,14 @@ const createTables = (db) => {
 
 const runMigrations = (db) => {
   const ensureColumn = (table, column, definition) => ensureColumnOn(db, table, column, definition);
+
+  // Alertas inteligentes: datos estructurados (JSON) para las acciones de
+  // cada aviso (producto, lote, cantidad…). `week_key` funciona como llave
+  // de deduplicación por tipo.
+  ensureColumn("insights", "payload", "TEXT");
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_product_lots_product ON product_lots(product_id, status)`,
+  );
 
   // ─── ÍNDICES ──────────────────────────────────────────────────
   db.exec(

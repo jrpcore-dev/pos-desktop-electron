@@ -112,6 +112,7 @@ const RPC_CHANNELS = new Set([
   "get-today-tasks",
   "get-insights",
   "mark-insight",
+  "insight-action",
   "run-weekly-pulse",
   "touch-customer",
   // ── ajustes de negocio (los del propio aparato se quedan locales) ─────────
