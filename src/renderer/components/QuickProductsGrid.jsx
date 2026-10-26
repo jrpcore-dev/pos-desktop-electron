@@ -13,6 +13,9 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { cn } from "@/lib/utils";
+import { Badge } from "./ui/badge";
+import { Hint } from "./ui/hint";
+import { InitialsAvatar } from "./ui/initials-avatar";
 import { fmtMoney } from "@/utils/format";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { promoInfo } from "../utils/cartMath";
@@ -23,6 +26,9 @@ const GRID_CLS = {
 };
 
 const STORAGE_KEY = "quickAccessIds";
+// Los más vendidos se fijan solos al inicio (sin ✕); después van los que
+// el usuario fijó a mano.
+const TOP_LIMIT = 4;
 
 const readFavorites = () => {
   try {
@@ -44,9 +50,9 @@ const writeFavorites = (ids) => {
 };
 
 /**
- * Grid de productos rápidos configurables manualmente.
- * Vacío por defecto; el usuario fija productos con "+".
- * Persistencia en localStorage por caja.
+ * Grid de productos rápidos: primero los TOP_LIMIT más vendidos (automáticos,
+ * marcados "Top"), luego los que el usuario fija con "+" (localStorage por
+ * caja). Un producto que es top y además fijado sale una sola vez.
  */
 const QuickProductsGrid = React.memo(
   ({ onAddProduct, onOpenServicios, compact = false }) => {
@@ -78,20 +84,35 @@ const QuickProductsGrid = React.memo(
     // Carga/reaúsela de los accesos rápidos: también la dispara db-changed
     // (precio, stock o nombre cambiado en el Host) sin volver a la esqueleto.
     const loadFavorites = useCallback(() => {
-      if (favorites.length === 0) {
-        setProducts([]);
-        return undefined;
-      }
       let cancelled = false;
+      const normalize = (p) => ({
+        ...p,
+        sale_unit: p.sale_unit || "unit",
+        price: p.price || 0,
+        discount_percent: p.discount_percent || 0,
+        stock: p.stock || 0,
+      });
       (async () => {
         try {
-          const res = await window.api.invoke("get-products-by-ids", favorites);
+          const [topRes, favRes] = await Promise.all([
+            window.api.invoke("get-top-products", {}).catch(() => []),
+            favorites.length > 0
+              ? window.api.invoke("get-products-by-ids", favorites)
+              : Promise.resolve([]),
+          ]);
           if (cancelled) return;
+          // Sólo productos que de verdad se han vendido.
+          const top = (Array.isArray(topRes) ? topRes : [])
+            .filter((p) => p?.id && Number(p.total_sold) > 0)
+            .slice(0, TOP_LIMIT)
+            .map((p) => ({ ...normalize(p), isTop: true }));
+          const topIds = new Set(top.map((p) => p.id));
           const map = {};
-          if (Array.isArray(res)) res.forEach((p) => { if (p?.id) map[p.id] = p; });
-          setProducts(
-            favorites.filter((id) => map[id]).map((id) => ({ ...map[id], sale_unit: map[id].sale_unit || "unit", price: map[id].price || 0, discount_percent: map[id].discount_percent || 0, stock: map[id].stock || 0 })),
-          );
+          if (Array.isArray(favRes)) favRes.forEach((p) => { if (p?.id) map[p.id] = p; });
+          const pinned = favorites
+            .filter((id) => map[id] && !topIds.has(id))
+            .map((id) => normalize(map[id]));
+          setProducts([...top, ...pinned]);
         } catch {
           if (!cancelled) setProducts([]);
         }
@@ -103,7 +124,7 @@ const QuickProductsGrid = React.memo(
 
     // In vivo: precios/stock al día; el carrito en curso queda intacto
     // (reglas 1 y 3).
-    useDbChanges(() => loadFavorites(), ["products", "product_prices"]);
+    useDbChanges(() => loadFavorites(), ["products", "product_prices", "sales"]);
 
     useEffect(() => {
       if (!pickerOpen || query.trim().length < 1) { setResults([]); return; }
@@ -164,18 +185,18 @@ const QuickProductsGrid = React.memo(
         {products === null ? (
           <div className={cn("grid w-full gap-2.5", GRID_CLS[compact ? "compact" : "default"])}>
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex h-[5.5rem] flex-col justify-between rounded-xl border border-border bg-background/60 p-2.5">
-                <div className="flex items-center gap-1.5">
-                  <Skeleton className="h-9 w-9 rounded-md" />
-                  <Skeleton className="h-3 w-2/3" />
+              <div key={i} className="flex h-24 items-center gap-3 rounded-xl border border-border bg-card p-2.5">
+                <Skeleton className="size-[4.25rem] shrink-0 rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3 w-4/5" />
+                  <Skeleton className="h-4 w-1/2" />
                 </div>
-                <Skeleton className="h-3.5 w-1/2" />
               </div>
             ))}
           </div>
         ) : products.length === 0 ? (
           <p className="py-8 text-xs text-muted-foreground">
-            Agregá productos con el botón + para acceso rápido
+            Agrega productos con el botón + para acceso rápido
           </p>
         ) : (
           <div className={cn("grid w-full gap-2.5", GRID_CLS[compact ? "compact" : "default"])}>
@@ -186,41 +207,78 @@ const QuickProductsGrid = React.memo(
               const out = p.stock > 0 && p.stock <= 2;
               const unitLabel = isContainerUnit(p.sale_unit) ? unitLabels(p.sale_unit)?.badge || "c/u" : p.sale_unit === "weight" ? "kg" : "c/u";
               return (
-                <div key={p.id} onClick={() => onAddProduct(p)}
-                  className="group relative flex h-[5.5rem] w-full cursor-pointer select-none flex-col items-start justify-between gap-1.5 overflow-hidden rounded-xl border border-border bg-background/60 p-2.5 text-left transition-all duration-150 hover:border-primary/60 hover:bg-primary/5 hover:shadow-sm active:scale-[0.985]">
-                  <button type="button" onClick={(e) => removeFavorite(e, p.id)}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    title="Quitar de accesos rápidos"
-                    className="absolute right-1 top-1 z-30 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground opacity-60 transition-all duration-150 hover:opacity-100 hover:border-destructive hover:bg-destructive/15 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <X size={14} />
-                  </button>
-                  <span className="flex w-full min-w-0 items-center gap-1.5 pr-10">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <PackagePlus size={18} />
+                <div
+                  key={`${p.isTop ? "top" : "fav"}-${p.id}`}
+                  onClick={() => onAddProduct(p)}
+                  className="group relative flex h-24 w-full cursor-pointer select-none items-center gap-3 overflow-hidden rounded-xl border border-border bg-card p-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lg active:translate-y-0 active:scale-[0.985] active:shadow-sm"
+                >
+                  {/* Foto del producto; sin foto, iniciales con la paleta de marca. */}
+                  <div className="relative shrink-0">
+                  {p.image_path ? (
+                    <img
+                      src={p.image_path}
+                      alt=""
+                      className="size-[4.25rem] shrink-0 rounded-lg border border-border/60 bg-muted object-cover"
+                    />
+                  ) : (
+                    <InitialsAvatar
+                      id={p.id}
+                      name={p.name}
+                      className="size-[4.25rem] rounded-lg text-base"
+                    />
+                  )}
+                  {p.isTop && (
+                    <span className="absolute -left-1 -top-1 inline-flex items-center gap-0.5 rounded-md bg-warning px-1 py-px text-[10px] font-bold text-warning-foreground shadow-sm">
+                      <Flame size={10} aria-hidden />
+                      Top
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-[0.9rem] font-semibold text-foreground">
+                  )}
+                  </div>
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                    <span className="line-clamp-2 pr-5 text-sm font-semibold leading-tight text-foreground">
                       {p.name}
                     </span>
-                  </span>
-                  <span className="flex flex-wrap items-center gap-1">
-                    {hasPromo && (
-                      <span className="text-[0.75rem] line-through text-muted-foreground">
-                        {fmtMoney(p.price)}
-                      </span>
-                    )}
-                    <span className="text-[1.05rem] font-extrabold text-foreground tabular-nums">
-                      {fmtMoney(finalPrice)}
-                    </span>
-                    {(p.discount_percent || 0) > 0 && !promo.applied && (
-                      <span className="text-[0.65rem] font-bold text-destructive">-{p.discount_percent}%</span>
-                    )}
-                    <span className="rounded border border-border px-1.5 py-0 text-[0.6rem] font-medium">{unitLabel}</span>
-                    {out && (
-                      <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0 text-[0.6rem] font-semibold text-destructive">
-                        {p.stock} uds
-                      </span>
-                    )}
-                  </span>
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-base font-bold leading-none text-foreground tabular-nums">
+                          {fmtMoney(finalPrice)}
+                        </span>
+                        {hasPromo && (
+                          <span className="text-xs leading-none text-muted-foreground line-through tabular-nums">
+                            {fmtMoney(p.price)}
+                          </span>
+                        )}
+                        <span className="text-[11px] leading-none text-muted-foreground">{unitLabel}</span>
+                      </div>
+                      {((p.discount_percent || 0) > 0 && !promo.applied) || out ? (
+                        <div className="mt-1 flex gap-1">
+                          {(p.discount_percent || 0) > 0 && !promo.applied && (
+                            <Badge variant="soft-destructive" className="px-1.5 py-0">
+                              -{p.discount_percent}%
+                            </Badge>
+                          )}
+                          {out && (
+                            <Badge variant="soft-warning" className="px-1.5 py-0">
+                              Quedan {p.stock}
+                            </Badge>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  {!p.isTop && (
+                  <Hint label="Quitar de accesos rápidos">
+                    <button
+                      type="button"
+                      onClick={(e) => removeFavorite(e, p.id)}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      aria-label="Quitar de accesos rápidos"
+                      className="absolute right-1.5 top-1.5 z-30 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+                    >
+                      <X size={14} />
+                    </button>
+                  </Hint>
+                  )}
                 </div>
               );
             })}

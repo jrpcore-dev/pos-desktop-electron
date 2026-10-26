@@ -13,7 +13,7 @@ import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 import { Kbd } from "./ui/kbd";
 import { Skeleton } from "./ui/skeleton";
-import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
+import { InitialsAvatar } from "./ui/initials-avatar";
 import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/utils/format";
 import { promoInfo } from "../utils/cartMath";
@@ -35,6 +35,25 @@ const F_KEYS = [
  * - Si el usuario tipea/escanea: oculta el grid y muestra la lista de
  *   sugerencias / resultados tal y como operaba antes.
  */
+// "caja" → "Caja" (los símbolos como "kg" se dejan tal cual).
+const capitalize = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+
+// Resalta la primera coincidencia de lo que se escribió dentro del nombre.
+const Highlight = ({ text, query }) => {
+  const q = (query || "").toLowerCase();
+  const i = q.length >= 2 ? String(text).toLowerCase().indexOf(q) : -1;
+  if (i < 0) return text;
+  return (
+    <>
+      {text.slice(0, i)}
+      <mark className="rounded-sm bg-primary/15 px-0.5 text-foreground">
+        {text.slice(i, i + q.length)}
+      </mark>
+      {text.slice(i + q.length)}
+    </>
+  );
+};
+
 const SearchSection =
   ({
     barcode,
@@ -52,6 +71,10 @@ const SearchSection =
     onAddProduct,
   }) => {
     const showGrid = barcode === "";
+    const query = String(barcode || "").replace(/^\d+\*/, "").trim();
+    // Miniaturas sólo si algún resultado tiene foto; si ninguno, la lista va
+    // compacta y el nombre usa todo el ancho.
+    const showThumbs = searchResults.some((p) => p.image_path);
 
     return (
       <div className="flex h-full w-full min-w-0 flex-1 flex-col">
@@ -124,145 +147,103 @@ const SearchSection =
             ) : (
               <div className="flex flex-col gap-1 p-1">
                 {showSuggestions && searchResults.length > 0 && (
-                  <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
-                    {searchResults.map((product, index) => (
-                      <HoverCard
-                        key={product.id}
-                        openDelay={350}
-                        closeDelay={120}
-                      >
-                        <HoverCardTrigger asChild>
-                          <button
-                            type="button"
-                            data-suggestion-idx={index}
-                            onClick={() => onSuggestionClick(product)}
-                            className={cn(
-                              "flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-left shadow-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                              index === selectedSuggestionIndex
-                                ? "border-primary/50 bg-primary/10 text-foreground ring-1 ring-inset ring-primary/40"
-                                : "border-transparent bg-card hover:bg-muted/60",
-                            )}
-                          >
-                            <span className="min-w-0 text-left">
-                              <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                                {product.name}
-                                {product.sale_unit === "weight" && (
-                                  <Badge
-                                    variant="success"
-                                    className="h-5 gap-0.5 px-1 text-[10px] font-bold"
-                                  >
-                                    <Carrot size={11} aria-hidden /> kg
-                                  </Badge>
-                                )}
-                                {isContainerUnit(product.sale_unit) && (
-                                  <Badge
-                                    className="h-5 gap-0.5 px-1 text-[10px] font-bold text-emerald-700"
-                                    variant="success"
-                                  >
-                                    {product.sale_unit === "package" ? (
-                                      <Layers size={11} aria-hidden />
-                                    ) : (
-                                      <Package size={11} aria-hidden />
-                                    )}
-                                    {unitLabels(product.sale_unit).badge}
-                                  </Badge>
-                                )}
-                              </span>
-                              <span className="block text-[0.7rem] text-muted-foreground">
-                                {product.brand}
-                              </span>
-                            </span>
-                            <span className="shrink-0 text-right">
-                              {(() => {
-                                const promo = promoInfo(product, 1);
-                                const finalPrice = promo.unit;
-                                const hasPromo = promo.applied || product.discount_percent > 0;
-                                return (
-                                  <>
-                                    {hasPromo && (
-                                      <span className="block text-[0.7rem] line-through text-muted-foreground">
-                                        {fmtMoney(product.price)}
-                                      </span>
-                                    )}
-                                    <span className="block text-[0.9rem] font-bold text-foreground tabular-nums">
-                                      {fmtMoney(finalPrice)}
-                                    </span>
-                                    {product.discount_percent > 0 && !promo.applied && (
-                                      <span className="block text-[0.65rem] font-semibold text-destructive">
-                                        -{product.discount_percent}%
-                                      </span>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </span>
-                          </button>
-                        </HoverCardTrigger>
-                        <HoverCardContent
-                          sideOffset={6}
-                          align="start"
-                          className="w-80 overflow-hidden p-0"
+                  <div className="animate-in fade-in slide-in-from-bottom-1 space-y-0.5 duration-200">
+                    {searchResults.map((product, index) => {
+                      const selected = index === selectedSuggestionIndex;
+                      const promo = promoInfo(product, 1);
+                      const hasPromo = promo.applied || product.discount_percent > 0;
+                      const unit =
+                        product.sale_unit === "weight"
+                          ? "kg"
+                          : isContainerUnit(product.sale_unit)
+                            ? capitalize(unitLabels(product.sale_unit).badge)
+                            : null;
+                      const stock = Number(product.stock) || 0;
+                      return (
+                        <button
+                          key={product.id}
+                          type="button"
+                          data-suggestion-idx={index}
+                          onClick={() => onSuggestionClick(product)}
+                          className={cn(
+                            "relative flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            selected
+                              ? "bg-primary/10 shadow-xs ring-1 ring-inset ring-primary/35"
+                              : "hover:bg-muted/60",
+                          )}
                         >
-                          <div className="flex flex-col">
-                            <div className="flex h-28 w-full items-center justify-center overflow-hidden bg-gradient-to-b from-muted to-muted/40">
-                              {product.image_path ? (
-                                <img
-                                  src={product.image_path}
-                                  alt={product.name}
-                                  className="h-full w-full object-cover"
+                          {/* Barra de la fila elegida con el teclado. */}
+                          {selected && (
+                            <span className="absolute inset-y-1.5 left-0 w-1 rounded-full bg-primary" aria-hidden />
+                          )}
+                          {showThumbs &&
+                            (product.image_path ? (
+                              <img
+                                src={product.image_path}
+                                alt=""
+                                className="size-10 shrink-0 rounded-lg border border-border/60 bg-muted object-cover"
+                              />
+                            ) : (
+                              <InitialsAvatar id={product.id} name={product.name} className="size-10 rounded-lg" />
+                            ))}
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className={cn(
+                                "block truncate text-sm font-semibold",
+                                selected ? "text-primary" : "text-foreground",
+                              )}
+                            >
+                              <Highlight text={product.name} query={query} />
+                            </span>
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              {product.brand && <span className="truncate">{product.brand}</span>}
+                              {product.brand && <span aria-hidden>·</span>}
+                              <span
+                                className={cn(
+                                  "inline-flex shrink-0 items-center gap-1",
+                                  stock > 0 ? "text-muted-foreground" : "font-medium text-destructive dark:text-red-400",
+                                )}
+                              >
+                                <span
+                                  className={cn("size-1.5 rounded-full", stock > 0 ? "bg-success" : "bg-destructive")}
+                                  aria-hidden
                                 />
-                              ) : (
-                                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-lg font-bold text-primary">
-                                  {product.name.charAt(0).toUpperCase()}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex flex-col gap-1 p-3">
-                              <span className="line-clamp-2 text-sm font-semibold leading-tight text-foreground">
-                                {product.name}
+                                {stock > 0
+                                  ? `${product.sale_unit === "weight" ? Number(stock.toFixed(2)) : stock} disp.`
+                                  : "Sin stock"}
                               </span>
-                              {product.brand && (
-                                <span className="text-[0.7rem] font-medium text-muted-foreground">
-                                  {product.brand}
-                                </span>
+                              {unit && (
+                                <Badge variant="soft-primary" className="shrink-0 px-1.5 py-0">
+                                  {unit}
+                                </Badge>
                               )}
-                              <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
-                                <span className="rounded-md bg-muted px-2 py-0.5 text-[0.95rem] font-bold tabular-nums text-foreground">
-                                  {(() => {
-                                    const promo = promoInfo(product, 1);
-                                    const finalPrice = promo.unit;
-                                    const hasPromo = promo.applied || product.discount_percent > 0;
-                                    return (
-                                      <>
-                                        {hasPromo && (
-                                          <span className="line-through text-muted-foreground mr-1">
-                                            {fmtMoney(product.price)}
-                                          </span>
-                                        )}
-                                        {fmtMoney(finalPrice)}
-                                      </>
-                                    );
-                                  })()}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-right">
+                            <span
+                              className={cn(
+                                "block text-lg font-bold leading-tight tabular-nums",
+                                selected ? "text-primary" : "text-foreground",
+                              )}
+                            >
+                              {fmtMoney(promo.unit)}
+                            </span>
+                            {hasPromo && (
+                              <span className="flex items-center justify-end gap-1 text-[11px]">
+                                <span className="text-muted-foreground line-through tabular-nums">
+                                  {fmtMoney(product.price)}
                                 </span>
-                                <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                                  <span
-                                    className={cn(
-                                      "h-2 w-2 rounded-full",
-                                      product.stock > 0
-                                        ? "bg-emerald-500"
-                                        : "bg-red-500",
-                                    )}
-                                  />
-                                  {product.stock > 0
-                                    ? `${product.stock} disponibles`
-                                    : "Sin stock"}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </HoverCardContent>
-                      </HoverCard>
-                    ))}
+                                {product.discount_percent > 0 && !promo.applied && (
+                                  <span className="font-semibold text-destructive dark:text-red-400">
+                                    -{product.discount_percent}%
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 
