@@ -163,25 +163,17 @@ const cashRegisterRow = (db, id) =>
   // declara aquí sus statements.
   // Alertas inteligentes (product_lots, insights.payload) ya está en HEAD.
   // Fiado (customer_credit_movements y columnas de crédito) ya está en HEAD.
-  // Promociones avanzadas: tablas `group_promos`, `bundles` y `bundle_items`
-  // (con su índice) replicadas, así que cada una gana sus 3 triggers de
-  // change_log y su `_touch`; `product_prices` gana `unit` y los triggers de
-  // `settings` se reescriben porque la clave `promos_advanced` se comparte
-  // (SQLite reescribe esos CREATE: alta y baja).
-  const DDL_AGREGADO = [
-    /^CREATE TABLE product_prices\b[\s\S]*\bunit\b/,
-    /^CREATE TABLE (group_promos|bundles|bundle_items)\b/,
-    /^CREATE INDEX idx_bundle_items_bundle\b/,
-    /^CREATE TRIGGER trg_change_log_(group_promos|bundles|bundle_items)_(insert|update|delete|touch)\b/,
-    /^CREATE TRIGGER trg_change_log_settings_(insert|update|delete)\b[\s\S]*'promos_advanced'/,
-  ];
-  // Cuántos statements produce cada patrón (los de arriba agrupan varios).
-  const DDL_AGREGADO_TOTAL = 1 + 3 + 1 + 12 + 3;
-  const DDL_BORRADO = [
-    /^CREATE TABLE product_prices\b/,
-    /^CREATE TRIGGER trg_change_log_settings_(insert|update|delete)\b/,
-  ];
-  const DDL_BORRADO_TOTAL = 1 + 3;
+  // Promociones avanzadas (group_promos, bundles, bundle_items,
+  // product_prices.unit y `promos_advanced` en los triggers de settings) ya
+  // está en HEAD. Sin delta pendiente: 0 altas / 0 bajas.
+  //
+  // Una entrega que toque el esquema declara aquí sus statements: un patrón
+  // por grupo y, en *_TOTAL, cuántos statements suma (un patrón puede cubrir
+  // varios, p. ej. los 3 triggers de una tabla).
+  const DDL_AGREGADO = [];
+  const DDL_AGREGADO_TOTAL = 0;
+  const DDL_BORRADO = [];
+  const DDL_BORRADO_TOTAL = 0;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
