@@ -1930,7 +1930,6 @@ if (e.key === "Tab" && !isEditable) {
               <button
                 type="button"
                 onClick={() => handlePayClick("credit")}
-                title="Fiado"
                 className={cn(
                   "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                   paymentMethod === "credit"

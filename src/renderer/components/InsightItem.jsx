@@ -2,10 +2,12 @@ import React, { useState } from "react";
 import {
   CalendarClock,
   Check,
+  ChevronRight,
   PackageMinus,
   Percent,
   ShoppingBasket,
   Snail,
+  Tag,
   TrendingUp,
   X,
 } from "lucide-react";
@@ -13,16 +15,21 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Hint } from "./ui/hint";
 import { useToast } from "./ToastProvider";
 
-// Un aviso de la bandeja "Avisos del negocio". Según `type` muestra sus
-// acciones (ver src/main/smart-alerts.js):
+// Un aviso de la bandeja "Avisos del negocio" (fila dentro de una lista con
+// divisores). Según `type` muestra sus acciones (ver src/main/smart-alerts.js):
 //   expiry     → Reducir (merma) · Rebajar · Ya no hay
-//   slow_stock → Rebajar por producto
-//   reorder    → sólo recomendación (Entendido)
+//   slow_stock → por producto: Rebajar / Promoción (abre el producto en
+//                Inventario, en esa sección)
+//   reorder    → sólo recomendación
 //   otros      → "Ver detalle" navega a su ruta (pulso semanal)
 
 const DISCOUNTS = [10, 20, 30, 50];
+
+// Avisos que piden hacer algo; el resto son sugerencias.
+export const ACTIONABLE_TYPES = ["expiry", "slow_stock"];
 
 const META = {
   expiry: { icon: CalendarClock, cls: "bg-warning/15 text-amber-600 dark:text-warning" },
@@ -37,6 +44,19 @@ const parsePayload = (raw) => {
   } catch {
     return {};
   }
+};
+
+// "hace 5 min", "hace 2 h", "ayer", "hace 3 d" desde un DATETIME UTC de SQLite.
+const timeAgo = (sqlDate) => {
+  if (!sqlDate) return "";
+  const ms = Date.now() - new Date(`${String(sqlDate).replace(" ", "T")}Z`).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "ahora";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "ayer" : `hace ${d} d`;
 };
 
 // Fila de porcentajes para "Rebajar".
@@ -56,7 +76,7 @@ const DiscountPicker = ({ onPick, busy }) => (
   </div>
 );
 
-const InsightItem = ({ insight, isAdmin, cashierId, onResolved, onNavigate }) => {
+const InsightItem = ({ insight, isAdmin, cashierId, onResolved, onNavigate, onOpenProduct }) => {
   const notify = useToast();
   const payload = parsePayload(insight.payload);
   const meta = META[insight.type] || META.weekly_pulse;
@@ -94,66 +114,75 @@ const InsightItem = ({ insight, isAdmin, cashierId, onResolved, onNavigate }) =>
       insight.type === "expiry" ? " hasta su caducidad" : ""
     }.`;
 
-  const adminOnly = !isAdmin ? "Solo el propietario" : undefined;
+  const ownerOnly = isAdmin ? null : "Solo el propietario";
 
   return (
-    <li className="rounded-lg border border-border bg-card p-3 text-left">
-      <div className="flex items-start gap-2.5">
-        <span className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg", meta.cls)}>
+    <li className="group px-4 py-3 text-left transition-colors hover:bg-muted/40">
+      <div className="flex items-start gap-3">
+        <span className={cn("mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg", meta.cls)}>
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-snug text-foreground">{insight.title}</p>
-          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{insight.body}</p>
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="truncate text-sm font-semibold text-foreground">{insight.title}</p>
+            <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+              {timeAgo(insight.created_at)}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">{insight.body}</p>
         </div>
-        <button
-          type="button"
-          aria-label="Descartar aviso"
-          title="Descartar"
-          disabled={busy}
-          onClick={() => act({ action: "dismiss" })}
-          className="-mr-1 -mt-1 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
+        <Hint label="Descartar">
+          <button
+            type="button"
+            aria-label="Descartar aviso"
+            disabled={busy}
+            onClick={() => act({ action: "dismiss" })}
+            className="-mr-1.5 -mt-0.5 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <X className="size-3.5" />
+          </button>
+        </Hint>
       </div>
 
       {/* ─── Caducidad ─── */}
       {insight.type === "expiry" && (
-        <div className="mt-2.5 space-y-2 pl-9">
+        <div className="mt-2.5 space-y-2 pl-11">
           <div className="flex flex-wrap gap-1.5">
-            <Button
-              size="sm"
-              variant={panel === "reduce" ? "default" : "outline"}
-              className="h-7 gap-1 px-2.5"
-              disabled={busy || !isAdmin}
-              title={adminOnly || "Sacar del inventario como merma"}
-              onClick={() => setPanel(panel === "reduce" ? null : "reduce")}
-            >
-              <PackageMinus /> Reducir
-            </Button>
-            <Button
-              size="sm"
-              variant={panel === "discount" ? "default" : "outline"}
-              className="h-7 gap-1 px-2.5"
-              disabled={busy || !isAdmin}
-              title={adminOnly || "Poner en rebaja hasta su caducidad"}
-              onClick={() => setPanel(panel === "discount" ? null : "discount")}
-            >
-              <Percent /> Rebajar
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 gap-1 px-2.5 text-muted-foreground"
-              disabled={busy}
-              title="Ese lote ya se vendió o ya no está"
-              onClick={() =>
-                act({ action: "cleared" }, { success: () => "Listo, ya no se avisará de ese lote." })
-              }
-            >
-              <Check /> Ya no hay
-            </Button>
+            <Hint label={ownerOnly || "Sacar del inventario como merma"}>
+              <Button
+                size="sm"
+                variant={panel === "reduce" ? "default" : "outline"}
+                className="h-7 gap-1 px-2.5"
+                disabled={busy || !isAdmin}
+                onClick={() => setPanel(panel === "reduce" ? null : "reduce")}
+              >
+                <PackageMinus /> Reducir
+              </Button>
+            </Hint>
+            <Hint label={ownerOnly || "Poner en rebaja hasta su caducidad"}>
+              <Button
+                size="sm"
+                variant={panel === "discount" ? "default" : "outline"}
+                className="h-7 gap-1 px-2.5"
+                disabled={busy || !isAdmin}
+                onClick={() => setPanel(panel === "discount" ? null : "discount")}
+              >
+                <Percent /> Rebajar
+              </Button>
+            </Hint>
+            <Hint label="Ese lote ya se vendió o ya no está">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1 px-2.5 text-muted-foreground"
+                disabled={busy}
+                onClick={() =>
+                  act({ action: "cleared" }, { success: () => "Listo, ya no se avisará de ese lote." })
+                }
+              >
+                <Check /> Ya no hay
+              </Button>
+            </Hint>
           </div>
 
           {panel === "reduce" && (
@@ -196,60 +225,60 @@ const InsightItem = ({ insight, isAdmin, cashierId, onResolved, onNavigate }) =>
         </div>
       )}
 
-      {/* ─── Stock sin movimiento ─── */}
+      {/* ─── Stock sin movimiento: atajos al producto ─── */}
       {insight.type === "slow_stock" && (
-        <ul className="mt-2.5 space-y-1.5 pl-9">
-          {(payload.items || []).map((item) => {
-            const key = `discount:${item.productId}`;
-            return (
-              <li key={item.productId} className="text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-foreground">
-                    {item.name}{" "}
-                    <span className="text-muted-foreground tabular-nums">· {item.stockLabel}</span>
-                  </span>
-                  <button
-                    type="button"
-                    disabled={busy || !isAdmin}
-                    title={adminOnly || "Poner en rebaja"}
-                    onClick={() => setPanel(panel === key ? null : key)}
-                    className="shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Rebajar
-                  </button>
+        <div className="mt-2.5 pl-11">
+          <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border bg-muted/20">
+            {(payload.items || []).map((item) => (
+              <li key={item.productId} className="flex items-center gap-2 px-2.5 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium text-foreground">{item.name}</p>
+                  <p className="text-[11px] text-muted-foreground tabular-nums">
+                    {item.stockLabel}
+                    {item.value > 0 && ` · $${item.value.toLocaleString("es-MX")} detenidos`}
+                  </p>
                 </div>
-                {panel === key && (
-                  <div className="mt-1">
-                    <DiscountPicker
-                      busy={busy}
-                      onPick={(pct) =>
-                        act(
-                          { action: "discount", productId: item.productId, percent: pct },
-                          { resolves: false, success: discountMsg },
-                        )
-                      }
-                    />
-                  </div>
-                )}
+                <Hint label="Poner un descuento al producto">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0 gap-1 px-2 text-xs [&_svg]:size-3.5"
+                    onClick={() => onOpenProduct(item.productId, "discount")}
+                  >
+                    <Percent /> Rebajar
+                  </Button>
+                </Hint>
+                <Hint label="Crear una promoción por cantidad (2×1, mayoreo…)">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0 gap-1 px-2 text-xs [&_svg]:size-3.5"
+                    onClick={() => onOpenProduct(item.productId, "promo")}
+                  >
+                    <Tag /> Promoción
+                  </Button>
+                </Hint>
               </li>
-            );
-          })}
+            ))}
+          </ul>
           {payload.more > 0 && (
-            <li className="text-xs text-muted-foreground">y {payload.more} más</li>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              y {payload.more} {payload.more === 1 ? "producto más" : "productos más"}
+            </p>
           )}
-        </ul>
+        </div>
       )}
 
       {/* ─── Pedido sugerido (sólo recomendación) ─── */}
       {insight.type === "reorder" && (
-        <ul className="mt-2.5 space-y-1 pl-9">
+        <ul className="mt-2 space-y-1 pl-11">
           {(payload.items || []).map((item) => (
             <li key={item.productId} className="flex items-baseline justify-between gap-2 text-xs">
               <span className="min-w-0 truncate text-foreground">
                 {item.name}
                 <span className="text-muted-foreground">
                   {" "}
-                  · {item.daysLeft <= 0 ? "ya casi no hay" : `te alcanza ~${item.daysLeft} d`}
+                  · {item.daysLeft <= 0 ? "ya casi no hay" : `~${item.daysLeft} d`}
                 </span>
               </span>
               <span className="shrink-0 font-semibold text-foreground tabular-nums">
@@ -267,10 +296,10 @@ const InsightItem = ({ insight, isAdmin, cashierId, onResolved, onNavigate }) =>
       {!["expiry", "slow_stock", "reorder"].includes(insight.type) && (
         <button
           type="button"
-          className="mt-1.5 cursor-pointer pl-9 text-xs font-medium text-primary hover:underline"
+          className="mt-1.5 inline-flex cursor-pointer items-center gap-0.5 pl-11 text-xs font-semibold text-primary hover:underline"
           onClick={() => onNavigate(insight)}
         >
-          Ver detalle →
+          Ver detalle <ChevronRight className="size-3.5" />
         </button>
       )}
     </li>

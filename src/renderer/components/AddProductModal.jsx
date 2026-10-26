@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, Controller, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -523,6 +523,9 @@ const AddProductModal = ({
   editProduct = null,
   initialBarcode = "",
   catalogProduct = null,
+  // "discount" | "promo": abre "Descuento / Promoción" encendido y desplazado
+  // a esa columna (desde el aviso de stock sin movimiento).
+  focusSection = null,
 }) => {
   const isCatalogMode = !!catalogProduct && !editProduct;
   const { cashier } = useCashier() || {};
@@ -533,6 +536,9 @@ const AddProductModal = ({
   const [barcodeStatus, setBarcodeStatus] = useState({ type: null, name: "" });
   const [priceTiers, setPriceTiers] = useState([]);
   const [promoOpen, setPromoOpen] = useState(false);
+  const discountColRef = useRef(null);
+  const promoColRef = useRef(null);
+  const [focusFlash, setFocusFlash] = useState(null);
   const [promoMode, setPromoMode] = useState("percent"); // "percent" | "fixed"
 
   const addPriceTier = () =>
@@ -582,6 +588,27 @@ const AddProductModal = ({
   const wSaleUnit = watch("sale_unit") || "piece";
   const wHasDiscount = watch("has_discount");
   const wAllowManual = watch("allow_manual_discount");
+  // Enfoque desde un aviso: enciende la sección, la despliega, la trae a la
+  // vista y resalta la columna un momento. No guarda nada por sí solo.
+  useEffect(() => {
+    if (!open || !focusSection || !editProduct) return undefined;
+    const t1 = setTimeout(() => {
+      setValue("has_discount", true);
+      setPromoOpen(true);
+    }, 150);
+    const t2 = setTimeout(() => {
+      const el = (focusSection === "promo" ? promoColRef : discountColRef).current;
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setFocusFlash(focusSection);
+    }, 350);
+    const t3 = setTimeout(() => setFocusFlash(null), 2600);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [open, focusSection, editProduct, setValue]);
+
   const wPromoFixed = watch("promo_fixed_price");
   const [wPrice, wCostPrice, wBoxPrice, wPackPrice, wDiscount, wPacksPerBox, wPackQty, wBoxQty] =
     useWatch({
@@ -1715,7 +1742,10 @@ const AddProductModal = ({
                 {wHasDiscount && promoOpen && (
                   <div className="border-t border-border p-4">
                     <div className="grid gap-4 lg:grid-cols-2">
-                      <div className={`space-y-3 rounded-lg border border-border p-3 ${autoBlocked ? "opacity-60" : ""}`}>
+                      <div
+                        ref={discountColRef}
+                        className={`space-y-3 rounded-lg border p-3 transition-shadow duration-500 ${autoBlocked ? "opacity-60" : ""} ${focusFlash === "discount" ? "border-primary ring-2 ring-primary/30" : "border-border"}`}
+                      >
                         <div className="flex items-center gap-2">
                           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
                             <Percent className="h-3.5 w-3.5" />
@@ -1809,7 +1839,10 @@ const AddProductModal = ({
                       </div>
 
                       <STooltipProvider delayDuration={200}>
-                      <div className={`space-y-3 rounded-lg border border-border p-3 ${tiersBlocked ? "opacity-60" : ""}`}>
+                      <div
+                        ref={promoColRef}
+                        className={`space-y-3 rounded-lg border p-3 transition-shadow duration-500 ${tiersBlocked ? "opacity-60" : ""} ${focusFlash === "promo" ? "border-primary ring-2 ring-primary/30" : "border-border"}`}
+                      >
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex items-center gap-2">
                             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/10 text-blue-600">

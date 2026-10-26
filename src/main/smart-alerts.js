@@ -175,6 +175,7 @@ const generateSlowStock = (db, today) => {
         productId: r.id,
         name: r.name,
         stockLabel: fmtQty(r.stock, r.sale_unit),
+        value: Math.round(r.value || 0),
       })),
       more: Math.max(rows.length - SLOW_MAX_ITEMS, 0),
     },

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search,
   Download,
@@ -96,6 +97,7 @@ import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { getStockStatus } from "./ui/stock-status";
 import { StatCard } from "./ui/stat-card";
 import { Calendar } from "./ui/calendar";
+import { Hint } from "./ui/hint";
 import { useFeatures } from "../lib/useFeatures";
 import { promoInfo } from "../utils/cartMath";
 
@@ -683,7 +685,7 @@ const InventoryStatsCards = React.memo(function InventoryStatsCards({
         label="Total productos"
         value={stats.totalCount}
         onClick={() => onStockFilter("")}
-        title="Ver todos los productos"
+        hint="Ver todos los productos"
       />
       <StatCard
         prominent
@@ -694,7 +696,7 @@ const InventoryStatsCards = React.memo(function InventoryStatsCards({
         value={stats.lowStockCount}
         onClick={() => toggle("low")}
         active={stockFilter === "low"}
-        title={stockFilter === "low" ? "Quitar filtro" : "Ver productos con stock bajo"}
+        hint={stockFilter === "low" ? "Quitar filtro" : "Ver productos con stock bajo"}
       />
       <StatCard
         prominent
@@ -705,7 +707,7 @@ const InventoryStatsCards = React.memo(function InventoryStatsCards({
         value={stats.discountedCount}
         onClick={() => toggle("discounted")}
         active={stockFilter === "discounted"}
-        title={stockFilter === "discounted" ? "Quitar filtro" : "Ver productos en rebaja"}
+        hint={stockFilter === "discounted" ? "Quitar filtro" : "Ver productos en rebaja"}
       />
     </div>
   );
@@ -744,6 +746,11 @@ const Inventory = () => {
   const [addingStock, setAddingStock] = useState(false);
   const [removingStock, setRemovingStock] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  // Sección a enfocar al abrir la edición ("discount" | "promo"), p. ej.
+  // desde el aviso de stock sin movimiento.
+  const [editFocus, setEditFocus] = useState(null);
+  const location = useLocation();
+  const navigate = useNavigate();
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [stockQuantity, setStockQuantity] = useState("");
   const [stockQtyError, setStockQtyError] = useState("");
@@ -994,9 +1001,33 @@ const Inventory = () => {
     setViewDetailsOpen(true);
   }, []);
   const handleEditProduct = useCallback((product) => {
+    setEditFocus(null);
     setSelectedProduct(product);
     setEditModalOpen(true);
   }, []);
+
+  // Llegada desde un aviso: navigate("/inventory", { state: { editProductId,
+  // focus } }) abre ese producto en edición. El state se limpia para que
+  // volver atrás no lo reabra.
+  useEffect(() => {
+    const id = location.state?.editProductId;
+    if (!id) return;
+    const focus = location.state?.focus || null;
+    navigate(location.pathname, { replace: true, state: null });
+    window.api
+      .invoke("get-products", { product_id: id, page: 0, rowsPerPage: 1 })
+      .then((res) => {
+        const product = res?.products?.[0];
+        if (!product) {
+          notify("Ese producto ya no existe o está inactivo.", "error");
+          return;
+        }
+        setSelectedProduct(product);
+        setEditFocus(focus);
+        setEditModalOpen(true);
+      })
+      .catch(() => {});
+  }, [location.state, location.pathname, navigate, notify]);
   const handleDeleteProduct = useCallback((product) => {
     setSelectedProduct(product);
     setDeleteConfirmOpen(true);
@@ -1335,15 +1366,16 @@ const Inventory = () => {
             <span className="tabular-nums opacity-80">
               · {total} {total === 1 ? "producto" : "productos"}
             </span>
+            <Hint label="Quitar filtro">
             <button
               type="button"
               onClick={() => handleStockFilter("")}
               aria-label="Quitar filtro"
-              title="Quitar filtro"
               className="ml-0.5 inline-flex size-6 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X className="size-3.5" />
             </button>
+            </Hint>
           </span>
         </div>
       )}
@@ -1477,9 +1509,11 @@ const Inventory = () => {
         onClose={() => {
           setEditModalOpen(false);
           setSelectedProduct(null);
+          setEditFocus(null);
         }}
         onProductAdded={handleProductAdded}
         editProduct={selectedProduct}
+        focusSection={editFocus}
       />
 
 
@@ -2144,15 +2178,16 @@ const Inventory = () => {
                         </PopoverContent>
                       </Popover>
                       {stockExpiry && (
+                        <Hint label="Quitar fecha">
                         <button
                           type="button"
                           aria-label="Quitar fecha de caducidad"
-                          title="Quitar fecha"
                           onClick={() => setStockExpiry("")}
                           className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           <X className="size-4" />
                         </button>
+                        </Hint>
                       )}
                     </div>
                   </div>

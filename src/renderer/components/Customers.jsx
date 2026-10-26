@@ -59,6 +59,7 @@ import {
 import { Skeleton } from "./ui/skeleton";
 import { Switch } from "./ui/switch";
 import { StatCard } from "./ui/stat-card";
+import { Hint } from "./ui/hint";
 import CustomerCreditSheet, { debtAge } from "./CustomerCreditSheet";
 import { useCashier } from "../contexts/CashierContext";
 import { useFeatures } from "../lib/useFeatures";
@@ -575,7 +576,7 @@ const Customers = () => {
           label="Clientes"
           value={customers.length}
           onClick={() => setOnlyDebt(false)}
-          title="Ver todos los clientes"
+          hint="Ver todos los clientes"
         />
         <StatCard
           prominent
@@ -591,7 +592,7 @@ const Customers = () => {
           }
           onClick={() => setOnlyDebt((v) => !v)}
           active={onlyDebt}
-          title={onlyDebt ? "Quitar filtro" : "Ver solo clientes con adeudo"}
+          hint={onlyDebt ? "Quitar filtro" : "Ver solo clientes con adeudo"}
         />
       </div>
       )}
@@ -721,11 +722,11 @@ const Customers = () => {
                   {creditOn && (
                   <TableCell className="px-4 py-3">
                     {balanceOf(c) > 0 ? (
+                      <Hint label="Ver estado de cuenta">
                       <button
                         type="button"
                         onClick={() => setAccountCustomer(c)}
                         className="cursor-pointer text-left"
-                        title="Ver estado de cuenta"
                       >
                         <span className="block text-sm font-semibold tabular-nums text-destructive dark:text-red-400">
                           {fmtMoney(balanceOf(c))}
@@ -734,6 +735,7 @@ const Customers = () => {
                           {debtAge(credit.byCustomer[c.id]?.oldestDebtAt)}
                         </span>
                       </button>
+                      </Hint>
                     ) : c.credit_enabled ? (
                       <span className="text-xs text-success">Al corriente</span>
                     ) : (

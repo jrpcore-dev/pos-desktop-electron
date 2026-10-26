@@ -3,6 +3,7 @@ import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Skeleton } from "./skeleton";
+import { Hint } from "./hint";
 
 /* ────────────────────────────────────────────────────────────
    StatCard: tarjeta de métrica.
@@ -84,6 +85,8 @@ const StatCard = React.forwardRef(
       loading = false,
       onClick,
       active = false,
+      // Texto del tooltip (p. ej. qué hace la tarjeta al pulsarla).
+      hint,
       ...props
     },
     ref
@@ -93,7 +96,7 @@ const StatCard = React.forwardRef(
     // Con onClick la tarjeta es un botón (filtro); `active` marca el filtro
     // aplicado y se anuncia con aria-pressed.
     const Comp = onClick ? "button" : "div";
-    return (
+    const card = (
       <Comp
         ref={ref}
         {...(onClick
@@ -162,7 +165,6 @@ const StatCard = React.forwardRef(
                   : lg ? "text-3xl" : "text-xl",
                 hero ? "text-primary-foreground" : "text-foreground"
               )}
-              title={typeof value === "string" ? value : undefined}
             >
               {value}
             </p>
@@ -185,6 +187,7 @@ const StatCard = React.forwardRef(
         )}
       </Comp>
     );
+    return hint ? <Hint label={hint}>{card}</Hint> : card;
   }
 );
 StatCard.displayName = "StatCard";

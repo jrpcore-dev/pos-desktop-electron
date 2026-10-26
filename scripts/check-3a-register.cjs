@@ -170,12 +170,12 @@ const cashRegisterRow = (db, id) =>
   // Una entrega que toque el esquema declara aquí sus statements: un patrón
   // por grupo y, en *_TOTAL, cuántos statements suma (un patrón puede cubrir
   // varios, p. ej. los 3 triggers de una tabla).
-  // Funciones de la tienda: las claves feature_* entran a los triggers de
-  // settings (se reescriben los 3: insert/update/delete).
-  const DDL_AGREGADO = [/^CREATE TRIGGER trg_change_log_settings_\w+[\s\S]*\bfeature_expiry\b/];
-  const DDL_AGREGADO_TOTAL = 3;
-  const DDL_BORRADO = [/^CREATE TRIGGER trg_change_log_settings_\w+/];
-  const DDL_BORRADO_TOTAL = 3;
+  // Funciones de la tienda (claves feature_* en los triggers de settings) ya
+  // está en HEAD. Sin delta pendiente: 0 altas / 0 bajas.
+  const DDL_AGREGADO = [];
+  const DDL_AGREGADO_TOTAL = 0;
+  const DDL_BORRADO = [];
+  const DDL_BORRADO_TOTAL = 0;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);

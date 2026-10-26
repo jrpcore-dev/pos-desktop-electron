@@ -13,6 +13,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Skeleton } from "./ui/skeleton";
+import { Hint } from "./ui/hint";
 import { fmtMoney } from "../utils/format";
 import { PAY_METHODS } from "./CustomerCreditSheet";
 
@@ -144,10 +145,9 @@ const CreditSaleDialog = ({ open, onClose, customer, total, onConfirm, busy }) =
                   className="h-11 flex-1 text-base tabular-nums"
                 />
                 {PAY_METHODS.map(({ key, label, icon: Icon }) => (
+                  <Hint key={key} label={label}>
                   <button
-                    key={key}
                     type="button"
-                    title={label}
                     disabled={!(paidNum > 0)}
                     onClick={() => setMethod(key)}
                     className={cn(
@@ -159,6 +159,7 @@ const CreditSaleDialog = ({ open, onClose, customer, total, onConfirm, busy }) =
                   >
                     <Icon size={17} />
                   </button>
+                  </Hint>
                 ))}
               </div>
               {paidCoversAll && (

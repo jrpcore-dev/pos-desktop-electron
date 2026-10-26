@@ -910,6 +910,7 @@ ipcMain.handle("get-products", async (event, params) => {
     category_id,
     supplier_id,
     stock_filter,
+    product_id,
     sortField,
     sortDir,
     page,
@@ -932,6 +933,11 @@ ipcMain.handle("get-products", async (event, params) => {
   if (supplier_id) {
     conditions.push("p.supplier_id = ?");
     queryParams.push(parseInt(supplier_id));
+  }
+  // Un producto concreto (abrirlo en edición desde un aviso).
+  if (product_id) {
+    conditions.push("p.id = ?");
+    queryParams.push(parseInt(product_id));
   }
   // Filtro rápido de las tarjetas de Inventario. Sólo afecta la lista: los
   // contadores (stats) siguen calculándose sobre los demás filtros. Mismas

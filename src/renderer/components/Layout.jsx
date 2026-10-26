@@ -26,6 +26,8 @@ import {
   Truck,
   Users,
   Zap,
+  CheckCheck,
+  ListChecks,
 } from "lucide-react";
 import React, {
   Suspense,
@@ -41,7 +43,8 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { useCashier } from "../contexts/CashierContext";
-import InsightItem from "./InsightItem";
+import InsightItem, { ACTIONABLE_TYPES } from "./InsightItem";
+import { Hint } from "./ui/hint";
 import { useFeatures } from "../lib/useFeatures";
 import { useDbChanges } from "../lib/useDbChanges";
 import { useThemeMode } from "../contexts/ThemeContext";
@@ -934,7 +937,21 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     setInsightsUnread((n) => Math.max(0, n - 1));
   }, []);
 
+  const [insightsRefreshing, setInsightsRefreshing] = useState(false);
+  // Descarta todos los avisos visibles (no aplica acciones).
+  const dismissAllInsights = useCallback(async () => {
+    const ids = insights.map((i) => i.id);
+    for (const id of ids) {
+      try {
+        await window.api.invoke("insight-action", { insightId: id, action: "dismiss" });
+      } catch {}
+    }
+    setInsights([]);
+    setInsightsUnread(0);
+  }, [insights]);
+
   const handleRefreshPulse = useCallback(async () => {
+    setInsightsRefreshing(true);
     try {
       const r = await window.api.invoke("run-weekly-pulse");
       if (r?.success) {
@@ -946,6 +963,8 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       }
     } catch {
       /* noop */
+    } finally {
+      setInsightsRefreshing(false);
     }
   }, []);
 
@@ -1288,6 +1307,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
             {/* ─── Notificaciones y tareas (solo si hay algo sin leer) ─── */}
             {(insightsUnread > 0 || todayTasksCount > 0) && (
               <Popover open={insightsOpen} onOpenChange={setInsightsOpen}>
+                <Hint label="Avisos y tareas" side="bottom">
                 <PopoverTrigger asChild>
                   <button
                     type="button"
@@ -1298,7 +1318,6 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                           ? `${todayTasksCount} tarea(s) pendiente(s)`
                           : "Avisos del negocio"
                     }
-                    title="Avisos del negocio y tareas"
                     className="relative flex w-10 shrink-0 cursor-pointer items-center justify-center rounded-l-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   >
                     <Bell size={16} />
@@ -1314,73 +1333,121 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                     )}
                   </button>
                 </PopoverTrigger>
-                <PopoverContent align="end" sideOffset={8} className="w-[380px] p-0">
-                  {insightsUnread > 0 && (
-                    <>
-                      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-                        <span className="text-sm font-semibold text-foreground">
-                          Avisos del negocio
-                        </span>
-                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary tabular-nums">
-                          {insightsUnread} sin leer
-                        </span>
-                      </div>
-                      <div className="p-3">
-                        <ul className="flex max-h-[420px] flex-col gap-2 overflow-y-auto">
-                          {insights.map((ins) => (
-                            <InsightItem
-                              key={ins.id}
-                              insight={ins}
-                              isAdmin={cashier?.role === "admin"}
-                              cashierId={cashier?.id}
-                              onResolved={removeInsight}
-                              onNavigate={async (item) => {
-                                await window.api.invoke("mark-insight", {
-                                  id: item.id,
-                                  status: "actioned",
-                                });
-                                removeInsight(item.id);
-                                setInsightsOpen(false);
-                                navigate(item.route || "/reports");
-                              }}
-                            />
-                          ))}
-                        </ul>
+                </Hint>
+                <PopoverContent align="end" sideOffset={8} className="w-[400px] overflow-hidden p-0">
+                  {/* Encabezado: título, contador y acciones rápidas */}
+                  <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                    <Bell className="size-4 text-muted-foreground" />
+                    <span className="text-sm font-semibold text-foreground">
+                      Avisos del negocio
+                    </span>
+                    {insightsUnread > 0 && (
+                      <span className="rounded-full bg-primary px-1.5 py-px text-[11px] font-bold text-primary-foreground tabular-nums">
+                        {insightsUnread}
+                      </span>
+                    )}
+                    <div className="ml-auto flex items-center gap-0.5">
+                      <Hint label="Actualizar avisos">
                         <button
-                          className="mt-2 w-full cursor-pointer border-t border-border pt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                          type="button"
+                          aria-label="Actualizar avisos"
+                          disabled={insightsRefreshing}
                           onClick={handleRefreshPulse}
+                          className="flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
-                          Actualizar avisos ahora
+                          <RefreshCw className={cn("size-4", insightsRefreshing && "animate-spin")} />
                         </button>
-                      </div>
-                    </>
-                  )}
-                  {todayTasksCount > 0 && (
-                    <>
-                      {insightsUnread > 0 && (
-                        <div className="my-3 h-px bg-border" />
+                      </Hint>
+                      {insights.length > 0 && (
+                        <Hint label="Descartar todos">
+                          <button
+                            type="button"
+                            aria-label="Descartar todos los avisos"
+                            onClick={dismissAllInsights}
+                            className="flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <CheckCheck className="size-4" />
+                          </button>
+                        </Hint>
                       )}
-                      <div className="px-3 py-2">
-                        <p className="text-sm font-semibold text-foreground mb-1">
-                          Tareas pendientes
-                        </p>
-                        <Button
-                          size="sm"
-                          className="w-full"
-                          onClick={() => {
-                            setInsightsOpen(false);
-                            setTaskDialogOpen(true);
-                          }}
-                        >
-                          Ver tareas ({todayTasksCount})
-                        </Button>
-                      </div>
-                    </>
+                    </div>
+                  </div>
+
+                  {insights.length > 0 ? (
+                    <div className="max-h-[460px] overflow-y-auto">
+                      {[
+                        {
+                          label: "Requieren acción",
+                          items: insights.filter((i) => ACTIONABLE_TYPES.includes(i.type)),
+                        },
+                        {
+                          label: "Sugerencias",
+                          items: insights.filter((i) => !ACTIONABLE_TYPES.includes(i.type)),
+                        },
+                      ]
+                        .filter((g) => g.items.length > 0)
+                        .map((g, gi) => (
+                          <section key={g.label} className={cn(gi > 0 && "border-t border-border")}>
+                            <p className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              {g.label}
+                            </p>
+                            <ul className="divide-y divide-border/60">
+                              {g.items.map((ins) => (
+                                <InsightItem
+                                  key={ins.id}
+                                  insight={ins}
+                                  isAdmin={cashier?.role === "admin"}
+                                  cashierId={cashier?.id}
+                                  onResolved={removeInsight}
+                                  onOpenProduct={(productId, focus) => {
+                                    setInsightsOpen(false);
+                                    navigate("/inventory", {
+                                      state: { editProductId: productId, focus },
+                                    });
+                                  }}
+                                  onNavigate={async (item) => {
+                                    await window.api.invoke("mark-insight", {
+                                      id: item.id,
+                                      status: "actioned",
+                                    });
+                                    removeInsight(item.id);
+                                    setInsightsOpen(false);
+                                    navigate(item.route || "/reports");
+                                  }}
+                                />
+                              ))}
+                            </ul>
+                          </section>
+                        ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-1.5 px-4 py-8 text-center">
+                      <span className="flex size-10 items-center justify-center rounded-full bg-success/12 text-success">
+                        <CheckCheck className="size-5" />
+                      </span>
+                      <p className="text-sm font-medium text-foreground">Todo en orden</p>
+                      <p className="text-xs text-muted-foreground">No hay avisos pendientes.</p>
+                    </div>
                   )}
-                  {insightsUnread === 0 && todayTasksCount === 0 && (
-                    <p className="py-4 text-center text-xs text-muted-foreground">
-                      Sin avisos por ahora.
-                    </p>
+
+                  {todayTasksCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInsightsOpen(false);
+                        setTaskDialogOpen(true);
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-3 border-t border-border bg-muted/30 px-4 py-3 text-left transition-colors hover:bg-muted/60"
+                    >
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-amber-600 dark:text-warning">
+                        <ListChecks className="size-4" />
+                      </span>
+                      <span className="flex-1 text-sm font-medium text-foreground">
+                        {todayTasksCount}{" "}
+                        {todayTasksCount === 1 ? "tarea pendiente hoy" : "tareas pendientes hoy"}
+                      </span>
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    </button>
                   )}
                 </PopoverContent>
               </Popover>
