@@ -2,6 +2,8 @@ import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import { useDbChanges } from "../lib/useDbChanges";
 import {
   Activity,
+  ArrowDownRight,
+  ArrowUpRight,
   Banknote,
   CalendarDays,
   CircleCheck,
@@ -145,16 +147,9 @@ const TurnoRow = memo(function TurnoRow({
       </TableCell>
 
       <TableCell>
-        <Badge
-          variant="outline"
-          className={cn(
-            "border leading-none",
-            isSale
-              ? "border-emerald-500/30 bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
-              : "border-red-500/30 bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-400",
-          )}
-        >
-          {isSale ? "INGRESO" : "EGRESO"}
+        <Badge variant={isSale ? "soft-success" : "soft-destructive"}>
+          {isSale ? <ArrowUpRight /> : <ArrowDownRight />}
+          {isSale ? "Ingreso" : "Egreso"}
         </Badge>
       </TableCell>
 
@@ -1683,7 +1678,7 @@ const EndOfDay = () => {
                     Movimientos del turno
 
                     <Badge
-                      variant="secondary"
+                      variant="soft-neutral"
                       className="ml-1 shrink-0 tabular-nums"
                     >
                       {filteredTurnoItems.length}
