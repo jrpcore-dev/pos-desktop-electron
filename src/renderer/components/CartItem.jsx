@@ -1,6 +1,7 @@
 import React from "react";
 
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import { cn } from "@/lib/utils";
 import { fmtMoney, fmtMoneyAbs } from "@/utils/format";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
@@ -22,21 +23,19 @@ import {
   Percent,
 } from "lucide-react";
 
-const badgeBase =
-  "inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 h-[18px] text-[0.7rem] font-bold whitespace-nowrap [contain-intrinsic-size:auto_18px]";
+// Badge compacto del carrito (misma altura en todas las filas).
+const BADGE = "h-[18px] shrink-0 px-1.5 py-0 [&_svg]:size-3";
 
+const cap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+
+// Unidad de la línea: badges de la paleta (kg en minúscula: es símbolo).
 const unitBadgeLabel = (item) => {
-  if (item.isWeightItem)
-    return { label: "kg", cls: "bg-primary text-primary-foreground" };
+  if (item.isWeightItem) return { label: "kg", variant: "soft-primary" };
   if (item.isBoxItem)
-    return {
-      label: unitLabels(item.sale_unit)?.badge || "caja",
-      cls: "bg-success text-success-foreground",
-    };
-  if (item.isPackItem)
-    return { label: "paquete", cls: "bg-warning text-warning-foreground" };
+    return { label: cap(unitLabels(item.sale_unit)?.badge || "caja"), variant: "soft-primary" };
+  if (item.isPackItem) return { label: "Paquete", variant: "soft-primary" };
   if (item.sale_unit && isContainerUnit(item.sale_unit))
-    return { label: "pieza", cls: "bg-secondary text-secondary-foreground" };
+    return { label: "Pieza", variant: "soft-neutral" };
   return null;
 };
 
@@ -72,8 +71,8 @@ const CartItem = React.memo(
       ? item.quantity.toFixed(3)
       : String(item.quantity);
     const qtyMinWidth = item.isWeightItem
-      ? "min-w-[52px]"
-      : "min-w-[30px]";
+      ? "min-w-[60px]"
+      : "min-w-[40px]";
 
     // El % propio sólo se anuncia si es el que se cobró: no con precio de
     // cliente, ni si ganó la promo de categoría/marca, ni todo en paquete.
@@ -107,15 +106,21 @@ const CartItem = React.memo(
       <div
         onClick={() => onSelect(index)}
         className={cn(
-          "cart-item-in mb-1 min-h-[66px] cursor-pointer rounded-xl border p-2 transition-colors duration-150",
-          isSelected
-            ? "border-primary bg-primary/10"
-            : "border-border bg-primary/[0.04] hover:bg-primary/10",
-          flash
-            ? "border-emerald-500/60 bg-emerald-50 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]"
-            : "",
+          "cart-item-in relative min-h-[66px] cursor-pointer px-3 py-2.5 transition-colors duration-150",
+          isSelected ? "bg-primary/[0.07]" : "hover:bg-muted/40",
+          flash && "bg-success/15",
         )}
       >
+        {/* Barra lateral: fila elegida (primary) o recién agregada (success). */}
+        {(isSelected || flash) && (
+          <span
+            aria-hidden
+            className={cn(
+              "absolute inset-y-1.5 left-0 w-1 rounded-r-full",
+              flash ? "bg-success" : "bg-primary",
+            )}
+          />
+        )}
         {/* Línea 1: nombre (truncate) + badge unificado + precio unitario discreto + acciones */}
         <div className="flex items-center gap-1">
           <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -123,33 +128,21 @@ const CartItem = React.memo(
               {item.name}
             </span>
             {unitBadge && (
-              <span className={cn(badgeBase, unitBadge.cls)}>
+              <Badge variant={unitBadge.variant} className={BADGE}>
                 {unitBadgeIcon(item)}
                 {unitBadge.label}
-              </span>
+              </Badge>
             )}
             {secondaryBadges.length > 0 && (
-              <span
-                className={cn(
-                  badgeBase,
-                  "max-w-[110px] truncate bg-destructive/10 text-destructive",
-                )}
-                title={secondaryBadges.join(" · ")}
-              >
-                {secondaryBadges.join(" · ")}
-              </span>
+              <Badge variant="soft-destructive" className={cn(BADGE, "max-w-[110px]")}>
+                <span className="truncate">{secondaryBadges.join(" · ")}</span>
+              </Badge>
             )}
             {bundleBadge && (
-              <span
-                className={cn(
-                  badgeBase,
-                  "max-w-[130px] truncate bg-chart-1/12 text-chart-1",
-                )}
-                title={bundleBadge}
-              >
-                <Package size={12} />
-                {bundleBadge}
-              </span>
+              <Badge variant="soft-primary" className={cn(BADGE, "max-w-[130px]")}>
+                <Package />
+                <span className="truncate">{bundleBadge}</span>
+              </Badge>
             )}
           </div>
 
@@ -204,49 +197,46 @@ const CartItem = React.memo(
 
         {/* Línea 2: stepper de cantidad (h-9 en escala) + total de línea protagonista */}
         <div className="mt-1.5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1">
+          <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-card shadow-xs">
             {item.quantity <= 1 ? (
-              <Button
-                variant="ghost"
-                size="icon"
+              <button
+                type="button"
                 aria-label="Eliminar"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemove(item);
                 }}
-                className="h-9 w-9 rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
+                className="flex h-full w-9 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               >
-                <Trash2 size={18} />
-              </Button>
+                <Trash2 size={16} />
+              </button>
             ) : (
-              <Button
-                variant="ghost"
-                size="icon"
+              <button
+                type="button"
                 aria-label="Disminuir cantidad"
                 onClick={() => onQuantityChange(item, -1)}
-                className="h-9 w-9 rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
+                className="flex h-full w-9 cursor-pointer items-center justify-center text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               >
-                <Minus size={18} />
-              </Button>
+                <Minus size={16} />
+              </button>
             )}
             <span
               key={item.quantity}
               className={cn(
-                "cart-qty-pop inline-block text-center font-bold text-[17px] tabular-nums",
+                "cart-qty-pop inline-flex h-full items-center justify-center border-x border-border px-1 text-[17px] font-bold tabular-nums",
                 qtyMinWidth,
               )}
             >
               {qtyDisplay}
             </span>
-            <Button
-              variant="ghost"
-              size="icon"
+            <button
+              type="button"
               aria-label="Aumentar cantidad"
               onClick={() => onQuantityChange(item, 1)}
-              className="h-9 w-9 rounded-lg border border-border bg-muted text-foreground hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:!size-[18px]"
+              className="flex h-full w-9 cursor-pointer items-center justify-center text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
-              <Plus size={18} />
-            </Button>
+              <Plus size={16} />
+            </button>
           </div>
 
           <span className="text-lg font-bold tabular-nums text-foreground">

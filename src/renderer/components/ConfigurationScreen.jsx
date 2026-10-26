@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Blocks,
+  ShoppingCart,
   Check,
   CloudUpload,
   FlaskConical,
@@ -53,6 +54,7 @@ import {
   setScaleEnabled,
   useScaleEnabled,
 } from "../utils/scaleConfig";
+import { setCartSide, useCartSide } from "../utils/cartSide";
 
 const TABS = [
   { id: "store", label: "Datos Generales", icon: Store, group: "Tienda" },
@@ -138,6 +140,45 @@ const PRINTER_STATUS = {
   3: "Advertencia",
   4: "Desconocida",
 };
+
+// Mini pantalla de la terminal: el carrito se desliza al lado elegido para
+// que se entienda qué cambia antes de ir a vender.
+function CartSidePreview({ side }) {
+  const left = side === "left";
+  return (
+    <div
+      aria-hidden
+      className="relative h-28 w-full overflow-hidden rounded-lg border border-border bg-muted/50 p-2"
+    >
+      {/* Búsqueda / productos */}
+      <div
+        className="absolute inset-y-2 flex w-[calc(62%-0.75rem)] flex-col gap-1.5 rounded-md border border-border bg-card p-2 transition-all duration-500 ease-out"
+        style={{ left: left ? "calc(38% + 0.25rem)" : "0.5rem" }}
+      >
+        <div className="h-3 w-full rounded bg-muted" />
+        <div className="grid flex-1 grid-cols-3 gap-1">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-sm bg-muted" />
+          ))}
+        </div>
+      </div>
+      {/* Carrito */}
+      <div
+        className="absolute inset-y-2 flex w-[38%] flex-col gap-1 rounded-md border border-primary/40 bg-primary/10 p-2 transition-all duration-500 ease-out"
+        style={{ left: left ? "0.5rem" : "calc(62% - 0.25rem)" }}
+      >
+        <div className="flex items-center gap-1 text-[10px] font-semibold text-primary">
+          <ShoppingCart className="size-3" />
+          Carrito
+        </div>
+        <div className="h-1.5 w-4/5 rounded-full bg-primary/25" />
+        <div className="h-1.5 w-3/5 rounded-full bg-primary/25" />
+        <div className="h-1.5 w-2/3 rounded-full bg-primary/25" />
+        <div className="mt-auto h-3 rounded-sm bg-success/70" />
+      </div>
+    </div>
+  );
+}
 
 function FieldRow({ label, description, children, wide, disabled }) {
   return (
@@ -338,6 +379,7 @@ function ConfigurationScreen() {
   const fileInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState("store");
   const scaleEnabled = useScaleEnabled();
+  const cartSide = useCartSide();
 
   const [storeName, setStoreName] = useState("");
   const [storeRfc, setStoreRfc] = useState("");
@@ -1256,6 +1298,39 @@ function ConfigurationScreen() {
   const renderPosTab = () => (
     <>
       <section className="divide-y divide-border/40">
+        <FieldRow
+          wide
+          label="Posición del carrito"
+          description="De qué lado de la terminal aparece el carrito. Se guarda en esta caja; cada caja puede tener el suyo."
+        >
+          <div className="space-y-2.5">
+            <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-muted/40 p-1">
+              {[
+                { value: "left", label: "Izquierda" },
+                { value: "right", label: "Derecha" },
+              ].map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => {
+                    if (o.value === cartSide) return;
+                    setCartSide(o.value);
+                    notify(`Carrito a la ${o.label.toLowerCase()} en esta caja.`, "success");
+                  }}
+                  className={cn(
+                    "h-8 cursor-pointer rounded-md text-sm font-medium transition-colors",
+                    cartSide === o.value
+                      ? "bg-card text-foreground shadow-xs ring-1 ring-border"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <CartSidePreview side={cartSide} />
+          </div>
+        </FieldRow>
         <FieldRow
           label="Impuesto (IVA)"
           description="Porcentaje que se aplica a cada venta."

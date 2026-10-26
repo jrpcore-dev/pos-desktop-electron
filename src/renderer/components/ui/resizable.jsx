@@ -129,7 +129,9 @@ const ResizablePanel = React.forwardRef(
 ResizablePanel.displayName = "ResizablePanel";
 
 const ResizableHandle = React.forwardRef(
-  ({ className, withHandle = false, target = "prev", onMouseDown: onMouseDownProp, ...props }, ref) => {
+  // `reverse`: el grupo se pinta invertido (flex-row-reverse), así que el
+  // arrastre va en sentido contrario al orden del DOM.
+  ({ className, withHandle = false, target = "prev", reverse = false, onMouseDown: onMouseDownProp, ...props }, ref) => {
     const context = React.useContext(ResizableContext);
     const handleRef = React.useRef(null);
     React.useImperativeHandle(ref, () => handleRef.current, []);
@@ -157,12 +159,13 @@ const ResizableHandle = React.forwardRef(
       (ev) => {
         const drag = dragRef.current;
         if (!drag) return;
-        const delta = isHorizontal ? ev.clientX - drag.startX : ev.clientY - drag.startY;
+        const raw = isHorizontal ? ev.clientX - drag.startX : ev.clientY - drag.startY;
+        const delta = reverse ? -raw : raw;
         const nextSize =
           target === "next" ? drag.startSize - delta : drag.startSize + delta;
         context?.resizePanel?.(drag.panelEl, Math.max(0, nextSize));
       },
-      [context, isHorizontal, target]
+      [context, isHorizontal, target, reverse]
     );
 
     const startDrag = (e) => {

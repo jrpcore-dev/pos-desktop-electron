@@ -31,6 +31,7 @@ import ManualProductDialog from "./ManualProductDialog";
 import CustomerSearchDialog from "./CustomerSearchDialog";
 import CreditSaleDialog from "./CreditSaleDialog";
 import { useFeatures } from "../lib/useFeatures";
+import { useCartSide } from "../utils/cartSide";
 import { useMultiCart } from "./cart/useMultiCart";
 import { Button as ShadButton } from "./ui/button";
 import { Kbd } from "./ui/kbd";
@@ -185,6 +186,9 @@ const SalesTerminal = () => {
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
   // Configuración → Funciones (clientes / fiado).
   const features = useFeatures();
+  // Configuración → Parámetros del POS: carrito a la izquierda o derecha
+  // (por caja). A la izquierda el grupo se invierte visualmente.
+  const cartSide = useCartSide();
   const [manualProduct, setManualProduct] = useState({ name: "", price: "" });
   const [pendingQty, setPendingQty] = useState(1);
   const [qtyDialogOpen, setQtyDialogOpen] = useState(false);
@@ -1618,7 +1622,10 @@ if (e.key === "Tab" && !isEditable) {
 
   return (
       <div className="flex h-[calc(100vh-112px)] flex-col overflow-hidden">
-      <ResizablePanelGroup orientation="horizontal" className="flex-1 overflow-hidden">
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className={cn("flex-1 overflow-hidden", cartSide === "left" && "flex-row-reverse")}
+      >
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-md">
         <CartTabs
@@ -1649,7 +1656,12 @@ if (e.key === "Tab" && !isEditable) {
         </div>
       </div>
       {hasCart && (
-        <ResizableHandle withHandle target="next" className="h-full w-2 bg-transparent" />
+        <ResizableHandle
+          withHandle
+          target="next"
+          reverse={cartSide === "left"}
+          className="h-full w-2 bg-transparent"
+        />
       )}
       <ResizablePanel
         defaultSize={effectiveCartWidth}
@@ -1728,7 +1740,7 @@ if (e.key === "Tab" && !isEditable) {
           </div>
         )}
 
-<div className="min-h-0 flex-1 overflow-auto p-1.5">
+<div className="min-h-0 flex-1 divide-y divide-border/70 overflow-auto">
           {cart.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-1 opacity-40">
               <ShoppingCart size={56} className="text-muted-foreground" />
