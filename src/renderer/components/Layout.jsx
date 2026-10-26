@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import {
   ArrowLeftRight,
   ArrowRight,
+  BadgePercent,
   Banknote,
   BarChart3,
   Bell,
@@ -41,6 +42,7 @@ import {
 } from "react-router-dom";
 import { useCashier } from "../contexts/CashierContext";
 import InsightItem from "./InsightItem";
+import { useFeatures } from "../lib/useFeatures";
 import { useDbChanges } from "../lib/useDbChanges";
 import { useThemeMode } from "../contexts/ThemeContext";
 import { formatMXTime } from "../utils/dateUtils";
@@ -711,6 +713,15 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   }, [location.pathname, navigate, logout, logoutConfirmOpen]);
 
   const isAdmin = cashier?.role === "admin";
+  // Configuración → Funciones: lo apagado no aparece en el menú.
+  const features = useFeatures();
+  // …y si se apaga mientras alguien está dentro, vuelve a la terminal.
+  useEffect(() => {
+    const off =
+      (location.pathname === "/customers" && !features.customers) ||
+      (location.pathname === "/servicios" && !features.services);
+    if (off) navigate("/");
+  }, [location.pathname, features.customers, features.services, navigate]);
 
   const navSections = [
     {
@@ -737,8 +748,12 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           icon: <ReceiptText />,
           path: "/transacciones",
         },
-        { text: "Servicios", icon: <Zap />, path: "/servicios" },
-        { text: "Clientes", icon: <Users />, path: "/customers" },
+        ...(features.services
+          ? [{ text: "Servicios", icon: <Zap />, path: "/servicios" }]
+          : []),
+        ...(features.customers
+          ? [{ text: "Clientes", icon: <Users />, path: "/customers" }]
+          : []),
       ],
     },
     {
@@ -746,6 +761,10 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       items: [
         { text: "Productos", icon: <Package />, path: "/inventory" },
         { text: "Categorías", icon: <Tags />, path: "/categories" },
+        // Configuración → Funciones → Promociones avanzadas.
+        ...(features.promos
+          ? [{ text: "Promociones", icon: <BadgePercent />, path: "/promotions" }]
+          : []),
         { text: "Proveedores", icon: <Truck />, path: "/suppliers" },
         {
           text: "Movimientos",

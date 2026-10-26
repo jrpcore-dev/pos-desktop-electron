@@ -266,8 +266,12 @@ const generateReorder = (db, today) => {
 
 const generateSmartAlerts = (db) => {
   const today = mxToday();
+  // Configuración → Funciones: sin caducidades no se generan esos avisos.
+  const expiryOn =
+    (db.prepare(`SELECT value FROM settings WHERE key = 'feature_expiry'`).get() || {})
+      .value !== "false";
   const run = db.transaction(() => ({
-    expiry: generateExpiry(db, today),
+    expiry: expiryOn ? generateExpiry(db, today) : 0,
     slowStock: generateSlowStock(db, today),
     reorder: generateReorder(db, today),
   }));

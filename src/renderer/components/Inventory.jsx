@@ -96,6 +96,7 @@ import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { getStockStatus } from "./ui/stock-status";
 import { StatCard } from "./ui/stat-card";
 import { Calendar } from "./ui/calendar";
+import { useFeatures } from "../lib/useFeatures";
 import { promoInfo } from "../utils/cartMath";
 
 import PageHeader from "./PageHeader";
@@ -747,6 +748,8 @@ const Inventory = () => {
   const [stockQuantity, setStockQuantity] = useState("");
   const [stockQtyError, setStockQtyError] = useState("");
   const [stockCost, setStockCost] = useState("");
+  // Configuración → Funciones: sin caducidades no se muestra el campo.
+  const { expiry: expiryOn } = useFeatures();
   // Caducidad opcional del lote que entra ("YYYY-MM-DD" o "").
   const [stockExpiry, setStockExpiry] = useState("");
   const [stockExpiryOpen, setStockExpiryOpen] = useState(false);
@@ -1072,7 +1075,7 @@ const Inventory = () => {
         cashierId: cashier?.id,
         registerExpense: stockRegisterExpense,
         updateCostPrice,
-        expiryDate: stockExpiry || undefined,
+        expiryDate: (expiryOn && stockExpiry) || undefined,
       });
       if (result.success) {
         setStockModalOpen(false);
@@ -1995,48 +1998,49 @@ const Inventory = () => {
         onOpenChange={(o) => !o && setStockModalOpen(false)}
       >
         <DialogContent
-          className="max-w-[448px] gap-0 p-0 sm:rounded-xl overflow-hidden"
+          className="max-w-[760px] gap-0 p-0 sm:rounded-xl overflow-hidden"
           onKeyDown={(e) => {
             if (e.key === "Enter" && e.target?.tagName !== "BUTTON")
               confirmAddStock();
           }}
         >
-          <div className="min-w-0 p-6">
-            <DialogHeader className="pb-4">
-              <div className="flex min-w-0 items-center gap-3 pr-10">
-                <span className="flex rounded-lg bg-emerald-600 p-2.5">
-                  <Warehouse className="h-5 w-5 text-white" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <DialogTitle className="text-lg leading-tight">
-                    Agregar Stock
-                  </DialogTitle>
-                  {selectedProduct && (
-                    <DialogDescription
-                      className="block min-w-0 truncate"
-                      title={selectedProduct.name}
-                    >
-                      Entrada de inventario — {selectedProduct.name}
-                    </DialogDescription>
-                  )}
-                </div>
+          <DialogHeader className="border-b border-border px-6 py-4">
+            <div className="flex min-w-0 items-center gap-3 pr-10">
+              <span className="flex rounded-lg bg-emerald-600 p-2.5">
+                <Warehouse className="h-5 w-5 text-white" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <DialogTitle className="text-lg leading-tight">
+                  Agregar Stock
+                </DialogTitle>
                 {selectedProduct && (
-                  <StockStatus
-                    label={getStockStatus(
-                      selectedProduct.stock,
-                      selectedProduct.min_stock,
-                    ).label}
-                    tone={getStockStatus(
-                      selectedProduct.stock,
-                      selectedProduct.min_stock,
-                    ).tone}
-                  />
+                  <DialogDescription
+                    className="block min-w-0 truncate"
+                    title={selectedProduct.name}
+                  >
+                    Entrada de inventario — {selectedProduct.name}
+                  </DialogDescription>
                 )}
               </div>
-            </DialogHeader>
+              {selectedProduct && (
+                <StockStatus
+                  label={getStockStatus(
+                    selectedProduct.stock,
+                    selectedProduct.min_stock,
+                  ).label}
+                  tone={getStockStatus(
+                    selectedProduct.stock,
+                    selectedProduct.min_stock,
+                  ).tone}
+                />
+              )}
+            </div>
+          </DialogHeader>
 
-            {selectedProduct && (
-              <div className="space-y-5">
+          {selectedProduct && (
+            <div className="grid min-w-0 sm:grid-cols-[1fr_260px]">
+              {/* ─── Captura ─── */}
+              <div className="min-w-0 space-y-4 p-6">
                 <div className="space-y-1.5">
                   <StockUnitToggle
                     product={selectedProduct}
@@ -2056,6 +2060,7 @@ const Inventory = () => {
                       setStockQuantity(e.target.value);
                       setStockQtyError("");
                     }}
+                    className="h-11 text-base tabular-nums"
                     autoFocus
                   />
                   {stockQtyError && (
@@ -2072,199 +2077,173 @@ const Inventory = () => {
                     )}
                 </div>
 
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
-                  <div className="min-w-0">
-                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
-                      Caducidad
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Opcional. Te avisamos antes de que venza.
-                    </p>
+                <div className={cn("grid gap-3", expiryOn ? "grid-cols-2" : "grid-cols-1")}>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="add-stock-cost">Costo total</Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                        $
+                      </span>
+                      <Input
+                        id="add-stock-cost"
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={stockCost}
+                        onChange={(e) => setStockCost(e.target.value)}
+                        className="pl-7 tabular-nums"
+                        placeholder={(
+                          (selectedProduct.cost_price || 0) * addPiezas || 0
+                        ).toFixed(2)}
+                      />
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Popover open={stockExpiryOpen} onOpenChange={setStockExpiryOpen}>
-                      <PopoverTrigger asChild>
-                        <SButton
+
+                  {expiryOn && (
+                  <div className="space-y-1.5">
+                    <Label>Caducidad</Label>
+                    <div className="flex items-center gap-1">
+                      <Popover open={stockExpiryOpen} onOpenChange={setStockExpiryOpen}>
+                        <PopoverTrigger asChild>
+                          <SButton
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              "h-10 min-w-0 flex-1 justify-start gap-1.5 px-3 font-normal",
+                              stockExpiry
+                                ? "border-warning/50 text-foreground"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            <CalendarClock className="text-muted-foreground" />
+                            <span className="truncate">
+                              {stockExpiry
+                                ? new Date(`${stockExpiry}T12:00:00`).toLocaleDateString("es-MX", {
+                                    day: "numeric",
+                                    month: "short",
+                                    year: "numeric",
+                                  })
+                                : "Sin fecha"}
+                            </span>
+                          </SButton>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="z-[1310] w-auto p-0">
+                          <Calendar
+                            mode="single"
+                            selected={stockExpiry ? new Date(`${stockExpiry}T12:00:00`) : undefined}
+                            defaultMonth={stockExpiry ? new Date(`${stockExpiry}T12:00:00`) : undefined}
+                            disabled={{ before: new Date(`${mxToday()}T12:00:00`) }}
+                            onSelect={(d) => {
+                              if (d) {
+                                const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                                setStockExpiry(iso);
+                              }
+                              setStockExpiryOpen(false);
+                            }}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      {stockExpiry && (
+                        <button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={cn(
-                            "h-9 gap-1.5",
-                            stockExpiry && "border-warning/50 text-foreground",
-                          )}
+                          aria-label="Quitar fecha de caducidad"
+                          title="Quitar fecha"
+                          onClick={() => setStockExpiry("")}
+                          className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
-                          <CalendarClock className="text-muted-foreground" />
-                          {stockExpiry
-                            ? new Date(`${stockExpiry}T12:00:00`).toLocaleDateString("es-MX", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })
-                            : "Sin fecha"}
-                        </SButton>
-                      </PopoverTrigger>
-                      <PopoverContent align="end" className="z-[1310] w-auto p-0">
-                        <Calendar
-                          mode="single"
-                          selected={stockExpiry ? new Date(`${stockExpiry}T12:00:00`) : undefined}
-                          defaultMonth={stockExpiry ? new Date(`${stockExpiry}T12:00:00`) : undefined}
-                          disabled={{ before: new Date(`${mxToday()}T12:00:00`) }}
-                          onSelect={(d) => {
-                            if (d) {
-                              const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-                              setStockExpiry(iso);
-                            }
-                            setStockExpiryOpen(false);
-                          }}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    {stockExpiry && (
-                      <button
-                        type="button"
-                        aria-label="Quitar fecha de caducidad"
-                        title="Quitar fecha"
-                        onClick={() => setStockExpiry("")}
-                        className="flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        <X className="size-4" />
-                      </button>
-                    )}
+                          <X className="size-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  )}
                 </div>
+                <p className="-mt-2 text-xs text-muted-foreground">
+                  {expiryOn ? "Ambos opcionales. " : "Opcional. "}Costo vacío = costo del producto × cantidad.
+                </p>
 
-                <div className="rounded-lg border border-border bg-muted/40 p-3">
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
-                    Costo total de esta compra
-                  </p>
-                  <div className="relative mt-1.5">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                      $
-                    </span>
-                    <Input
-                      id="add-stock-cost"
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={stockCost}
-                      onChange={(e) => setStockCost(e.target.value)}
-                      className="pl-7"
-                      placeholder={(
-                        (isContainerUnit(selectedProduct.sale_unit) &&
-                        selectedProduct.box_qty > 0
-                          ? (selectedProduct.cost_price || 0) * addPiezas
-                          : (selectedProduct.cost_price || 0) * addPiezas) ||
-                        0
-                      ).toFixed(2)}
-                    />
-                  </div>
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    Opcional. Vacío = costo del producto × cantidad.
-                  </p>
-                </div>
-
-                <div
+                <label
                   className={cn(
-                    "rounded-lg border p-3",
+                    "flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors",
                     stockRegisterExpense
                       ? "border-emerald-500/40 bg-emerald-500/10"
                       : "border-border bg-muted/40",
                   )}
                 >
-                  <label className="flex cursor-pointer items-start gap-2.5">
-                    <Checkbox
-                      checked={stockRegisterExpense}
-                      onCheckedChange={(v) => {
-                        setStockRegisterExpense(!!v);
-                        localStorage.setItem(
-                          "stockRegisterExpense",
-                          v ? "true" : "false",
-                        );
-                      }}
-                    />
-                    <span className="space-y-0.5">
-                      <span className="block text-sm font-bold">
-                        Descontar de la caja (egreso)
-                      </span>
-                      <span className="block text-xs leading-snug text-muted-foreground">
-                        {stockRegisterExpense
-                          ? "Se registra como compra de inventario y descuenta de la caja abierta."
-                          : "No se registra gasto en caja; solo se suma el stock."}
-                      </span>
+                  <Checkbox
+                    checked={stockRegisterExpense}
+                    onCheckedChange={(v) => {
+                      setStockRegisterExpense(!!v);
+                      localStorage.setItem(
+                        "stockRegisterExpense",
+                        v ? "true" : "false",
+                      );
+                    }}
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block text-sm font-bold">
+                      Descontar de la caja (egreso)
                     </span>
-                  </label>
+                    <span className="block text-xs leading-snug text-muted-foreground">
+                      {stockRegisterExpense
+                        ? "Se registra como compra y descuenta de la caja abierta."
+                        : "No se registra gasto en caja; solo se suma el stock."}
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              {/* ─── Resumen ─── */}
+              <aside className="flex flex-col border-t border-border bg-muted/30 p-6 sm:border-l sm:border-t-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                  Resumen
+                </p>
+                <div className="mt-3 space-y-2.5 text-base">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-muted-foreground">Stock actual</span>
+                    <span className="font-semibold tabular-nums">
+                      {selectedProduct.sale_unit === "weight"
+                        ? `${fmtKg(selectedProduct.stock)} kg`
+                        : `${selectedProduct.stock} pz`}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-muted-foreground">Entrada</span>
+                    <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                      +{selectedProduct.sale_unit === "weight"
+                        ? `${fmtKg(parseFloat(stockQuantity) || 0)} kg`
+                        : `${addPiezas} pz`}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
-                    Resultado
+                <div className="mt-3 rounded-lg bg-emerald-600 px-3 py-2.5 text-center text-white">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-100">
+                    Quedará en
                   </p>
-                  <div className="mt-2 flex items-stretch gap-2">
-                    <div className="flex-1 rounded-md bg-muted/50 p-2 text-center">
-                      <p className="text-[0.62rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Actual
-                      </p>
-                      <p className="mt-0.5 truncate text-sm font-bold">
-                        {selectedProduct.sale_unit === "weight"
-                          ? `${fmtKg(selectedProduct.stock)} kg`
-                          : `${selectedProduct.stock} pz`}
-                      </p>
-                    </div>
-                    <div className="flex items-center text-emerald-600">
-                      <ArrowRight className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1 rounded-md bg-emerald-500/10 p-2 text-center">
-                      <p className="text-[0.62rem] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                        + Entrada
-                      </p>
-                      <p className="mt-0.5 truncate text-sm font-bold text-emerald-700 dark:text-emerald-400">
-                        {selectedProduct.sale_unit === "weight"
-                          ? `${fmtKg(parseFloat(stockQuantity) || 0)} kg`
-                          : `${addPiezas} pz`}
-                      </p>
-                    </div>
-                    <div className="flex items-center text-emerald-600">
-                      <ArrowRight className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1 rounded-md border border-emerald-500/40 bg-emerald-600 p-2 text-center">
-                      <p className="text-[0.62rem] font-semibold uppercase tracking-wide text-emerald-100">
-                        Resultante
-                      </p>
-                      <p className="mt-0.5 truncate text-sm font-extrabold text-white">
-                        {selectedProduct.sale_unit === "weight"
-                          ? `${fmtKg(
-                              selectedProduct.stock +
-                                (parseFloat(stockQuantity) || 0),
-                            )} kg`
-                          : `${selectedProduct.stock + addPiezas} pz`}
-                      </p>
-                    </div>
-                  </div>
+                  <p className="text-3xl font-bold leading-tight tabular-nums">
+                    {selectedProduct.sale_unit === "weight"
+                      ? `${fmtKg(
+                          selectedProduct.stock + (parseFloat(stockQuantity) || 0),
+                        )} kg`
+                      : `${selectedProduct.stock + addPiezas} pz`}
+                  </p>
                   {isContainerUnit(selectedProduct.sale_unit) &&
                     selectedProduct.box_qty > 0 && (
-                      <div className="mt-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-                        Actual:{" "}
-                        <strong className="text-foreground">
-                          {Math.floor(
-                            selectedProduct.stock / selectedProduct.box_qty,
-                          )}{" "}
-                          {unitLabels(selectedProduct.sale_unit).plural}
-                        </strong>{" "}
-                        → Resultante:{" "}
-                        <strong className="text-emerald-600 dark:text-emerald-400">
-                          {Math.floor(
-                            (selectedProduct.stock + addPiezas) /
-                              selectedProduct.box_qty,
-                          )}{" "}
-                          {unitLabels(selectedProduct.sale_unit).plural}
-                        </strong>
-                      </div>
+                      <p className="text-sm text-emerald-100 tabular-nums">
+                        {Math.floor(selectedProduct.stock / selectedProduct.box_qty)} →{" "}
+                        {Math.floor(
+                          (selectedProduct.stock + addPiezas) / selectedProduct.box_qty,
+                        )}{" "}
+                        {unitLabels(selectedProduct.sale_unit).plural}
+                      </p>
                     )}
-                  <div className="mt-3 flex items-center justify-between border-t border-border pt-2.5">
-                    <span className="text-xs text-muted-foreground">
-                      Costo total de esta entrada
-                    </span>
-                    <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400">
+                </div>
+
+                <div className="mt-auto space-y-1.5 border-t border-border pt-3 text-base">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-muted-foreground">Costo</span>
+                    <span className="text-lg font-bold tabular-nums text-foreground">
                       {(() => {
                         const aQty = addPiezas;
                         const c = parseFloat(stockCost) || 0;
@@ -2281,31 +2260,42 @@ const Inventory = () => {
                       })()}
                     </span>
                   </div>
+                  {stockExpiry && (
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-muted-foreground">Caduca</span>
+                      <span className="font-semibold tabular-nums">
+                        {new Date(`${stockExpiry}T12:00:00`).toLocaleDateString("es-MX", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              </aside>
+            </div>
+          )}
 
-            <DialogFooter className="mt-5 gap-2 border-t border-border pt-4">
-              <CancelButton onClick={() => setStockModalOpen(false)}>
-                Cancelar
-              </CancelButton>
-              <SButton
-                onClick={confirmAddStock}
-                disabled={!stockQuantity || stockQuantity <= 0 || addingStock}
-                className="px-4"
-              >
-                {addingStock && (
-                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-                )}
-                {addingStock ? "Agregando..." : (
-                  <>
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    Agregar Stock
-                  </>
-                )}
-              </SButton>
-            </DialogFooter>
-          </div>
+          <DialogFooter className="gap-2 border-t border-border px-6 py-4">
+            <CancelButton onClick={() => setStockModalOpen(false)}>
+              Cancelar
+            </CancelButton>
+            <SButton
+              onClick={confirmAddStock}
+              disabled={!stockQuantity || stockQuantity <= 0 || addingStock}
+              className="px-4"
+            >
+              {addingStock && (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              )}
+              {addingStock ? "Agregando..." : (
+                <>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  Agregar Stock
+                </>
+              )}
+            </SButton>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

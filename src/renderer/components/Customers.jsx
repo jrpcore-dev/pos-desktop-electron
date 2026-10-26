@@ -61,6 +61,7 @@ import { Switch } from "./ui/switch";
 import { StatCard } from "./ui/stat-card";
 import CustomerCreditSheet, { debtAge } from "./CustomerCreditSheet";
 import { useCashier } from "../contexts/CashierContext";
+import { useFeatures } from "../lib/useFeatures";
 
 import PageHeader from "./PageHeader";
 import { fmtMoney } from "../utils/format";
@@ -350,6 +351,8 @@ const Customers = () => {
   const notify = useToast();
   const { cashier } = useCashier();
   const isAdmin = cashier?.role === "admin";
+  // Configuración → Funciones: sin fiado se ocultan saldo, cuentas y abonos.
+  const { credit: creditOn } = useFeatures();
   // Saldos de fiado por cliente y total por cobrar (viven en el Host).
   const [credit, setCredit] = useState({ byCustomer: {}, receivable: 0, debtors: 0 });
   const [onlyDebt, setOnlyDebt] = useState(false);
@@ -480,7 +483,7 @@ const Customers = () => {
       creditForm.credit_enabled !== !!editItem?.credit_enabled ||
       (parseFloat(creditForm.credit_limit) || 0) !== (editItem?.credit_limit || 0) ||
       (parseFloat(creditForm.credit_initial) || 0) > 0;
-    if (isAdmin && customerId && creditChanged) {
+    if (creditOn && isAdmin && customerId && creditChanged) {
       const res = await window.api.invoke("set-customer-credit", {
         customerId,
         enabled: creditForm.credit_enabled,
@@ -545,8 +548,8 @@ const Customers = () => {
 
   const balanceOf = (c) => credit.byCustomer[c.id]?.balance || 0;
   const list = useMemo(
-    () => (onlyDebt ? customers.filter((c) => (credit.byCustomer[c.id]?.balance || 0) > 0) : customers),
-    [customers, onlyDebt, credit],
+    () => (creditOn && onlyDebt ? customers.filter((c) => (credit.byCustomer[c.id]?.balance || 0) > 0) : customers),
+    [customers, onlyDebt, credit, creditOn],
   );
 
   return (
@@ -562,6 +565,7 @@ const Customers = () => {
         }
       />
 
+      {creditOn && (
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard
           prominent
@@ -590,6 +594,7 @@ const Customers = () => {
           title={onlyDebt ? "Quitar filtro" : "Ver solo clientes con adeudo"}
         />
       </div>
+      )}
 
       <div className="relative mb-5 max-w-sm">
         <Search
@@ -621,9 +626,11 @@ const Customers = () => {
               <TableHead className="px-4 font-semibold text-foreground/75">
                 Nivel
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
-                Saldo
-              </TableHead>
+              {creditOn && (
+                <TableHead className="px-4 font-semibold text-foreground/75">
+                  Saldo
+                </TableHead>
+              )}
               <TableHead className="w-32 px-4 text-right font-semibold text-foreground/75">
                 Acciones
               </TableHead>
@@ -648,9 +655,11 @@ const Customers = () => {
                   <TableCell className="px-4">
                     <Skeleton className="h-4 w-20" />
                   </TableCell>
-                  <TableCell className="px-4">
-                    <Skeleton className="h-4 w-20" />
-                  </TableCell>
+                  {creditOn && (
+                    <TableCell className="px-4">
+                      <Skeleton className="h-4 w-20" />
+                    </TableCell>
+                  )}
                   <TableCell className="px-4 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Skeleton className="h-9 w-9 rounded-md" />
@@ -661,7 +670,7 @@ const Customers = () => {
               ))}
             {!loading && list.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="h-28 px-4 text-center">
+                <TableCell colSpan={creditOn ? 5 : 4} className="h-28 px-4 text-center">
                   <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
                     <Users size={32} className="opacity-40" />
                     <p className="text-sm">
@@ -709,6 +718,7 @@ const Customers = () => {
                       <span className="text-xs text-muted-foreground">Normal</span>
                     )}
                   </TableCell>
+                  {creditOn && (
                   <TableCell className="px-4 py-3">
                     {balanceOf(c) > 0 ? (
                       <button
@@ -730,9 +740,10 @@ const Customers = () => {
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
+                  )}
                   <TableCell className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {(c.credit_enabled || credit.byCustomer[c.id]) && (
+                      {creditOn && (c.credit_enabled || credit.byCustomer[c.id]) && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -828,12 +839,14 @@ const Customers = () => {
 
           <div className="flex-1 overflow-auto px-6 py-4">
             <CustomerForm value={form} onChange={setForm} />
+            {creditOn && (
             <CreditForm
               value={creditForm}
               onChange={setCreditForm}
               isAdmin={isAdmin}
               hasHistory={!!(editItem && credit.byCustomer[editItem.id])}
             />
+            )}
 
             {editItem && (
               <div className="mt-6">

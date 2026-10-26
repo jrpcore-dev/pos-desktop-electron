@@ -1027,6 +1027,11 @@ const REPLICATED_SETTINGS_KEYS = [
   "pin_for_void",
   // Promos que cambian lo que se cobra: todas las cajas deben cobrar igual.
   "promos_advanced",
+  // Configuración → Funciones (lib/useFeatures): todas las cajas ven lo mismo.
+  "feature_customers",
+  "feature_credit",
+  "feature_services",
+  "feature_expiry",
 ];
 // 3e · Fila replicable por tabla (fuente única de verdad). Las tablas no
 // listadas replican TODAS sus filas. Lo consumen por igual los triggers, el

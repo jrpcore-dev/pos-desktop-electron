@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
+  Blocks,
   Check,
   CloudUpload,
   FlaskConical,
@@ -44,6 +45,7 @@ import PageHeader from "./PageHeader";
 import { fmtNumber } from "../utils/format";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { resizeImage } from "../utils/logo";
+import { FEATURE_KEYS, FEATURES_EVENT } from "../lib/useFeatures";
 import {
   getScaleConfig,
   openScaleDialog,
@@ -55,6 +57,7 @@ const TABS = [
   { id: "store", label: "Datos Generales", icon: Store },
   { id: "ticket", label: "Tickets", icon: ReceiptText },
   { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal },
+  { id: "features", label: "Funciones", icon: Blocks },
   { id: "mobile", label: "App Móvil", icon: Smartphone },
   { id: "printer", label: "Impresora", icon: Printer },
   { id: "scale", label: "Báscula", icon: Scale },
@@ -77,6 +80,12 @@ const TABS_META = {
     icon: SlidersHorizontal,
     title: "Parámetros del POS",
     description: "Impuestos, redondeo y reglas de operación de la terminal.",
+  },
+  features: {
+    icon: Blocks,
+    title: "Funciones",
+    description:
+      "Enciende solo lo que usa tu tienda. Apagar oculta la función en todas las cajas; no borra nada.",
   },
   mobile: {
     icon: Smartphone,
@@ -579,6 +588,17 @@ function ConfigurationScreen() {
   const [savingTicket, setSavingTicket] = useState(false);
   const [savingPos, setSavingPos] = useState(false);
 
+  // Funciones de la tienda (ver lib/useFeatures). Sin valor = encendida.
+  const [featureFlags, setFeatureFlags] = useState({
+    customers: true,
+    credit: true,
+    services: true,
+    expiry: true,
+    promos: false,
+  });
+  const [savedFeatureFlags, setSavedFeatureFlags] = useState(featureFlags);
+  const [savingFeatures, setSavingFeatures] = useState(false);
+
   useEffect(() => {
     const loadTicketSettings = async () => {
       try {
@@ -600,6 +620,12 @@ function ConfigurationScreen() {
           setSaleWithoutStock(s.sale_without_stock === "true");
         if (s.pin_for_void !== undefined)
           setPinForVoid(s.pin_for_void === "true");
+        const flags = {};
+        for (const [k, key] of Object.entries(FEATURE_KEYS))
+          // Promociones avanzadas arranca apagada (ver lib/useFeatures).
+          flags[k] = k === "promos" ? s[key] === "true" : s[key] !== "false";
+        setFeatureFlags(flags);
+        setSavedFeatureFlags(flags);
       } catch (err) {
         console.error("Error loading ticket settings:", err);
       }
@@ -639,6 +665,111 @@ function ConfigurationScreen() {
     } finally {
       setSavingTicket(false);
     }
+  };
+
+  const handleSaveFeatures = async () => {
+    const flags = {
+      ...featureFlags,
+      credit: featureFlags.customers && featureFlags.credit,
+    };
+    // No se apaga el fiado con cuentas por cobrar pendientes.
+    const creditWasOn = savedFeatureFlags.customers && savedFeatureFlags.credit;
+    if (creditWasOn && !flags.credit) {
+      try {
+        const res = await window.api.invoke("get-credit-balances");
+        if (res?.success && res.receivable > 0) {
+          notify(
+            `Hay $${res.receivable.toFixed(2)} por cobrar en fiado. Liquídalos o ajústalos antes de apagar el fiado.`,
+            "error",
+          );
+          return;
+        }
+      } catch {}
+    }
+    setSavingFeatures(true);
+    try {
+      for (const [k, key] of Object.entries(FEATURE_KEYS)) {
+        await window.api.invoke("save-setting", key, flags[k] ? "true" : "false");
+      }
+      setFeatureFlags(flags);
+      setSavedFeatureFlags(flags);
+      window.dispatchEvent(new Event(FEATURES_EVENT));
+      notify("Funciones guardadas.", "success");
+    } catch (err) {
+      console.error("Error saving features:", err);
+      notify("Error al guardar las funciones.", "error");
+    } finally {
+      setSavingFeatures(false);
+    }
+  };
+
+  const renderFeaturesTab = () => {
+    const set = (k) => (v) =>
+      setFeatureFlags((f) => ({
+        ...f,
+        [k]: v,
+        // Apagar Clientes apaga también el fiado.
+        ...(k === "customers" && !v ? { credit: false } : {}),
+      }));
+    return (
+      <>
+        <section className="divide-y divide-border/40">
+          <ToggleBlock
+            title="Clientes"
+            description="Registro de clientes, niveles y precios especiales. Apagado se ocultan el menú Clientes y el botón Cliente de la terminal."
+            checked={featureFlags.customers}
+            onCheckedChange={set("customers")}
+          />
+          <ToggleBlock
+            title="Fiado"
+            description={
+              featureFlags.customers
+                ? "Venta a crédito con estado de cuenta y abonos. Apagado se oculta el botón Fiado al cobrar."
+                : "Requiere Clientes."
+            }
+            checked={featureFlags.customers && featureFlags.credit}
+            onCheckedChange={set("credit")}
+            disabled={!featureFlags.customers}
+          />
+          <ToggleBlock
+            title="Servicios y recargas"
+            description="Tiempo aire, paquetes y pago de servicios. Apagado se oculta el menú Servicios."
+            checked={featureFlags.services}
+            onCheckedChange={set("services")}
+          />
+          <ToggleBlock
+            title="Caducidades"
+            description="Fecha de caducidad al agregar stock y avisos antes de que venza. Apagado se oculta el campo y no se generan esos avisos."
+            checked={featureFlags.expiry}
+            onCheckedChange={set("expiry")}
+          />
+          <ToggleBlock
+            title="Promociones avanzadas"
+            description="Descuentos por categoría o marca y paquetes de productos distintos, en su propia sección del menú. Las promos de cada producto siguen en el producto."
+            checked={featureFlags.promos}
+            onCheckedChange={set("promos")}
+          >
+            {!featureFlags.promos && (
+              <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-snug text-muted-foreground">
+                Apagado, las promos por categoría, marca y paquetes no se cobran, pero se
+                conservan: vuelven al encenderlo. Aplica a todas las cajas.
+              </p>
+            )}
+          </ToggleBlock>
+        </section>
+
+        <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
+          <Button onClick={handleSaveFeatures} disabled={savingFeatures}>
+            {savingFeatures ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            {savingFeatures ? "Guardando..." : "Guardar cambios"}
+          </Button>
+        </div>
+      </>
+    );
   };
 
   const handleSavePos = async () => {
@@ -1213,6 +1344,7 @@ function ConfigurationScreen() {
           checked={pinForVoid}
           onCheckedChange={setPinForVoid}
         />
+
       </section>
 
       <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
@@ -1783,6 +1915,7 @@ function ConfigurationScreen() {
               {activeTab === "store" && renderStoreTab()}
               {activeTab === "ticket" && renderTicketTab()}
               {activeTab === "pos" && renderPosTab()}
+              {activeTab === "features" && renderFeaturesTab()}
               {activeTab === "mobile" && renderMobileTab()}
               {activeTab === "printer" && renderPrinterTab()}
               {activeTab === "scale" && renderScaleTab()}

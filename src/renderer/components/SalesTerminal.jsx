@@ -30,6 +30,7 @@ import DiscountDialog from "./DiscountDialog";
 import ManualProductDialog from "./ManualProductDialog";
 import CustomerSearchDialog from "./CustomerSearchDialog";
 import CreditSaleDialog from "./CreditSaleDialog";
+import { useFeatures } from "../lib/useFeatures";
 import { useMultiCart } from "./cart/useMultiCart";
 import { Button as ShadButton } from "./ui/button";
 import { Kbd } from "./ui/kbd";
@@ -182,6 +183,8 @@ const SalesTerminal = () => {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [manualProductModalOpen, setManualProductModalOpen] = useState(false);
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
+  // Configuración → Funciones (clientes / fiado).
+  const features = useFeatures();
   const [manualProduct, setManualProduct] = useState({ name: "", price: "" });
   const [pendingQty, setPendingQty] = useState(1);
   const [qtyDialogOpen, setQtyDialogOpen] = useState(false);
@@ -328,7 +331,7 @@ const processSaleRef = useRef(null);
   // diálogo (así Enter/F8/Cobrar pasan siempre por la confirmación).
   const processSale = async (method, credit) => {
     if (method === "credit" && !credit) {
-      if (!customer?.credit_enabled) {
+      if (!features.credit || !customer?.credit_enabled) {
         showNotification("Selecciona un cliente con fiado activado", "warning");
         return;
       }
@@ -479,10 +482,10 @@ const processSaleRef = useRef(null);
 
   // Sin cliente con fiado no puede quedar "Fiado" seleccionado.
   useEffect(() => {
-    if (paymentMethod === "credit" && !customer?.credit_enabled) {
+    if (paymentMethod === "credit" && (!features.credit || !customer?.credit_enabled)) {
       setPaymentMethod(lastSavedPaymentMethod());
     }
-  }, [paymentMethod, customer]);
+  }, [paymentMethod, customer, features.credit]);
 
   // Ajustes de la tienda, del ticket y del POS. Se releen al montar y cada
   // vez que cambian (guardados aquí, o replicados desde el Host en una caja).
@@ -1274,7 +1277,7 @@ if (e.key === "Tab" && !isEditable) {
         showNotification("Producto no encontrado", "error");
         return;
       }
-      if (/^CLI-/i.test(rest)) {
+      if (features.customers && /^CLI-/i.test(rest)) {
         setBarcode("");
         setSelectedSuggestionIndex(-1);
         const res = await window.api.invoke("get-customer-by-qr", rest);
@@ -1758,6 +1761,7 @@ if (e.key === "Tab" && !isEditable) {
         <div
           className="sticky bottom-0 z-20 border-t border-border p-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.10)] bg-gradient-to-t from-transparent via-card/60 to-card"
         >
+          {features.customers && (
           <div className="mb-2.5">
             {customer ? (
               <div className="flex h-11 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
@@ -1789,6 +1793,7 @@ if (e.key === "Tab" && !isEditable) {
               </button>
             )}
           </div>
+          )}
           {/* Totales tipo ticket */}
           <div className="mb-2.5 flex flex-col gap-0.5">
             <div className="flex items-baseline justify-between">
@@ -1921,7 +1926,7 @@ if (e.key === "Tab" && !isEditable) {
               <span className="text-sm font-bold leading-none">Transf.</span>
             </button>
 
-            {customer?.credit_enabled ? (
+            {features.credit && customer?.credit_enabled ? (
               <button
                 type="button"
                 onClick={() => handlePayClick("credit")}
