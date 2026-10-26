@@ -43,6 +43,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
+import { StatCard } from "./ui/stat-card";
 import {
   Pagination, PaginationInfo, PaginationControls, PaginationLabel, PaginationButton,
 } from "./ui/pagination";
@@ -750,57 +751,38 @@ const Transacciones = () => {
         <CardSkeleton count={4} />
       ) : (
         <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            {
-              label: "Total Ventas",
-              value: fmtMoney(total),
-              icon: CircleDollarSign,
-              cls: "bg-primary/10 text-primary",
-              hover: "hover:border-primary/40",
-            },
-            {
-              label: "Egresos",
-              value: fmtMoney(totalExpenses),
-              icon: Ban,
-              cls: "bg-red-500/10 text-red-600 dark:text-red-400",
-              hover: "hover:border-red-500/40",
-            },
-            {
-              label: "Ventas",
-              value: String(count),
-              icon: ReceiptText,
-              cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-              hover: "hover:border-emerald-500/40",
-            },
-            {
-              label: "Canceladas",
-              value: String(canceledSales.length),
-              icon: XCircle,
-              cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-              hover: "hover:border-amber-500/40",
-            },
-          ].map((s) => {
-            const Icon = s.icon;
-            return (
-              <div
-                key={s.label}
-                className={cn(
-                  "flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-3 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
-                  s.hover,
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${s.cls}`}>
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <p className="text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
-                    {s.label}
-                  </p>
-                </div>
-                <p className="text-2xl font-bold tabular-nums text-foreground">{s.value}</p>
-              </div>
-            );
-          })}
+          <StatCard
+            prominent
+            hero
+            size="sm"
+            icon={<CircleDollarSign />}
+            label="Total ventas"
+            value={fmtMoney(total)}
+          />
+          <StatCard
+            prominent
+            size="sm"
+            icon={<Ban />}
+            tone="destructive"
+            label="Egresos"
+            value={fmtMoney(totalExpenses)}
+          />
+          <StatCard
+            prominent
+            size="sm"
+            icon={<ReceiptText />}
+            tone="success"
+            label="Ventas"
+            value={String(count)}
+          />
+          <StatCard
+            prominent
+            size="sm"
+            icon={<XCircle />}
+            tone="warning"
+            label="Canceladas"
+            value={String(canceledSales.length)}
+          />
         </div>
       )}
 

@@ -64,6 +64,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "./ui";
+import { StatCard } from "./ui/stat-card";
 
 import CancelButton from "./CancelButton";
 import { CardSkeleton } from "./Skeletons";
@@ -1386,26 +1387,13 @@ const EndOfDay = () => {
   }, [loading, canManageRegister, isOpen]);
 
   const summaryCards = [
-    {
-      label: "Ventas totales",
-      value: fmtMoney(totalSales),
-      icon: Banknote,
-      color: "#059669",
-      bg: "rgba(16,185,129,.12)",
-    },
-    {
-      label: "Transacciones",
-      value: salesCount,
-      icon: Receipt,
-      color: "#0d9488",
-      bg: "rgba(13,148,136,.12)",
-    },
+    { label: "Ventas totales", value: fmtMoney(totalSales), icon: Banknote, tone: "primary" },
+    { label: "Transacciones", value: salesCount, icon: Receipt, tone: "info" },
     {
       label: "Efectivo en caja",
       value: isOpen ? fmtMoney(cashInRegister) : "$0.00",
       icon: Landmark,
-      color: "#d97706",
-      bg: "rgba(217,119,6,.12)",
+      tone: "success",
     },
   ];
 
@@ -1548,36 +1536,18 @@ const EndOfDay = () => {
         <CardSkeleton count={3} />
       ) : (
         <div className="mb-3 grid gap-3 sm:grid-cols-3">
-          {summaryCards.map((item, i) => {
+          {summaryCards.map((item) => {
             const Icon = item.icon;
-
             return (
-              <Card
+              <StatCard
+                prominent
+                size="sm"
                 key={item.label}
-                className={cn(
-                  "fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
-                  `stagger-${i + 1}`,
-                )}
-              >
-                <CardContent className="flex items-center gap-2 px-3 py-3">
-                  <div
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-                    style={{ background: item.bg }}
-                  >
-                    <Icon size={21} style={{ color: item.color }} />
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-[0.6rem] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
-                      {item.label}
-                    </p>
-
-                    <p className="truncate text-lg font-bold leading-tight tabular-nums">
-                      {item.value}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+                tone={item.tone}
+                icon={<Icon />}
+                label={item.label}
+                value={item.value}
+              />
             );
           })}
         </div>

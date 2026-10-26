@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Calendar } from "@/components/ui/calendar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatCard } from "@/components/ui/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Sheet,
@@ -272,62 +273,6 @@ const Delta = ({ value, invert, suffix = "periodo anterior" }) => {
       )}
       <span className="min-w-0">{Math.abs(Math.round(value))}% vs. {suffix}</span>
     </span>
-  );
-};
-
-// ─── TARJETA DE MÉTRICA CLAVE ───────────────────────────────
-const MetricCard = ({ icon, label, value, sub, delta, deltaMeta, invert, accent, loading, compact }) => {
-  if (loading) {
-    return (
-      <Card className="overflow-hidden">
-        <CardContent className={cn("flex items-center gap-3", compact ? "p-3" : "p-4")}>
-          <Skeleton className={cn(compact ? "h-9 w-9 rounded-lg" : "h-11 w-11 rounded-xl")} />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className={cn("w-28", compact ? "h-4" : "h-6")} />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-  return (
-    <Card className="group overflow-hidden border-border/60 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-      <CardContent className={cn("flex items-center gap-3", compact ? "p-3" : "p-4")}>
-        <div
-          className={cn(
-            "flex shrink-0 items-center justify-center transition-transform duration-200 group-hover:scale-105",
-            compact ? "h-9 w-9 rounded-lg" : "h-11 w-11 rounded-xl",
-            accent?.bg
-          )}
-        >
-          <span className={accent?.text}>{icon}</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
-          <p
-            className={cn(
-              "truncate font-bold leading-tight text-foreground tabular-nums",
-              compact ? "text-base" : "text-xl"
-            )}
-          >
-            {value}
-          </p>
-          {typeof delta === "number" && (
-            <>
-              <Delta value={delta} invert={invert} />
-              {deltaMeta && !compact && (
-                <p className="text-[11px] text-muted-foreground tabular-nums">{deltaMeta}</p>
-              )}
-            </>
-          )}
-          {sub && !delta && (
-            <p className="truncate text-[0.7rem] text-muted-foreground">{sub}</p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 };
 
@@ -1950,97 +1895,97 @@ const Reports = () => {
 
         {/* ─── KPIs ─────────────────────────────────────────── */}
         <h2 className="sr-only">Indicadores clave</h2>
-        <section className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
+        <section className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            hero
             loading={loading}
-            icon={<Banknote className="h-5 w-5" />}
-            accent={{ bg: "bg-success/10", text: "text-success" }}
+            icon={<Banknote />}
             label="Ventas totales"
             value={fmtMoney(summary.salesTotal)}
             delta={pctOf(summary.salesTotal, summary.prevSales)}
-            deltaMeta={`${fmtMoney(summary.prevSales)} → ${fmtMoney(summary.salesTotal)}`}
+            caption={`vs. ${fmtMoney(summary.prevSales)}`}
           />
-          <MetricCard
+          <StatCard
             loading={loading}
-            icon={<Wallet className="h-5 w-5" />}
-            accent={{ bg: "bg-primary/10", text: "text-primary" }}
+            icon={<Wallet />}
+            tone="success"
             label="Utilidad neta"
             value={fmtMoney(summary.profit)}
             delta={pctOf(
               summary.profit,
               summary.prevSales - summary.prevExpenses
             )}
-            deltaMeta={`${fmtMoney(summary.prevSales - summary.prevExpenses)} → ${fmtMoney(summary.profit)}`}
+            caption={`vs. ${fmtMoney(summary.prevSales - summary.prevExpenses)}`}
           />
-          <MetricCard
+          <StatCard
             loading={loading}
-            icon={<Receipt className="h-5 w-5" />}
-            accent={{ bg: "bg-warning/10", text: "text-warning" }}
+            icon={<Receipt />}
+            tone="info"
             label="Ticket promedio"
             value={fmtMoney(summary.avgTicket)}
             delta={pctOf(
               summary.avgTicket,
               summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0
             )}
-            deltaMeta={`${fmtMoney(summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0)} → ${fmtMoney(summary.avgTicket)}`}
+            caption={`vs. ${fmtMoney(summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0)}`}
           />
-          <MetricCard
+          <StatCard
             loading={loading}
-            icon={<ShoppingCart className="h-5 w-5" />}
-            accent={{ bg: "bg-primary/10", text: "text-primary" }}
+            icon={<ShoppingCart />}
+            tone="primary"
             label="Transacciones"
             value={String(summary.salesCount)}
             delta={pctOf(summary.salesCount, summary.prevCount)}
-            deltaMeta={`${summary.prevCount} → ${summary.salesCount} ventas`}
+            caption={`vs. ${summary.prevCount} ventas`}
           />
         </section>
 
-        <section className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            compact
+        <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            size="sm"
             loading={loading}
-            icon={<Percent className="h-5 w-5" />}
-            accent={{ bg: "bg-success/10", text: "text-success" }}
+            icon={<Percent />}
+            tone="success"
             label="Margen de ganancia"
             value={`${summary.profitMargin.toFixed(1)}%`}
-            sub={`Utilidad sobre ${fmtMoney(summary.salesTotal)}`}
+            caption={`Utilidad sobre ${fmtMoney(summary.salesTotal)}`}
           />
-          <MetricCard
-            compact
+          <StatCard
+            size="sm"
             loading={loading}
-            icon={<ArrowDownToLine className="h-5 w-5" />}
-            accent={{ bg: "bg-destructive/10", text: "text-destructive" }}
+            icon={<ArrowDownToLine />}
+            tone="destructive"
             label="Gastos"
             value={fmtMoney(summary.expensesTotal)}
             delta={pctOf(summary.expensesTotal, summary.prevExpenses)}
             invert
-            deltaMeta={`${fmtMoney(summary.prevExpenses)} → ${fmtMoney(summary.expensesTotal)} · ${summary.expensesCount} movs`}
+            caption={`${summary.expensesCount} movs · antes ${fmtMoney(summary.prevExpenses)}`}
           />
-          <MetricCard
-            compact
+          <StatCard
+            size="sm"
             loading={loading}
-            icon={<Clock className="h-5 w-5" />}
-            accent={{ bg: "bg-warning/10", text: "text-warning" }}
+            icon={<Clock />}
+            tone="warning"
             label="Hora pico"
             value={
               summary.peakHour != null
                 ? `${summary.peakHour}:00 – ${(summary.peakHour + 1) % 24}:00`
                 : "—"
             }
-            sub={
+            caption={
               summary.peakHour != null
                 ? `${summary.peakHourCount} ventas en esa hora`
                 : "Sin datos"
             }
           />
-          <MetricCard
-            compact
+          <StatCard
+            size="sm"
             loading={topLoading}
-            icon={<Crown className="h-5 w-5" />}
-            accent={{ bg: "bg-warning/10", text: "text-warning" }}
+            icon={<Crown />}
+            tone="warning"
             label="Más vendido"
             value={bestProduct ? bestProduct.name : "—"}
-            sub={
+            caption={
               bestProduct
                 ? `${bestProduct.total_sold} unidades vendidas`
                 : "Sin datos"

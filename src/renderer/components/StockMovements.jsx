@@ -25,6 +25,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
+import { StatCard } from "./ui/stat-card";
 import { CardSkeleton } from "./Skeletons";
 import { usePagination } from "../lib/usePagination";
 import PaginationBar from "./PaginationBar";
@@ -221,58 +222,38 @@ const StockMovements = () => {
         <CardSkeleton count={4} />
       ) : (
         <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-500/40 hover:shadow-md">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                <TrendingUp className="h-4 w-4" />
-              </span>
-              <p className="text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
-                Unidades Entradas
-              </p>
-            </div>
-            <p className="text-2xl font-bold tabular-nums text-foreground">
-              {totalIn}
-            </p>
-          </div>
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-red-500/40 hover:shadow-md">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-600 dark:text-red-400">
-                <TrendingDown className="h-4 w-4" />
-              </span>
-              <p className="text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
-                Unidades Salidas
-              </p>
-            </div>
-            <p className="text-2xl font-bold tabular-nums text-foreground">
-              {totalOut}
-            </p>
-          </div>
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-violet-500/40 hover:shadow-md">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400">
-                <Undo2 className="h-4 w-4" />
-              </span>
-              <p className="text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
-                Devoluciones
-              </p>
-            </div>
-            <p className="text-2xl font-bold tabular-nums text-foreground">
-              {totalDev}
-            </p>
-          </div>
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-violet-500/40 hover:shadow-md">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400">
-                <Store className="h-4 w-4" />
-              </span>
-              <p className="text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
-                Total Comprado
-              </p>
-            </div>
-            <p className="text-2xl font-bold tabular-nums text-foreground">
-              {fmtMoney(totalComprado)}
-            </p>
-          </div>
+          <StatCard
+            prominent
+            size="sm"
+            icon={<TrendingUp />}
+            tone="success"
+            label="Unidades entradas"
+            value={totalIn}
+          />
+          <StatCard
+            prominent
+            size="sm"
+            icon={<TrendingDown />}
+            tone="destructive"
+            label="Unidades salidas"
+            value={totalOut}
+          />
+          <StatCard
+            prominent
+            size="sm"
+            icon={<Undo2 />}
+            tone="info"
+            label="Devoluciones"
+            value={totalDev}
+          />
+          <StatCard
+            prominent
+            size="sm"
+            icon={<Store />}
+            tone="primary"
+            label="Total comprado"
+            value={fmtMoney(totalComprado)}
+          />
         </div>
       )}
 
