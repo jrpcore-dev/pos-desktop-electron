@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* `dark:` sigue el tema de la APP (clase .dark en <html>, App.jsx), no el
+   del sistema operativo. Sin esto Tailwind v4 usa prefers-color-scheme y las
+   clases dark: se desfasan del botón de tema. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ─── Tipografía local (autoalojada, sin CDN) ─────────────────────
    Instrument Sans: UI, textos y cifras (con `tabular-nums` para que
    los números de dinero alineen sin cambiar de familia).
