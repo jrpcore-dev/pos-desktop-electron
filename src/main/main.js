@@ -1375,11 +1375,72 @@ ipcMain.handle("search-products", async (event, query) => {
 
 ipcMain.handle("get-tiers", async () => {
   try {
+    // Con cuántos clientes y precios especiales tiene cada nivel (para la
+    // pantalla de niveles en Clientes).
     return db
-      .prepare("SELECT * FROM customer_tiers ORDER BY position, id")
+      .prepare(
+        `SELECT t.*,
+                (SELECT COUNT(*) FROM customers c WHERE c.tier_id = t.id) AS customers_count,
+                (SELECT COUNT(*) FROM tier_prices tp WHERE tp.tier_id = t.id) AS prices_count
+         FROM customer_tiers t ORDER BY t.position, t.id`,
+      )
       .all();
   } catch (e) {
     return [];
+  }
+});
+
+// ─── NIVELES DE PRECIO (Clientes → Niveles) ─────────────────────────────────
+// Sólo el propietario. Un nivel agrupa precios especiales por producto
+// (tier_prices) que se aplican a los clientes que lo tienen.
+const tierName = (name) => String(name || "").trim().slice(0, 40);
+
+ipcMain.handle("add-tier", async (event, { name, role } = {}) => {
+  try {
+    if (role !== "admin") return { success: false, error: "Solo el propietario puede crear niveles" };
+    const n = tierName(name);
+    if (!n) return { success: false, error: "Escribe el nombre del nivel" };
+    const pos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM customer_tiers").get().p;
+    const info = db
+      .prepare("INSERT INTO customer_tiers (name, position) VALUES (?, ?)")
+      .run(n, pos);
+    return { success: true, id: info.lastInsertRowid };
+  } catch (error) {
+    return {
+      success: false,
+      error: /UNIQUE/.test(error.message) ? "Ya existe un nivel con ese nombre" : error.message,
+    };
+  }
+});
+
+ipcMain.handle("update-tier", async (event, { id, name, role } = {}) => {
+  try {
+    if (role !== "admin") return { success: false, error: "Solo el propietario puede editar niveles" };
+    const n = tierName(name);
+    if (!n) return { success: false, error: "Escribe el nombre del nivel" };
+    db.prepare("UPDATE customer_tiers SET name = ? WHERE id = ?").run(n, id);
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: /UNIQUE/.test(error.message) ? "Ya existe un nivel con ese nombre" : error.message,
+    };
+  }
+});
+
+// Eliminar: los clientes con ese nivel quedan sin nivel (precio normal) y
+// se borran sus precios especiales.
+ipcMain.handle("delete-tier", async (event, { id, role } = {}) => {
+  try {
+    if (role !== "admin") return { success: false, error: "Solo el propietario puede eliminar niveles" };
+    db.transaction(() => {
+      db.prepare("UPDATE customers SET tier_id = NULL WHERE tier_id = ?").run(id);
+      db.prepare("DELETE FROM tier_prices WHERE tier_id = ?").run(id);
+      db.prepare("DELETE FROM customer_tiers WHERE id = ?").run(id);
+    })();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });
 

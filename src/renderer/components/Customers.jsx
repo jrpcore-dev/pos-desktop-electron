@@ -13,6 +13,7 @@ import {
   Copy,
   Wallet,
   HandCoins,
+  Layers,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { useToast } from "./ToastProvider";
@@ -67,6 +68,8 @@ import { useCashier } from "../contexts/CashierContext";
 import { useFeatures } from "../lib/useFeatures";
 
 import PageHeader from "./PageHeader";
+import ProductPicker from "./ProductPicker";
+import TiersSheet from "./TiersSheet";
 import { fmtMoney } from "../utils/format";
 import { receiptDocCss } from "../utils/receiptTemplate";
 
@@ -188,82 +191,6 @@ const CustomerForm = ({ value, onChange }) => (
   </div>
 );
 
-const ProductPicker = ({ onPick, onClose }) => {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 3) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    const t = setTimeout(async () => {
-      try {
-        const rows = await window.api.invoke("search-products", q);
-        if (!cancelled) setResults(rows || []);
-      } catch {
-        if (!cancelled) setResults([]);
-      }
-    }, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [query]);
-
-  return (
-    <div className="rounded-lg border border-border p-3">
-      <div className="relative mb-2">
-        <Search
-          size={18}
-          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-          aria-hidden
-        />
-        <Input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar producto (mín. 3)..."
-          className="h-12 pl-10 text-base"
-          autoFocus
-        />
-      </div>
-      <div className="max-h-56 overflow-auto">
-        {results.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => onPick(p)}
-            className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
-          >
-            <span className="min-w-0 truncate text-sm font-semibold text-foreground">
-              {p.name}
-            </span>
-            <span className="shrink-0 text-sm font-bold tabular-nums text-success">
-              {fmtMoney(p.price)}
-            </span>
-          </button>
-        ))}
-        {query.trim().length >= 3 && results.length === 0 && (
-          <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-            Sin resultados
-          </p>
-        )}
-      </div>
-      <Button
-        type="button"
-        variant="outline"
-        className="mt-2 h-11 w-full"
-        onClick={onClose}
-      >
-        Cancelar
-      </Button>
-    </div>
-  );
-};
-
 const QrDialog = ({ customer, open, onClose }) => {
   const notify = useToast();
   const [dataUrl, setDataUrl] = useState("");
@@ -360,6 +287,7 @@ const Customers = () => {
   const [credit, setCredit] = useState({ byCustomer: {}, receivable: 0, debtors: 0 });
   const [onlyDebt, setOnlyDebt] = useState(false);
   const [accountCustomer, setAccountCustomer] = useState(null);
+  const [tiersOpen, setTiersOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [tiers, setTiers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -561,10 +489,16 @@ const Customers = () => {
       <PageHeader
         description="Gestiona tus clientes, niveles y precios especiales"
         actions={
-          <Button onClick={openCreate} className="shrink-0">
-            <PlusCircle className="h-4 w-4" />
-            Nuevo Cliente
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setTiersOpen(true)} className="shrink-0">
+              <Layers className="h-4 w-4" />
+              Niveles
+            </Button>
+            <Button onClick={openCreate} className="shrink-0">
+              <PlusCircle className="h-4 w-4" />
+              Nuevo Cliente
+            </Button>
+          </>
         }
       />
 
@@ -943,6 +877,16 @@ const Customers = () => {
       {qrCustomer && (
         <QrDialog customer={qrCustomer} open onClose={() => setQrCustomer(null)} />
       )}
+
+      <TiersSheet
+        open={tiersOpen}
+        onClose={() => setTiersOpen(false)}
+        isAdmin={isAdmin}
+        onChanged={() => {
+          window.api.invoke("get-tiers").then(setTiers).catch(() => {});
+          loadCustomers(searchTerm, true);
+        }}
+      />
 
       <CustomerCreditSheet
         customer={accountCustomer}
