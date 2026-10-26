@@ -1947,7 +1947,7 @@ ipcMain.handle("get-stock-conflicts", async () => {
       .prepare(
         `SELECT s.id, s.folio, s.created_at, s.total, s.device_id,
                 s.conflict_detail, s.cashier_name,
-                pd.device_code, pd.name AS device_name
+                pd.device_code, pd.device_name
          FROM sales s
          LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
          WHERE s.stock_conflict = 1 AND COALESCE(s.conflict_resolved, 0) = 0
