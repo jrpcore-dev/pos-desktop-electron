@@ -38,6 +38,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { useToast } from "@/components/ToastProvider";
 import { cn } from "@/lib/utils";
 
@@ -54,14 +55,15 @@ import {
 } from "../utils/scaleConfig";
 
 const TABS = [
-  { id: "store", label: "Datos Generales", icon: Store },
-  { id: "ticket", label: "Tickets", icon: ReceiptText },
-  { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal },
-  { id: "features", label: "Funciones", icon: Blocks },
-  { id: "mobile", label: "App Móvil", icon: Smartphone },
-  { id: "printer", label: "Impresora", icon: Printer },
-  { id: "scale", label: "Báscula", icon: Scale },
+  { id: "store", label: "Datos Generales", icon: Store, group: "Tienda" },
+  { id: "ticket", label: "Tickets", icon: ReceiptText, group: "Tienda" },
+  { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal, group: "Operación" },
+  { id: "features", label: "Funciones", icon: Blocks, group: "Operación" },
+  { id: "printer", label: "Impresora", icon: Printer, group: "Dispositivos" },
+  { id: "scale", label: "Báscula", icon: Scale, group: "Dispositivos" },
+  { id: "mobile", label: "App Móvil", icon: Smartphone, group: "Dispositivos" },
 ];
+const TAB_GROUPS = ["Tienda", "Operación", "Dispositivos"];
 
 const TABS_META = {
   store: {
@@ -457,9 +459,11 @@ function ConfigurationScreen() {
       setActivePrintMode(printMode);
       notify("Configuración de impresora guardada correctamente.", "success");
       reloadPrinters();
+      return true;
     } catch (err) {
       console.error("Error saving printer settings:", err);
       notify("Error al guardar la configuración de impresora.", "error");
+      return false;
     } finally {
       setSavingPrinter(false);
     }
@@ -540,7 +544,7 @@ function ConfigurationScreen() {
   const handleSaveStore = async () => {
     if (!storeName.trim()) {
       setStoreError("El nombre de la tienda es obligatorio");
-      return;
+      return false;
     }
     setStoreError("");
     setSavingStore(true);
@@ -561,9 +565,11 @@ function ConfigurationScreen() {
         })
       );
       notify("Datos generales guardados correctamente.", "success");
+      return true;
     } catch (err) {
       console.error("Error saving store settings:", err);
       notify("Error al guardar los datos generales.", "error");
+      return false;
     } finally {
       setSavingStore(false);
     }
@@ -598,6 +604,7 @@ function ConfigurationScreen() {
   });
   const [savedFeatureFlags, setSavedFeatureFlags] = useState(featureFlags);
   const [savingFeatures, setSavingFeatures] = useState(false);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   useEffect(() => {
     const loadTicketSettings = async () => {
@@ -628,6 +635,8 @@ function ConfigurationScreen() {
         setSavedFeatureFlags(flags);
       } catch (err) {
         console.error("Error loading ticket settings:", err);
+      } finally {
+        setPrefsLoaded(true);
       }
     };
     loadTicketSettings();
@@ -659,9 +668,11 @@ function ConfigurationScreen() {
         printFooterNote
       );
       notify("Ajustes de tickets guardados correctamente.", "success");
+      return true;
     } catch (err) {
       console.error("Error saving ticket settings:", err);
       notify("Error al guardar los ajustes de tickets.", "error");
+      return false;
     } finally {
       setSavingTicket(false);
     }
@@ -695,9 +706,11 @@ function ConfigurationScreen() {
       setSavedFeatureFlags(flags);
       window.dispatchEvent(new Event(FEATURES_EVENT));
       notify("Funciones guardadas.", "success");
+      return true;
     } catch (err) {
       console.error("Error saving features:", err);
       notify("Error al guardar las funciones.", "error");
+      return false;
     } finally {
       setSavingFeatures(false);
     }
@@ -758,16 +771,6 @@ function ConfigurationScreen() {
           </ToggleBlock>
         </section>
 
-        <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
-          <Button onClick={handleSaveFeatures} disabled={savingFeatures}>
-            {savingFeatures ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            {savingFeatures ? "Guardando..." : "Guardar cambios"}
-          </Button>
-        </div>
       </>
     );
   };
@@ -794,9 +797,11 @@ function ConfigurationScreen() {
         })
       );
       notify("Parámetros del POS guardados correctamente.", "success");
+      return true;
     } catch (err) {
       console.error("Error saving POS settings:", err);
       notify("Error al guardar los parámetros del POS.", "error");
+      return false;
     } finally {
       setSavingPos(false);
     }
@@ -1102,19 +1107,6 @@ function ConfigurationScreen() {
         <p className="mt-2 text-sm font-medium text-destructive">{storeError}</p>
       )}
 
-      <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
-        <Button
-          onClick={handleSaveStore}
-          disabled={loadingStore || savingStore}
-        >
-          {savingStore ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          {savingStore ? "Guardando..." : "Guardar cambios"}
-        </Button>
-      </div>
     </>
   );
 
@@ -1258,16 +1250,6 @@ function ConfigurationScreen() {
         </div>
       </section>
 
-      <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
-        <Button onClick={handleSaveTicket} disabled={savingTicket}>
-          {savingTicket ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          {savingTicket ? "Guardando..." : "Guardar cambios"}
-        </Button>
-      </div>
     </>
   );
 
@@ -1347,16 +1329,6 @@ function ConfigurationScreen() {
 
       </section>
 
-      <div className="-mx-6 -mb-6 mt-2 flex items-center justify-end gap-3 border-t border-border/40 bg-muted/30 px-6 py-4 lg:-mx-8 lg:-mb-8 lg:px-8">
-        <Button onClick={handleSavePos} disabled={savingPos}>
-          {savingPos ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          {savingPos ? "Guardando..." : "Guardar cambios"}
-        </Button>
-      </div>
     </>
   );
 
@@ -1820,14 +1792,6 @@ function ConfigurationScreen() {
                   )}
                   Imprimir prueba
                 </Button>
-                <Button onClick={handleSavePrinter} disabled={savingPrinter}>
-                  {savingPrinter ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Guardar
-                </Button>
               </div>
             </div>
           </FieldRow>
@@ -1835,6 +1799,125 @@ function ConfigurationScreen() {
       </>
     );
   };
+
+  // ─── Cambios sin guardar ────────────────────────────────────────────────
+  // Cada pestaña con guardado manual expone su valor actual, cómo aplicar un
+  // valor (para "Descartar") y su guardado. La "foto" guardada se toma al
+  // terminar de cargar y después de guardar bien.
+  const [savedSnap, setSavedSnap] = useState({});
+  const [pendingTab, setPendingTab] = useState(null);
+  const tabForms = {
+    store: {
+      value: { storeName, storeRfc, storePhone, storeEmail, storeAddress, storeLogo },
+      apply: (v) => {
+        setStoreName(v.storeName);
+        setStoreRfc(v.storeRfc);
+        setStorePhone(v.storePhone);
+        setStoreEmail(v.storeEmail);
+        setStoreAddress(v.storeAddress);
+        setStoreLogo(v.storeLogo);
+        setStoreError("");
+      },
+      save: handleSaveStore,
+      saving: savingStore,
+    },
+    ticket: {
+      value: { printEnabled, printTwoTickets, printTaxBreakdown, printHeaderNote, printFooterNote },
+      apply: (v) => {
+        setPrintEnabled(v.printEnabled);
+        setPrintTwoTickets(v.printTwoTickets);
+        setPrintTaxBreakdown(v.printTaxBreakdown);
+        setPrintHeaderNote(v.printHeaderNote);
+        setPrintFooterNote(v.printFooterNote);
+      },
+      save: handleSaveTicket,
+      saving: savingTicket,
+    },
+    pos: {
+      value: { roundingEnabled, roundingMode, saleWithoutStock, pinForVoid },
+      apply: (v) => {
+        setRoundingEnabled(v.roundingEnabled);
+        setRoundingMode(v.roundingMode);
+        setSaleWithoutStock(v.saleWithoutStock);
+        setPinForVoid(v.pinForVoid);
+      },
+      save: handleSavePos,
+      saving: savingPos,
+    },
+    features: {
+      value: featureFlags,
+      savedValue: savedFeatureFlags,
+      apply: setFeatureFlags,
+      save: handleSaveFeatures,
+      saving: savingFeatures,
+    },
+    printer: {
+      value: { printerName, paperWidth, printMode },
+      savedValue: {
+        printerName: activePrinterName,
+        paperWidth: activePaperWidth,
+        printMode: activePrintMode,
+      },
+      apply: (v) => {
+        setPrinterName(v.printerName);
+        setPaperWidth(v.paperWidth);
+        setPrintMode(v.printMode);
+      },
+      save: handleSavePrinter,
+      saving: savingPrinter,
+    },
+  };
+  const savedOf = (tab) => tabForms[tab]?.savedValue ?? savedSnap[tab];
+  const isDirty = (tab) => {
+    const f = tabForms[tab];
+    const sv = savedOf(tab);
+    return !!f && !!sv && JSON.stringify(f.value) !== JSON.stringify(sv);
+  };
+  const activeDirty = isDirty(activeTab);
+  const activeForm = tabForms[activeTab];
+
+  // Foto inicial cuando termina cada carga.
+  useEffect(() => {
+    if (!loadingStore)
+      setSavedSnap((s) => (s.store ? s : { ...s, store: tabForms.store.value }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingStore]);
+  useEffect(() => {
+    if (prefsLoaded)
+      setSavedSnap((s) =>
+        s.ticket ? s : { ...s, ticket: tabForms.ticket.value, pos: tabForms.pos.value },
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsLoaded]);
+
+  const saveActive = async () => {
+    if (!activeForm || activeForm.saving) return;
+    const value = activeForm.value;
+    const ok = await activeForm.save();
+    if (ok && !activeForm.savedValue)
+      setSavedSnap((s) => ({ ...s, [activeTab]: value }));
+  };
+  const discardActive = () => {
+    const sv = savedOf(activeTab);
+    if (activeForm && sv) activeForm.apply(sv);
+  };
+  // Cambiar de pestaña con cambios pendientes pide confirmación.
+  const requestTab = (id) => {
+    if (id === activeTab) return;
+    if (activeDirty) setPendingTab(id);
+    else setActiveTab(id);
+  };
+  // Ctrl+S guarda la pestaña actual.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && activeDirty) {
+        e.preventDefault();
+        saveActive();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   return (
     <div className="mx-auto w-full max-w-7xl">
@@ -1851,47 +1934,50 @@ function ConfigurationScreen() {
 
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
         <aside className="w-full shrink-0 lg:sticky lg:top-20 lg:w-80">
-          <nav className="flex flex-col rounded-xl border border-border bg-card px-2 py-2.5">
-            <span className="flex items-center gap-2 px-3 pt-2 pb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-              Ajustes
-              <span aria-hidden className="h-px min-w-3 flex-1 bg-border" />
-            </span>
-            <div className="flex flex-col gap-0.5">
-              {TABS.map(({ id, label, icon: TabIcon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setActiveTab(id)}
-                  aria-current={activeTab === id ? "true" : undefined}
-                  className={cn(
-                    "group relative flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition-all duration-150 outline-none",
-                    "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                    activeTab === id
-                      ? "bg-gradient-to-r from-primary/18 via-primary/[0.07] to-transparent font-semibold text-foreground"
-                      : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
-                  )}
-                >
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "absolute left-0 top-1/2 h-7 w-[2px] -translate-y-1/2 rounded-r-full transition-all duration-200",
-                      activeTab === id ? "bg-primary opacity-100" : "opacity-0",
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center justify-center transition-transform duration-150 group-hover:translate-x-0.5 [&>svg]:h-[18px] [&>svg]:w-[18px]",
-                      activeTab === id
-                        ? "text-primary"
-                        : "text-muted-foreground group-hover:text-foreground",
-                    )}
-                  >
-                    <TabIcon />
-                  </span>
-                  <span className="truncate">{label}</span>
-                </button>
-              ))}
-            </div>
+          <nav className="flex flex-col gap-3 rounded-xl border border-border bg-card p-2.5">
+            {TAB_GROUPS.map((group) => (
+              <div key={group}>
+                <p className="px-3 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">{group}</p>
+                <div className="flex flex-col gap-0.5">
+                  {TABS.filter((t) => t.group === group).map(({ id, label, icon: TabIcon }) => {
+                    const active = activeTab === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => requestTab(id)}
+                        aria-current={active ? "true" : undefined}
+                        className={cn(
+                          "group relative flex h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm font-medium outline-none transition-colors duration-150",
+                          "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                          active
+                            ? "bg-primary/10 font-semibold text-foreground"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary transition-opacity",
+                            active ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        <TabIcon
+                          className={cn(
+                            "size-[18px] shrink-0",
+                            active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+                          )}
+                        />
+                        <span className="flex-1 truncate">{label}</span>
+                        {isDirty(id) && (
+                          <span className="size-2 shrink-0 rounded-full bg-warning" aria-label="Cambios sin guardar" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
         </aside>
 
@@ -1921,6 +2007,47 @@ function ConfigurationScreen() {
               {activeTab === "scale" && renderScaleTab()}
             </div>
           </Card>
+
+          {activeDirty && (
+            <div className="sticky bottom-4 z-20 mt-4 flex items-center justify-between gap-3 rounded-xl border border-primary/25 bg-card px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <span className="size-2 rounded-full bg-warning" aria-hidden />
+                Tienes cambios sin guardar
+                <span className="hidden text-xs font-normal text-muted-foreground sm:inline">
+                  · Ctrl+S para guardar
+                </span>
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" onClick={discardActive} disabled={activeForm?.saving}>
+                  Descartar
+                </Button>
+                <Button onClick={saveActive} disabled={activeForm?.saving}>
+                  {activeForm?.saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {activeForm?.saving ? "Guardando..." : "Guardar cambios"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <ConfirmDialog
+            open={!!pendingTab}
+            onOpenChange={(o) => !o && setPendingTab(null)}
+            title="Cambios sin guardar"
+            description="Tienes cambios sin guardar en esta sección. Si cambias de sección se descartarán."
+            confirmLabel="Descartar y continuar"
+            cancelLabel="Seguir editando"
+            variant="default"
+            iconColor="warning"
+            onConfirm={() => {
+              discardActive();
+              setActiveTab(pendingTab);
+              setPendingTab(null);
+            }}
+          />
         </div>
       </div>
     </div>
