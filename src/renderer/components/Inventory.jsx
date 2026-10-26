@@ -93,6 +93,7 @@ import { useCashier } from "../contexts/CashierContext";
 import { mxToday, formatMXTime } from "../utils/dateUtils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { getStockStatus } from "./ui/stock-status";
+import { StatCard } from "./ui/stat-card";
 import { promoInfo } from "../utils/cartMath";
 
 import PageHeader from "./PageHeader";
@@ -661,56 +662,53 @@ const FilterCombobox = ({ label, value, options, emptyValue, onChange }) => {
   );
 };
 
-const InventoryStatsCards = React.memo(function InventoryStatsCards({ stats }) {
-  const items = [
-    {
-      label: "Total Productos",
-      value: stats.totalCount,
-      icon: Package,
-      iconCls: "bg-primary/10 text-primary",
-      hoverCls: "hover:border-primary/40",
-    },
-    {
-      label: "Stock Bajo",
-      value: stats.lowStockCount,
-      icon: TriangleAlert,
-      iconCls: "bg-red-500/10 text-red-600 dark:text-red-400",
-      hoverCls: "hover:border-red-500/40",
-    },
-    {
-      label: "En Rebaja",
-      value: stats.discountedCount,
-      icon: Percent,
-      iconCls: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-      hoverCls: "hover:border-amber-500/40",
-    },
-  ];
-
+// Las tarjetas son filtros rápidos: "Stock bajo" y "En rebaja" filtran la
+// tabla (clic de nuevo para quitarlo); "Total productos" quita el filtro.
+const InventoryStatsCards = React.memo(function InventoryStatsCards({
+  stats,
+  stockFilter,
+  onStockFilter,
+}) {
+  const toggle = (key) => onStockFilter(stockFilter === key ? "" : key);
   return (
     <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {items.map((s) => (
-        <div
-          key={s.label}
-          className={`flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${s.hoverCls}`}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${s.iconCls}`}
-            >
-              <s.icon className="h-4 w-4" />
-            </span>
-            <p className="text-xs font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
-              {s.label}
-            </p>
-          </div>
-          <p className="text-2xl font-bold tabular-nums text-foreground">
-            {s.value}
-          </p>
-        </div>
-      ))}
+      <StatCard
+        prominent
+        size="sm"
+        icon={<Package />}
+        tone="primary"
+        label="Total productos"
+        value={stats.totalCount}
+        onClick={() => onStockFilter("")}
+        title="Ver todos los productos"
+      />
+      <StatCard
+        prominent
+        size="sm"
+        icon={<TriangleAlert />}
+        tone="destructive"
+        label="Stock bajo"
+        value={stats.lowStockCount}
+        onClick={() => toggle("low")}
+        active={stockFilter === "low"}
+        title={stockFilter === "low" ? "Quitar filtro" : "Ver productos con stock bajo"}
+      />
+      <StatCard
+        prominent
+        size="sm"
+        icon={<Percent />}
+        tone="warning"
+        label="En rebaja"
+        value={stats.discountedCount}
+        onClick={() => toggle("discounted")}
+        active={stockFilter === "discounted"}
+        title={stockFilter === "discounted" ? "Quitar filtro" : "Ver productos en rebaja"}
+      />
     </div>
   );
 });
+
+const STOCK_FILTER_LABELS = { low: "Stock bajo", discounted: "En rebaja" };
 
 const Inventory = () => {
   const notify = useToast();
@@ -762,12 +760,15 @@ const Inventory = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSupplier, setSelectedSupplier] = useState("");
+  // Filtro rápido de las tarjetas: "" | "low" | "discounted".
+  const [stockFilter, setStockFilter] = useState("");
   const [sortField, setSortField] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
   const isFiltered =
     Boolean(debouncedSearch) ||
     Boolean(selectedCategory) ||
-    Boolean(selectedSupplier);
+    Boolean(selectedSupplier) ||
+    Boolean(stockFilter);
   const pageSize = isFiltered ? PAGE_SIZE : Math.min(rowsPerPage, MAX_ROWS_PER_PAGE);
   const scanBufferRef = useRef("");
   const scanTimeoutRef = useRef(null);
@@ -782,6 +783,7 @@ const Inventory = () => {
         search: debouncedSearch || undefined,
         category_id: selectedCategory || undefined,
         supplier_id: selectedSupplier || undefined,
+        stock_filter: stockFilter || undefined,
         sortField,
         sortDir,
         page,
@@ -800,6 +802,7 @@ const Inventory = () => {
     debouncedSearch,
     selectedCategory,
     selectedSupplier,
+    stockFilter,
     sortField,
     sortDir,
     page,
@@ -909,7 +912,7 @@ const Inventory = () => {
     setPage(0);
     setScrollState({ top: 0, height: 600 });
     if (tableScrollRef.current) tableScrollRef.current.scrollTop = 0;
-  }, [searchTerm, selectedCategory, selectedSupplier]);
+  }, [searchTerm, selectedCategory, selectedSupplier, stockFilter]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm), 150);
@@ -942,6 +945,22 @@ const Inventory = () => {
       });
     },
     [isFiltered, loading, page, total, pageSize],
+  );
+
+  // "Stock bajo" ordena por existencia (los más urgentes primero); al salir
+  // de ese filtro se vuelve al orden por nombre.
+  const handleStockFilter = useCallback(
+    (key) => {
+      if (key === "low") {
+        setSortField("stock");
+        setSortDir("asc");
+      } else if (stockFilter === "low") {
+        setSortField("name");
+        setSortDir("asc");
+      }
+      setStockFilter(key);
+    },
+    [stockFilter],
   );
 
   const handleSort = (field) => {
@@ -1244,7 +1263,11 @@ const Inventory = () => {
       {loading && !hasLoadedOnce ? (
         <CardSkeleton count={3} />
       ) : (
-        <InventoryStatsCards stats={stats} />
+        <InventoryStatsCards
+          stats={stats}
+          stockFilter={stockFilter}
+          onStockFilter={handleStockFilter}
+        />
       )}
 
       <div className="mb-5 rounded-xl border border-border bg-card p-4">
@@ -1286,6 +1309,34 @@ const Inventory = () => {
           />
         </div>
       </div>
+
+      {stockFilter && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Mostrando:</span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-3 pr-1 font-medium",
+              stockFilter === "low"
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-warning/40 bg-warning/10 text-amber-700 dark:text-warning",
+            )}
+          >
+            {STOCK_FILTER_LABELS[stockFilter]}
+            <span className="tabular-nums opacity-80">
+              · {total} {total === 1 ? "producto" : "productos"}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleStockFilter("")}
+              aria-label="Quitar filtro"
+              title="Quitar filtro"
+              className="ml-0.5 inline-flex size-6 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <X className="size-3.5" />
+            </button>
+          </span>
+        </div>
+      )}
 
       <STooltipProvider delayDuration={200}>
         <div className="flex h-full w-full flex-col">

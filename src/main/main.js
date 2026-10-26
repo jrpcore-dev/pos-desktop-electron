@@ -879,6 +879,7 @@ ipcMain.handle("get-products", async (event, params) => {
     search,
     category_id,
     supplier_id,
+    stock_filter,
     sortField,
     sortDir,
     page,
@@ -902,9 +903,20 @@ ipcMain.handle("get-products", async (event, params) => {
     conditions.push("p.supplier_id = ?");
     queryParams.push(parseInt(supplier_id));
   }
+  // Filtro rápido de las tarjetas de Inventario. Sólo afecta la lista: los
+  // contadores (stats) siguen calculándose sobre los demás filtros. Mismas
+  // reglas que lowStockCount / discountedCount para que lista y número
+  // coincidan.
+  const STOCK_FILTERS = {
+    low: "p.stock <= COALESCE(p.min_stock, 5)",
+    discounted: "p.discount_percent > 0",
+  };
+  const listConditions = STOCK_FILTERS[stock_filter]
+    ? [...conditions, STOCK_FILTERS[stock_filter]]
+    : conditions;
   const where =
-    conditions.length > 0
-      ? "WHERE " + conditions.join(" AND ") + " AND p.is_active = 1"
+    listConditions.length > 0
+      ? "WHERE " + listConditions.join(" AND ") + " AND p.is_active = 1"
       : "WHERE p.is_active = 1";
   const allowedSort = { name: "p.name", price: "p.price", stock: "p.stock" };
   const col = allowedSort[sortField] || "p.name";
