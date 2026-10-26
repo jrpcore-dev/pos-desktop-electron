@@ -56,7 +56,7 @@ const categorySchema = z.object({
 const CategoryRow = memo(function CategoryRow({ category, colorIndex, onEdit, onDelete }) {
   const col = CAT_COLORS[colorIndex % CAT_COLORS.length];
   return (
-    <TableRow>
+    <TableRow className="group hover:bg-muted/40">
       <TableCell className="px-4">
         <div className="flex items-center gap-2.5">
           <span
@@ -78,7 +78,7 @@ const CategoryRow = memo(function CategoryRow({ category, colorIndex, onEdit, on
         {category.product_count || 0}
       </TableCell>
       <TableCell className="px-4 text-right">
-        <div className="flex items-center justify-end gap-1">
+        <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -270,17 +270,17 @@ const filtered = useMemo(
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
           <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-transparent">
-              <TableHead className="px-4 font-semibold text-foreground/75">
+            <TableRow className="hover:bg-transparent">
+              <TableHead>
                 Categoría
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Descripción
               </TableHead>
-              <TableHead className="w-24 px-4 font-semibold text-foreground/75">
+              <TableHead className="w-24">
                 Productos
               </TableHead>
-              <TableHead className="w-28 px-4 text-right font-semibold text-foreground/75">
+              <TableHead className="w-28 text-right">
                 Acciones
               </TableHead>
             </TableRow>

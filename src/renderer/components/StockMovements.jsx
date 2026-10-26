@@ -426,30 +426,30 @@ const StockMovements = () => {
         <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
           <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-transparent">
-              <TableHead className="px-4 font-semibold text-foreground/75">
+            <TableRow className="hover:bg-transparent">
+              <TableHead>
                 Fecha
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Producto
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Código
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Tipo
               </TableHead>
-              <TableHead className="px-4 text-right font-semibold text-foreground/75">
+              <TableHead className="text-right">
                 Cantidad
               </TableHead>
-              <TableHead className="px-4 text-right font-semibold text-foreground/75">
+              <TableHead className="text-right">
                 Costo
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Notas
               </TableHead>
               {isAdmin && (
-                <TableHead className="px-4 font-semibold text-foreground/75">
+                <TableHead>
                   Registró
                 </TableHead>
               )}

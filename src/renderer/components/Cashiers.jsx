@@ -16,6 +16,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { Button } from "./ui/button";
+import { InitialsAvatar } from "./ui/initials-avatar";
 import { Badge } from "./ui/badge";
 import { ConfirmDialog } from "./ui/confirm";
 import {
@@ -53,43 +54,28 @@ const makeCashierSchema = (isCreate) =>
 const CashierRow = memo(function CashierRow({ cashier, onEdit, onDelete }) {
   const isAdmin = cashier.role === "admin";
   return (
-    <TableRow>
+    <TableRow className="group h-14 hover:bg-muted/40">
       <TableCell className="px-4">
-        <div className="flex items-center gap-2.5">
-          {isAdmin ? (
-            <span
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-              style={{ backgroundColor: "hsl(var(--brand))", color: "#fff" }}
-              aria-hidden="true"
-            >
-              <User size={16} />
-            </span>
-          ) : (
-            <span
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
-              aria-hidden="true"
-            >
-              <User size={16} />
-            </span>
-          )}
-          <span className="truncate text-sm font-semibold text-foreground">
+        <div className="flex items-center gap-3">
+          <InitialsAvatar id={cashier.id} name={cashier.name} solid={isAdmin} />
+          <span className="truncate text-sm font-medium text-foreground">
             {cashier.name}
           </span>
         </div>
       </TableCell>
       <TableCell className="px-4">
-        <Badge variant={isAdmin ? "default" : "outline"}>
+        <Badge variant={isAdmin ? "soft-primary" : "soft-neutral"}>
           {isAdmin ? "Propietario" : "Cajero"}
         </Badge>
       </TableCell>
       <TableCell className="px-4">
-        <Badge variant={cashier.is_active ? "success" : "outline"}>
+        <Badge variant={cashier.is_active ? "soft-success" : "soft-neutral"}>
           {cashier.is_active ? "Activo" : "Inactivo"}
         </Badge>
       </TableCell>
       <TableCell className="px-4 text-right">
         {!isAdmin && (
-          <div className="flex items-center justify-end gap-1">
+          <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -253,17 +239,17 @@ const Cashiers = () => {
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
           <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-transparent">
-              <TableHead className="px-4 font-semibold text-foreground/75">
+            <TableRow className="hover:bg-transparent">
+              <TableHead>
                 Nombre
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Rol
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Estado
               </TableHead>
-              <TableHead className="w-28 px-4 text-right font-semibold text-foreground/75">
+              <TableHead className="w-28 text-right">
                 Acciones
               </TableHead>
             </TableRow>

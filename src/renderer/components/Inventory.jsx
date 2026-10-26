@@ -269,7 +269,8 @@ const SortHead = ({ label, k, align = "left", sortField, sortDir, onSort }) => {
   return (
     <STableHead
       className={cn(
-        "h-10 cursor-pointer select-none whitespace-nowrap px-4 font-semibold text-foreground/75 hover:text-foreground",
+        "cursor-pointer select-none whitespace-nowrap hover:text-foreground",
+        active && "text-foreground",
         align === "right" && "text-right",
         align === "center" && "text-center",
       )}
@@ -386,8 +387,8 @@ const ProductRow = React.memo(
         data-filtered={dataFiltered ? "true" : "false"}
         className={
           dataFiltered
-            ? "py-0.8 hover:bg-primary/5"
-            : "[&_.s-cell]:py-1.5 hover:bg-primary/5"
+            ? "py-0.8 hover:bg-muted/40"
+            : "[&_.s-cell]:py-1.5 hover:bg-muted/40"
         }
       >
         <STableCell className="px-4 [&_.s-cell]:px-2">
@@ -1385,18 +1386,18 @@ const Inventory = () => {
           <div
             ref={tableScrollRef}
             onScroll={handleScroll}
-            className="min-h-0 w-full flex-1 overflow-y-auto rounded-xl border border-border bg-card"
+            className="min-h-0 w-full flex-1 overflow-y-auto rounded-xl border border-border bg-card shadow-xs"
           >
-            <STable>
+            <STable containerClassName="overflow-visible">
               <STableHeader>
-                <STableRow className="sticky top-0 z-10 bg-muted hover:bg-transparent">
+                <STableRow className="hover:bg-transparent">
                   <SortHead label="Producto" k="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                   <SortHead label="Precio" k="price" align="right" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                   <SortHead label="Stock" k="stock" align="center" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                  <STableHead className="h-10 px-4 text-center font-semibold text-foreground/75">
+                  <STableHead className="text-center">
                     Estado
                   </STableHead>
-                  <STableHead className="h-10 px-4 text-center font-semibold text-foreground/75">
+                  <STableHead className="text-center">
                     Acciones
                   </STableHead>
                 </STableRow>

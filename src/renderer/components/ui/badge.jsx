@@ -23,6 +23,7 @@ const badgeVariants = cva(
           "border-transparent bg-success text-success-foreground shadow hover:bg-success/85",
         warning:
           "border-transparent bg-warning text-warning-foreground shadow hover:bg-warning/85",
+        "soft-primary": "border-primary/20 bg-primary/10 text-primary",
         "soft-success": "border-success/25 bg-success/10 text-success",
         "soft-warning":
           "border-warning/30 bg-warning/12 text-amber-700 dark:text-warning",

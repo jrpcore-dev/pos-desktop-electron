@@ -869,15 +869,15 @@ const Transacciones = () => {
           <div className="overflow-hidden rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-transparent">
+                <TableRow className="hover:bg-transparent">
                   <SortHead label="Venta" k="id" active={saleSortKey === "id"} dir={saleSortDir} onSort={handleSaleSort} />
                   <SortHead label="Fecha" k="created_at" active={saleSortKey === "created_at"} dir={saleSortDir} onSort={handleSaleSort} />
                   <SortHead label="Cajero" k="cashier_name" active={saleSortKey === "cashier_name"} dir={saleSortDir} onSort={handleSaleSort} />
-                  <TableHead className="px-4 font-semibold text-foreground/75">Caja</TableHead>
+                  <TableHead>Caja</TableHead>
                   <SortHead label="Método" k="payment_method" active={saleSortKey === "payment_method"} dir={saleSortDir} onSort={handleSaleSort} />
-                  <TableHead className="px-4 font-semibold text-foreground/75">Estado</TableHead>
+                  <TableHead>Estado</TableHead>
                   <SortHead label="Monto" k="total" align="right" active={saleSortKey === "total"} dir={saleSortDir} onSort={handleSaleSort} />
-                  <TableHead className="px-4 text-center font-semibold text-foreground/75">Detalle</TableHead>
+                  <TableHead className="text-center">Detalle</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -957,11 +957,11 @@ const Transacciones = () => {
           <div className="overflow-hidden rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-transparent">
+                <TableRow className="hover:bg-transparent">
                   <SortHead label="Fecha" k="created_at" active={expSortKey === "created_at"} dir={expSortDir} onSort={handleExpSort} />
                   <SortHead label="Descripción" k="reason" active={expSortKey === "reason"} dir={expSortDir} onSort={handleExpSort} />
-                  <TableHead className="px-4 font-semibold text-foreground/75">Tipo</TableHead>
-                  <TableHead className="px-4 font-semibold text-foreground/75">Estado</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead>Estado</TableHead>
                   <SortHead label="Monto" k="amount" align="right" active={expSortKey === "amount"} dir={expSortDir} onSort={handleExpSort} />
                 </TableRow>
               </TableHeader>
@@ -1106,12 +1106,12 @@ const Transacciones = () => {
               <div className="overflow-hidden rounded-xl border border-border">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-muted/40 hover:bg-transparent">
-                      <TableHead className="px-4 font-semibold text-foreground/75">Producto</TableHead>
-                      <TableHead className="px-4 font-semibold text-foreground/75">Código</TableHead>
-                      <TableHead className="px-4 text-right font-semibold text-foreground/75">Cant.</TableHead>
-                      <TableHead className="px-4 text-right font-semibold text-foreground/75">Precio</TableHead>
-                      <TableHead className="px-4 text-right font-semibold text-foreground/75">Subtotal</TableHead>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Producto</TableHead>
+                      <TableHead>Código</TableHead>
+                      <TableHead className="text-right">Cant.</TableHead>
+                      <TableHead className="text-right">Precio</TableHead>
+                      <TableHead className="text-right">Subtotal</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

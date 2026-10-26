@@ -138,23 +138,23 @@ CatalogFilter.displayName = "CatalogFilter";
 const CatalogTableHeader = memo(function CatalogTableHeader() {
   return (
     <TableHeader>
-      <TableRow className="bg-primary/[0.05] hover:bg-transparent">
-        <TableHead className="px-4 font-semibold text-primary/80">
+      <TableRow className="hover:bg-transparent">
+        <TableHead>
           Producto
         </TableHead>
-        <TableHead className="px-4 font-semibold text-primary/80">
+        <TableHead>
           Categoría
         </TableHead>
-        <TableHead className="px-4 font-semibold text-primary/80">
+        <TableHead>
           Código
         </TableHead>
-        <TableHead className="px-4 text-right font-semibold text-primary/80">
+        <TableHead className="text-right">
           Costo ref.
         </TableHead>
-        <TableHead className="px-4 text-center font-semibold text-primary/80">
+        <TableHead className="text-center">
           Estado
         </TableHead>
-        <TableHead className="w-40 px-4 text-right font-semibold text-primary/80">
+        <TableHead className="w-40 text-right">
           Acciones
         </TableHead>
       </TableRow>

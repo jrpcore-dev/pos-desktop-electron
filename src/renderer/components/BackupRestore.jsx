@@ -496,7 +496,7 @@ const BackupRestore = () => {
           </div>
           <Table>
             <TableHeader>
-              <TableRow className="border-b border-border bg-muted/50">
+              <TableRow className="hover:bg-transparent">
                 <TableHead>
                   <Skeleton className="h-4 w-20" />
                 </TableHead>
@@ -554,17 +554,17 @@ const BackupRestore = () => {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow className="border-b border-border bg-muted/50">
-                  <TableHead className="text-xs font-semibold uppercase tracking-wide text-foreground/75">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>
                     Archivo
                   </TableHead>
-                  <TableHead className="w-28 text-right text-xs font-semibold uppercase tracking-wide text-foreground/75">
+                  <TableHead className="w-28 text-right">
                     Tamaño
                   </TableHead>
-                  <TableHead className="w-44 text-xs font-semibold uppercase tracking-wide text-foreground/75">
+                  <TableHead className="w-44">
                     Fecha
                   </TableHead>
-                  <TableHead className="w-40 text-center text-xs font-semibold uppercase tracking-wide text-foreground/75">
+                  <TableHead className="w-40 text-center">
                     Acciones
                   </TableHead>
                 </TableRow>

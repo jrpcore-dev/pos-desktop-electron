@@ -2,8 +2,10 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Table = React.forwardRef(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
+// `containerClassName`: p. ej. un alto máximo para que la tabla tenga su
+// propio scroll y un encabezado `sticky` se quede fijo al bajar.
+const Table = React.forwardRef(({ className, containerClassName, ...props }, ref) => (
+  <div className={cn("relative w-full overflow-auto", containerClassName)}>
     <table
       ref={ref}
       className={cn("w-full caption-bottom text-sm", className)}
@@ -55,7 +57,9 @@ const TableHead = React.forwardRef(({ className, ...props }, ref) => (
   <th
     ref={ref}
     className={cn(
-      "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
+      // Encabezado estándar del sistema: gris suave, 15 px seminegrita y fijo
+      // al bajar cuando la tabla tiene su propio scroll (containerClassName).
+      "sticky top-0 z-10 h-10 border-b border-border bg-muted px-4 text-left align-middle text-sm font-semibold text-muted-foreground [&:has([role=checkbox])]:pr-0",
       className
     )}
     {...props}

@@ -917,13 +917,13 @@ const ChartsSection = React.memo(function ChartsSection({
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.1em]">
+                  <TableHead>
                     Tipo
                   </TableHead>
-                  <TableHead className="px-4 text-right text-[11px] font-bold uppercase tracking-[0.1em]">
+                  <TableHead className="text-right">
                     Movimientos
                   </TableHead>
-                  <TableHead className="px-4 text-right text-[11px] font-bold uppercase tracking-[0.1em]">
+                  <TableHead className="text-right">
                     Total
                   </TableHead>
                 </TableRow>

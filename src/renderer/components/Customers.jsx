@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { useToast } from "./ToastProvider";
+import { cn } from "@/lib/utils";
 import {
   Sheet,
   SheetContent,
@@ -58,6 +59,7 @@ import {
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
 import { Switch } from "./ui/switch";
+import { InitialsAvatar } from "./ui/initials-avatar";
 import { StatCard } from "./ui/stat-card";
 import { Hint } from "./ui/hint";
 import CustomerCreditSheet, { debtAge } from "./CustomerCreditSheet";
@@ -614,66 +616,50 @@ const Customers = () => {
         />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <Table>
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+        <Table containerClassName="max-h-[calc(100vh-21rem)]">
           <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-transparent">
-              <TableHead className="px-4 font-semibold text-foreground/75">
-                Cliente
-              </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
-                Teléfono
-              </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
-                Nivel
-              </TableHead>
-              {creditOn && (
-                <TableHead className="px-4 font-semibold text-foreground/75">
-                  Saldo
-                </TableHead>
-              )}
-              <TableHead className="w-32 px-4 text-right font-semibold text-foreground/75">
-                Acciones
+            <TableRow className="hover:bg-transparent">
+              <TableHead>Cliente</TableHead>
+              <TableHead>Teléfono</TableHead>
+              <TableHead>Nivel</TableHead>
+              {creditOn && <TableHead className="text-right">Saldo</TableHead>}
+              <TableHead className="w-36">
+                <span className="sr-only">Acciones</span>
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading &&
               Array.from({ length: PAGE_SIZE }).map((_, i) => (
-                <TableRow key={i}>
+                <TableRow key={i} className="h-14 hover:bg-transparent">
                   <TableCell className="px-4">
-                    <div className="flex items-center gap-2.5">
-                      <Skeleton className="h-9 w-9 rounded-md" />
-                      <div className="space-y-1">
-                        <Skeleton className="h-4 w-32" />
-                        <Skeleton className="h-3 w-24" />
-                      </div>
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="size-9 rounded-full" />
+                      <Skeleton className="h-4 w-36" />
                     </div>
                   </TableCell>
                   <TableCell className="px-4">
                     <Skeleton className="h-4 w-24" />
                   </TableCell>
                   <TableCell className="px-4">
-                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-5 w-16 rounded-md" />
                   </TableCell>
                   {creditOn && (
                     <TableCell className="px-4">
-                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="ml-auto h-4 w-16" />
                     </TableCell>
                   )}
-                  <TableCell className="px-4 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Skeleton className="h-9 w-9 rounded-md" />
-                      <Skeleton className="h-9 w-9 rounded-md" />
-                    </div>
-                  </TableCell>
+                  <TableCell className="px-4" />
                 </TableRow>
               ))}
             {!loading && list.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={creditOn ? 5 : 4} className="h-28 px-4 text-center">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={creditOn ? 5 : 4} className="h-40 px-4 text-center">
                   <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                    <Users size={32} className="opacity-40" />
+                    <span className="flex size-12 items-center justify-center rounded-full bg-muted">
+                      <Users size={22} className="opacity-60" />
+                    </span>
                     <p className="text-sm">
                       {onlyDebt
                         ? "Ningún cliente debe"
@@ -681,7 +667,7 @@ const Customers = () => {
                           ? "No se encontraron clientes"
                           : "No hay clientes registrados"}
                     </p>
-                    {!searchTerm && (
+                    {!searchTerm && !onlyDebt && (
                       <Button size="sm" onClick={openCreate}>
                         <PlusCircle className="h-4 w-4" />
                         Nuevo Cliente
@@ -693,119 +679,120 @@ const Customers = () => {
             )}
             {!loading &&
               list.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-primary/10 text-primary"
-                        aria-hidden
-                      >
-                        <Users size={18} />
-                      </span>
-                      <p className="truncate text-sm font-semibold text-foreground">
-                        {c.name}
-                      </p>
+                <TableRow key={c.id} className="group h-14 hover:bg-muted/40">
+                  <TableCell className="px-4 py-2">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <InitialsAvatar id={c.id} name={c.name} />
+                      <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
                     </div>
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-sm tabular-nums text-muted-foreground">
+                  <TableCell className="px-4 py-2 text-sm tabular-nums text-muted-foreground">
                     {c.phone || "—"}
                   </TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell className="px-4 py-2">
                     {c.tier_name ? (
-                      <Badge className="px-2 py-0.5 text-[11px] font-bold">
-                        {c.tier_name}
-                      </Badge>
+                      <Badge variant="soft-primary">{c.tier_name}</Badge>
                     ) : (
                       <span className="text-xs text-muted-foreground">Normal</span>
                     )}
                   </TableCell>
                   {creditOn && (
-                  <TableCell className="px-4 py-3">
-                    {balanceOf(c) > 0 ? (
-                      <Hint label="Ver estado de cuenta">
-                      <button
-                        type="button"
-                        onClick={() => setAccountCustomer(c)}
-                        className="cursor-pointer text-left"
-                      >
-                        <span className="block text-sm font-semibold tabular-nums text-destructive dark:text-red-400">
-                          {fmtMoney(balanceOf(c))}
-                        </span>
-                        <span className="block text-[11px] text-muted-foreground">
-                          {debtAge(credit.byCustomer[c.id]?.oldestDebtAt)}
-                        </span>
-                      </button>
-                      </Hint>
-                    ) : c.credit_enabled ? (
-                      <span className="text-xs text-success">Al corriente</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  )}
-                  <TableCell className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {creditOn && (c.credit_enabled || credit.byCustomer[c.id]) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setAccountCustomer(c)}
-                              aria-label={`Cuenta de ${c.name}`}
-                            >
-                              <Wallet className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Estado de cuenta</TooltipContent>
-                        </Tooltip>
+                    <TableCell className="px-4 py-2 text-right">
+                      {balanceOf(c) > 0 ? (
+                        <Hint label="Ver estado de cuenta">
+                          <button
+                            type="button"
+                            onClick={() => setAccountCustomer(c)}
+                            className="cursor-pointer text-right"
+                          >
+                            <span className="block text-sm font-semibold tabular-nums text-destructive dark:text-red-400">
+                              {fmtMoney(balanceOf(c))}
+                            </span>
+                            <span className="block text-[11px] text-muted-foreground">
+                              {debtAge(credit.byCustomer[c.id]?.oldestDebtAt)}
+                            </span>
+                          </button>
+                        </Hint>
+                      ) : c.credit_enabled ? (
+                        <Badge variant="soft-success">Al corriente</Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
                       )}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
+                    </TableCell>
+                  )}
+                  <TableCell className="px-3 py-2">
+                    {/* Acciones: aparecen al pasar el ratón (o al navegar con teclado). */}
+                    <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      {creditOn && (c.credit_enabled || credit.byCustomer[c.id]) && (
+                        <Hint label="Estado de cuenta">
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => setQrCustomer(c)}
-                            aria-label={`QR de ${c.name}`}
+                            className="size-8"
+                            onClick={() => setAccountCustomer(c)}
+                            aria-label={`Cuenta de ${c.name}`}
                           >
-                            <QrCode className="h-4 w-4" />
+                            <Wallet className="h-4 w-4" />
                           </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Ver QR</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEdit(c)}
-                            aria-label={`Editar ${c.name}`}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Editar</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => setDeleteConfirm(c)}
-                            aria-label={`Eliminar ${c.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Eliminar</TooltipContent>
-                      </Tooltip>
+                        </Hint>
+                      )}
+                      <Hint label="Ver QR">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => setQrCustomer(c)}
+                          aria-label={`QR de ${c.name}`}
+                        >
+                          <QrCode className="h-4 w-4" />
+                        </Button>
+                      </Hint>
+                      <Hint label="Editar">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => openEdit(c)}
+                          aria-label={`Editar ${c.name}`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </Hint>
+                      <Hint label="Eliminar">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => setDeleteConfirm(c)}
+                          aria-label={`Eliminar ${c.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </Hint>
                     </div>
                   </TableCell>
                 </TableRow>
               ))}
           </TableBody>
         </Table>
+        {!loading && list.length > 0 && (
+          <div className="flex items-center justify-between border-t border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
+            <span className="tabular-nums">
+              {list.length} {list.length === 1 ? "cliente" : "clientes"}
+              {onlyDebt && " con adeudo"}
+              {searchTerm && !onlyDebt && ` para “${searchTerm}”`}
+            </span>
+            {creditOn && onlyDebt && (
+              <button
+                type="button"
+                onClick={() => setOnlyDebt(false)}
+                className="cursor-pointer font-medium text-primary hover:underline"
+              >
+                Ver todos
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>

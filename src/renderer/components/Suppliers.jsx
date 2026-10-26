@@ -60,7 +60,7 @@ const supplierSchema = z.object({
 
 const SupplierRow = memo(function SupplierRow({ supplier, onEdit, onDelete }) {
   return (
-    <TableRow>
+    <TableRow className="group hover:bg-muted/40">
       <TableCell className="px-4 py-3">
         <div className="flex items-center gap-2.5">
           <span
@@ -108,7 +108,7 @@ const SupplierRow = memo(function SupplierRow({ supplier, onEdit, onDelete }) {
         </div>
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
-        <div className="flex items-center justify-end gap-1">
+        <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -486,17 +486,17 @@ const Suppliers = () => {
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
           <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-transparent">
-              <TableHead className="px-4 font-semibold text-foreground/75">
+            <TableRow className="hover:bg-transparent">
+              <TableHead>
                 Proveedor
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Contacto Principal
               </TableHead>
-              <TableHead className="px-4 font-semibold text-foreground/75">
+              <TableHead>
                 Comunicación
               </TableHead>
-              <TableHead className="w-28 px-4 text-right font-semibold text-foreground/75">
+              <TableHead className="w-28 text-right">
                 Acciones
               </TableHead>
             </TableRow>
