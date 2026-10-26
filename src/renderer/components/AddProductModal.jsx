@@ -23,6 +23,9 @@ import {
   CalendarRange,
   TriangleAlert,
   ClipboardList,
+  ImagePlus,
+  RefreshCw,
+  X,
 } from "lucide-react";
 
 import { Button } from "./ui/button";
@@ -55,6 +58,7 @@ import {
 } from "./ui/tooltip";
 import { cn } from "@/lib/utils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
+import { fileToProductImage } from "../utils/productImage";
 import { fmtMoney } from "../utils/format";
 import { useCashier } from "../contexts/CashierContext";
 
@@ -516,6 +520,111 @@ const InventoryFields = ({
   );
 };
 
+// Foto del producto: recuadro con clic o arrastrar; con foto, "Cambiar" y
+// "Quitar" al pasar el ratón. La imagen se reduce antes de guardarse.
+const ProductImagePicker = ({ value, onChange, disabled, onError }) => {
+  const inputRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const take = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      onChange(await fileToProductImage(file));
+    } catch (err) {
+      onError?.(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex shrink-0 flex-col items-center gap-1.5 sm:items-stretch">
+      <span className="text-sm font-medium text-muted-foreground">
+        Foto <span className="font-normal">(opcional)</span>
+      </span>
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-label={value ? "Cambiar foto del producto" : "Agregar foto del producto"}
+        onClick={() => !disabled && !value && inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (!disabled && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => {
+          if (disabled) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          if (!disabled) take(e.dataTransfer.files?.[0]);
+        }}
+        className={cn(
+          "group relative size-40 overflow-hidden rounded-xl border bg-muted/30 sm:h-auto sm:min-h-40 sm:flex-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+          value ? "border-border" : "cursor-pointer border-dashed border-border hover:border-primary/50 hover:bg-primary/5",
+          dragOver && "border-primary bg-primary/10",
+          disabled && "pointer-events-none opacity-60",
+        )}
+      >
+        {value ? (
+          <>
+            <img src={value} alt="" className="size-full object-cover" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/45 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  inputRef.current?.click();
+                }}
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md bg-white/95 px-2.5 text-xs font-semibold text-foreground hover:bg-white"
+              >
+                <RefreshCw className="size-3.5" /> Cambiar
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange("");
+                }}
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md bg-white/95 px-2.5 text-xs font-semibold text-destructive hover:bg-white"
+              >
+                <X className="size-3.5" /> Quitar
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex size-full flex-col items-center justify-center gap-1.5 px-3 text-center text-muted-foreground">
+            <span className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <ImagePlus className="size-5" />
+            </span>
+            <span className="text-xs font-semibold text-foreground">
+              {busy ? "Procesando…" : "Agregar foto"}
+            </span>
+            <span className="text-[11px] leading-tight">Clic o arrastra una imagen</span>
+          </div>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            take(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
 const AddProductModal = ({
   open,
   onClose,
@@ -536,10 +645,20 @@ const AddProductModal = ({
   const [barcodeStatus, setBarcodeStatus] = useState({ type: null, name: "" });
   const [priceTiers, setPriceTiers] = useState([]);
   const [promoOpen, setPromoOpen] = useState(false);
+  // Foto: sólo se envía si el usuario la cambió (si no, el backend conserva
+  // la que había).
+  const [productImage, setProductImage] = useState("");
+  const [imageTouched, setImageTouched] = useState(false);
   const discountColRef = useRef(null);
   const promoColRef = useRef(null);
   const [focusFlash, setFocusFlash] = useState(null);
   const [promoMode, setPromoMode] = useState("percent"); // "percent" | "fixed"
+
+  useEffect(() => {
+    if (!open) return;
+    setProductImage(editProduct?.image_path || "");
+    setImageTouched(false);
+  }, [open, editProduct]);
 
   const addPriceTier = () =>
     setPriceTiers((prev) => [
@@ -1026,6 +1145,7 @@ const AddProductModal = ({
             (parseInt(data.pack_qty, 10) || 0)
           : parseInt(data.box_qty, 10) || 0;
       const productData = {
+        ...(imageTouched ? { image_path: productImage || "" } : {}),
         barcode: barcode,
         name: data.name.trim(),
         brand: data.brand.trim() || "Sin marca",
@@ -1245,7 +1365,17 @@ const AddProductModal = ({
           <div className="space-y-6">
             <section className="space-y-4">
               <SectionTitle icon={ScanBarcode} title="Identidad" />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-stretch">
+              <ProductImagePicker
+                value={productImage}
+                disabled={isCatalogMode}
+                onChange={(v) => {
+                  setProductImage(v);
+                  setImageTouched(true);
+                }}
+                onError={(msg) => setSubmitError(msg)}
+              />
+              <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 sm:grid-cols-2">
                 <Controller
                   name="barcode"
                   control={control}
@@ -1334,6 +1464,10 @@ const AddProductModal = ({
                     </div>
                   )}
                 />
+              </div>
+              </div>
+              {/* Proveedor y Categoría: fila completa debajo de la foto. */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Controller
                   name="supplier_id"
                   control={control}
