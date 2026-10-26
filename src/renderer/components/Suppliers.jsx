@@ -307,7 +307,7 @@ const Suppliers = () => {
                   id="supplier-address"
                   rows={2}
                   placeholder="Dirección del proveedor"
-                  className="flex min-h-[70px] w-full rounded-lg border border-input bg-transparent py-2.5 pl-9 pr-3.5 text-sm shadow-sm transition-colors duration-150 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/50"
+                  className="flex min-h-[70px] w-full rounded-lg border border-input bg-field py-2.5 pl-9 pr-3.5 text-sm shadow-sm transition-colors duration-150 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/50"
                   {...field}
                 />
               </div>

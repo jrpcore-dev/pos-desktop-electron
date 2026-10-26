@@ -417,7 +417,7 @@ const BackupRestore = () => {
                 setConfig((c) => ({ ...c, externalDir: e.target.value }))
               }
               placeholder="Ej. D:\\RespaldosVendia"
-              className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="mt-1 h-9 w-full rounded-md border border-input bg-field px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
           </label>
           {role === "host" && (
@@ -430,7 +430,7 @@ const BackupRestore = () => {
                 onChange={(e) =>
                   setConfig((c) => ({ ...c, receiverDeviceId: e.target.value }))
                 }
-                className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="mt-1 h-9 w-full rounded-md border border-input bg-field px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <option value="">Ninguna</option>
                 {devices.map((d) => (

@@ -120,7 +120,7 @@ const BoxLinkWizard = ({ api, className }) => {
   }, [step]);
 
   const input =
-    "w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
+    "w-full rounded-md border border-border bg-field px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
 
   return (
     <div className={cn("flex flex-col gap-5", className)}>

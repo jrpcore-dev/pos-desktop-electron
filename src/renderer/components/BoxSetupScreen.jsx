@@ -31,7 +31,7 @@ import { Spinner } from "./ui/spinner";
 const bar = "h-2 w-full overflow-hidden rounded-full bg-muted";
 const barFill = "h-full rounded-full bg-brand transition-[width] duration-200";
 const btn =
-  "rounded-md border border-border bg-background px-3 py-2 text-sm outline-none disabled:opacity-50";
+  "rounded-md border border-border bg-field px-3 py-2 text-sm outline-none disabled:opacity-50";
 const note =
   "rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground";
 

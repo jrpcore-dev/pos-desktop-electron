@@ -1871,7 +1871,7 @@ const Reports = () => {
                 id="report-device-filter"
                 value={deviceFilter}
                 onChange={(e) => setDeviceFilter(e.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-2.5 text-sm text-foreground shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="h-9 rounded-md border border-input bg-field px-2.5 text-sm text-foreground shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 title="Vista consolidada o por caja"
               >
                 <option value="all">Todas las cajas</option>
