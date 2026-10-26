@@ -13,6 +13,7 @@ import {
   FileDown,
   FileSpreadsheet,
   Landmark,
+  HandCoins,
   Printer,
   ReceiptText,
   Search,
@@ -74,12 +75,14 @@ const methodMeta = {
   cash: { label: "Efectivo", icon: Banknote, cls: "text-emerald-600 dark:text-emerald-400" },
   card: { label: "Tarjeta", icon: CreditCard, cls: "text-indigo-500 dark:text-indigo-400" },
   transfer: { label: "Transferencia", icon: Landmark, cls: "text-amber-600 dark:text-amber-400" },
+  credit: { label: "Fiado", icon: HandCoins, cls: "text-destructive dark:text-red-400" },
 };
 
 const methodNames = {
   cash: "Efectivo",
   card: "Tarjeta",
   transfer: "Transferencia",
+  credit: "Fiado",
 };
 
 

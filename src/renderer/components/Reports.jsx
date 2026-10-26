@@ -128,6 +128,7 @@ const methodLabels = {
   cash: "Efectivo",
   card: "Tarjeta",
   transfer: "Transferencia",
+  credit: "Fiado",
 };
 
 const C = {

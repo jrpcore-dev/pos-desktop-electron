@@ -1177,6 +1177,10 @@ const startServer = async (
       paymentMethod: body.paymentMethod,
       discountTotal: body.discountTotal,
       folio: body.folio || null,
+      // Fiado: lo pagado al momento forma parte de la venta.
+      ...(body.paymentMethod === "credit"
+        ? { credit_paid: body.credit_paid || 0, credit_paid_method: body.credit_paid_method || null }
+        : {}),
       // Fase 2 · sin `register_id` ni `offline`: la misma venta enviada en
       // línea y luego reenviada desde la cola (timeout tras commit) debe
       // producir la misma huella y recibir la respuesta original, no un 422.
@@ -1199,6 +1203,9 @@ const startServer = async (
       syncedAt: offline ? new Date().toISOString() : undefined,
       clientCreatedAt: offline ? body.client_created_at || undefined : undefined,
       strictTotals: true,
+      creditPaid: body.credit_paid,
+      creditPaidMethod: body.credit_paid_method,
+      ownerPin: body.owner_pin,
     };
     const requestHash = sha256(canonicalStringify(clientFields));
 
@@ -1221,6 +1228,7 @@ const startServer = async (
         success: true,
         saleId: result.saleId,
         folio: result.folio,
+        ...(result.credit ? { credit: result.credit } : {}),
         warnings: [...(result.warnings || []), ...(cashierWarning ? [cashierWarning] : [])],
         ...(offline ? { synced_at: payload.syncedAt } : {}),
         // Fase 2 · hasta dónde va la serie de esta caja en el Host.

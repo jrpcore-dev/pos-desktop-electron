@@ -36,6 +36,7 @@ const offlineQueue = require("./offline-queue");
 // Bloque 6 · respaldos verificados y retención (24 + 8).
 const backupService = require("./backup-service");
 const smartAlerts = require("./smart-alerts");
+const credit = require("./credit");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -1478,12 +1479,128 @@ ipcMain.handle("update-customer", async (event, id, data) => {
 
 ipcMain.handle("delete-customer", async (event, id) => {
   try {
+    // Con historial de fiado no se borra: se perdería su estado de cuenta.
+    const hasCredit = db
+      .prepare("SELECT 1 FROM customer_credit_movements WHERE customer_id = ? LIMIT 1")
+      .get(id);
+    if (hasCredit) {
+      return {
+        success: false,
+        code: "CUSTOMER_HAS_CREDIT",
+        error: "Este cliente tiene historial de fiado y no se puede eliminar.",
+      };
+    }
     db.prepare("DELETE FROM customers WHERE id = ?").run(id);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
+
+// ─── FIADO (ver credit.js) ──────────────────────────────────────────────────
+// Configuración por cliente: activar, límite (0 = sin límite) y saldo
+// inicial (sólo si todavía no tiene movimientos). Sólo el propietario.
+ipcMain.handle(
+  "set-customer-credit",
+  async (event, { customerId, enabled, limit, initialBalance, role, cashierId, cashierName } = {}) => {
+    try {
+      if (role !== "admin")
+        return { success: false, error: "Solo el propietario puede configurar el fiado" };
+      const lim = Number(limit) || 0;
+      if (lim < 0) return { success: false, error: "Límite inválido" };
+      const run = db.transaction(() => {
+        db.prepare(
+          "UPDATE customers SET credit_enabled = ?, credit_limit = ? WHERE id = ?",
+        ).run(enabled ? 1 : 0, lim, customerId);
+        const initial = Number(initialBalance) || 0;
+        if (initial > 0) {
+          const has = db
+            .prepare("SELECT 1 FROM customer_credit_movements WHERE customer_id = ? LIMIT 1")
+            .get(customerId);
+          if (has) throw new Error("El saldo inicial solo se captura la primera vez");
+          credit.adjust(db, {
+            customerId,
+            amount: initial,
+            kind: "initial",
+            cashierId,
+            cashierName,
+            deviceId: callerDeviceId(),
+          });
+        }
+      });
+      run();
+      return { success: true, ...credit.summary(db, customerId) };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
+
+ipcMain.handle("get-customer-credit", async (event, { customerId } = {}) => {
+  try {
+    return { success: true, ...credit.summary(db, customerId) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("get-credit-balances", async () => {
+  try {
+    return { success: true, ...credit.balances(db) };
+  } catch (error) {
+    return { success: false, error: error.message, byCustomer: {}, receivable: 0, debtors: 0 };
+  }
+});
+
+// Abono desde Clientes: entra a la caja abierta de quien lo cobra.
+ipcMain.handle(
+  "credit-payment",
+  async (event, { customerId, amount, method, cashierId, cashierName, role, clientRequestId } = {}) => {
+    try {
+      const reg = findOpenRegister(cashierId, role);
+      const result = db.transaction(() =>
+        credit.recordPayment(db, {
+          customerId,
+          amount,
+          method,
+          registerId: reg ? reg.id : null,
+          deviceId: callerDeviceId(),
+          cashierId,
+          cashierName,
+          clientRequestId,
+        }),
+      )();
+      emitDbChanged(["cash_register"], {});
+      return { success: true, registerId: reg ? reg.id : null, ...result };
+    } catch (error) {
+      return { success: false, code: error.code, error: error.message };
+    }
+  },
+);
+
+// Ajuste del propietario (condonación, corrección…), siempre con motivo.
+ipcMain.handle(
+  "credit-adjust",
+  async (event, { customerId, amount, note, role, cashierId, cashierName } = {}) => {
+    try {
+      if (role !== "admin")
+        return { success: false, error: "Solo el propietario puede ajustar saldos" };
+      const result = db.transaction(() =>
+        credit.adjust(db, {
+          customerId,
+          amount,
+          note,
+          cashierId,
+          cashierName,
+          deviceId: callerDeviceId(),
+        }),
+      )();
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
 
 ipcMain.handle("touch-customer", async (event, id) => {
   try {
@@ -2359,7 +2476,19 @@ ipcMain.handle(
   "record-sale",
   async (
     event,
-    { cart, total, paymentMethod, discountTotal, cashierName, cashierId, role, customerId },
+    {
+      cart,
+      total,
+      paymentMethod,
+      discountTotal,
+      cashierName,
+      cashierId,
+      role,
+      customerId,
+      creditPaid,
+      creditPaidMethod,
+      ownerPin,
+    },
   ) => {
     const recordSale = db.transaction(() =>
       salesCore.createSaleTx(db, {
@@ -2372,6 +2501,9 @@ ipcMain.handle(
         role,
         customerId,
         deviceId: callerDeviceId(),
+        creditPaid,
+        creditPaidMethod,
+        ownerPin,
       }),
     );
 
@@ -2477,6 +2609,8 @@ ipcMain.handle(
             );
           }
         }
+        // Fiado: lo que quedaba a cuenta del cliente se revierte.
+        credit.reverseSale(db, sale, { cashierName, deviceId: caller });
       });
       doCancel();
       emitDbChanged(["sales"], {});
@@ -2606,15 +2740,20 @@ ipcMain.handle(
           )
           .get(saleId).c;
 
+        // Fiado: se lee la venta dentro de la transacción (devoluciones
+        // previas ya pudieron bajar lo fiado).
+        const freshSale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
         if (activeCount === 0) {
           saleCancelled = true;
           db.prepare(
             "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
           ).run(cashierName || null, caller || null, saleId);
+          credit.reverseSale(db, freshSale, { cashierName, deviceId: caller });
         } else {
           db.prepare(
             "UPDATE sales SET total = MAX(0, ROUND(total - ?, 2)) WHERE id = ?",
           ).run(refundAmount, saleId);
+          credit.refundSalePart(db, freshSale, refundAmount, { cashierName, deviceId: caller });
         }
       });
       doCancel();
@@ -3532,6 +3671,27 @@ ipcMain.handle(
   },
 );
 
+// Dinero de una caja por método. Fiado: lo pagado al momento suma a su
+// método como cualquier venta, la parte fiada va aparte (no entra al cajón) y
+// la cobranza (abonos desde Clientes) entra al efectivo esperado si fue en
+// efectivo. Esperado = apertura + cashSales + collected.cash − gastos.
+const registerMoney = (registerId) => {
+  const rows = db
+    .prepare(
+      "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
+    )
+    .all(registerId);
+  const by = (m) => rows.find((r) => r.payment_method === m)?.total || 0;
+  const cr = credit.registerCredit(db, registerId);
+  return {
+    cashSales: by("cash") + cr.paid.cash,
+    cardSales: by("card") + cr.paid.card,
+    transferSales: by("transfer") + cr.paid.transfer,
+    creditSales: cr.creditSales,
+    collected: cr.collected,
+  };
+};
+
 ipcMain.handle(
   "get-cash-register-status",
   async (event, { cashierId, role } = {}) => {
@@ -3550,15 +3710,17 @@ ipcMain.handle(
           .get(register.opened_by);
         register.opener_name = opener?.name || null;
         register.opener_role = opener?.role || null;
+        // Fiado de esta caja (para el corte en vivo y su historial).
+        const money = registerMoney(register.id);
+        register.credit = {
+          creditSales: money.creditSales,
+          collected: money.collected,
+        };
         if (register.status === "open") {
-          const cashRow = db
-            .prepare(
-              "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE register_id = ? AND payment_method = 'cash' AND (status IS NULL OR status != 'cancelado')",
-            )
-            .get(register.id);
           register.currentCash =
             (register.opening_balance || 0) +
-            (cashRow?.total || 0) -
+            money.cashSales +
+            money.collected.cash -
             (register.expenses || 0);
         }
       }
@@ -3581,20 +3743,14 @@ ipcMain.handle(
         .all(callerDeviceId());
       for (const existing of openRegisters) {
         // Auto-close the previous register before opening new one
-        const sales = db
-          .prepare(
-            "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
-          )
-          .all(existing.id);
-        const cashSales =
-          sales.find((s) => s.payment_method === "cash")?.total || 0;
-        const cardSales =
-          sales.find((s) => s.payment_method === "card")?.total || 0;
-        const transferSales =
-          sales.find((s) => s.payment_method === "transfer")?.total || 0;
+        const { cashSales, cardSales, transferSales, collected } =
+          registerMoney(existing.id);
         const totalExpenses = existing.expenses || 0;
         const expectedClose =
-          (existing.opening_balance || 0) + cashSales - totalExpenses;
+          (existing.opening_balance || 0) +
+          cashSales +
+          collected.cash -
+          totalExpenses;
 
         db.prepare(
           `UPDATE cash_register SET
@@ -3688,21 +3844,12 @@ ipcMain.handle(
         };
       }
 
-      // Get sales by payment method (only for this register)
-      const sales = db
-        .prepare(
-          "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
-        )
-        .all(register.id);
-      const cashSales =
-        sales.find((s) => s.payment_method === "cash")?.total || 0;
-      const cardSales =
-        sales.find((s) => s.payment_method === "card")?.total || 0;
-      const transferSales =
-        sales.find((s) => s.payment_method === "transfer")?.total || 0;
+      // Por método (sólo esta caja), con el fiado ya repartido.
+      const { cashSales, cardSales, transferSales, collected } =
+        registerMoney(register.id);
       const totalExpenses = (register.expenses || 0) + (expenses || 0);
       const expectedClose =
-        register.opening_balance + cashSales - totalExpenses;
+        register.opening_balance + cashSales + collected.cash - totalExpenses;
       const difference =
         expectedClose >= 0
           ? (declaredClose || 0) - expectedClose
@@ -3947,20 +4094,10 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
       )
       .get(registerId).c;
 
-    const liveByMethod = db
-      .prepare(
-        `SELECT payment_method, COALESCE(SUM(total), 0) AS total
-         FROM sales
-         WHERE register_id = ? AND (status IS NULL OR status != 'cancelado')
-         GROUP BY payment_method`,
-      )
-      .all(registerId);
-    const liveCash =
-      liveByMethod.find((m) => m.payment_method === "cash")?.total || 0;
-    const liveCard =
-      liveByMethod.find((m) => m.payment_method === "card")?.total || 0;
-    const liveTransfer =
-      liveByMethod.find((m) => m.payment_method === "transfer")?.total || 0;
+    const liveMoney = registerMoney(registerId);
+    const liveCash = liveMoney.cashSales;
+    const liveCard = liveMoney.cardSales;
+    const liveTransfer = liveMoney.transferSales;
     const cancelledCount = db
       .prepare(
         "SELECT COUNT(*) AS c FROM sales WHERE register_id = ? AND status = 'cancelado'",
@@ -3979,6 +4116,8 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
         cashSales: liveCash,
         cardSales: liveCard,
         transferSales: liveTransfer,
+        creditSales: liveMoney.creditSales,
+        collected: liveMoney.collected,
         expenses: totalExpenses,
         cancelledCount,
       },
@@ -4547,20 +4686,11 @@ const migrateRegisterContinuity = () => {  try {
     for (const r of openRegs) latestByDevice.set(String(r.device_id), r.id);
     const toClose = openRegs.filter((r) => latestByDevice.get(String(r.device_id)) !== r.id);
     for (const reg of toClose) {
-      const sales = db
-        .prepare(
-          "SELECT payment_method, SUM(total) as total FROM sales WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') GROUP BY payment_method",
-        )
-        .all(reg.id);
-      const cashSales =
-        sales.find((s) => s.payment_method === "cash")?.total || 0;
-      const cardSales =
-        sales.find((s) => s.payment_method === "card")?.total || 0;
-      const transferSales =
-        sales.find((s) => s.payment_method === "transfer")?.total || 0;
+      const { cashSales, cardSales, transferSales, collected } =
+        registerMoney(reg.id);
       const totalExpenses = reg.expenses || 0;
       const expectedClose =
-        (reg.opening_balance || 0) + cashSales - totalExpenses;
+        (reg.opening_balance || 0) + cashSales + collected.cash - totalExpenses;
 
       db.prepare(
         `UPDATE cash_register SET

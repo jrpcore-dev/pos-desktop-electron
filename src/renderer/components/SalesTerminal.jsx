@@ -14,6 +14,7 @@ import {
   CreditCard,
   DollarSign,
   Landmark,
+  HandCoins,
   Banknote,
   UserPlus,
   X,
@@ -28,6 +29,7 @@ import QtyDialog from "./QtyDialog";
 import DiscountDialog from "./DiscountDialog";
 import ManualProductDialog from "./ManualProductDialog";
 import CustomerSearchDialog from "./CustomerSearchDialog";
+import CreditSaleDialog from "./CreditSaleDialog";
 import { useMultiCart } from "./cart/useMultiCart";
 import { Button as ShadButton } from "./ui/button";
 import { Kbd } from "./ui/kbd";
@@ -159,6 +161,9 @@ const SalesTerminal = () => {
   // que el Host sepa a qué corte pertenece.
   const lastRegisterRef = useRef(null);
   const [cashDialogOpen, setCashDialogOpen] = useState(false);
+  // Fiado: diálogo de cobro a crédito (solo clientes con fiado activado).
+  const [creditDialogOpen, setCreditDialogOpen] = useState(false);
+  const [creditBusy, setCreditBusy] = useState(false);
   const [cashAmount, setCashAmount] = useState("");
   const [change, setChange] = useState(0);
   const [waitingDrawer, setWaitingDrawer] = useState(false);
@@ -278,7 +283,9 @@ const processSaleRef = useRef(null);
         ? "Tarjeta"
         : paymentMethod === "transfer"
           ? "Transferencia"
-          : "Sin método";
+          : paymentMethod === "credit"
+            ? "Fiado"
+            : "Sin método";
   const itemCount = `${cart.length} ${cart.length === 1 ? "producto" : "productos"}`;
 
   // Acento de la caja TOTAL: wash primary tenue + borde tintado para que el
@@ -290,7 +297,17 @@ const processSaleRef = useRef(null);
 
   const [removingKeys, setRemovingKeys] = useState(() => new Set());
 
-  const processSale = async (method) => {
+  // `credit` llega desde CreditSaleDialog; sin él, "Fiado" sólo abre el
+  // diálogo (así Enter/F8/Cobrar pasan siempre por la confirmación).
+  const processSale = async (method, credit) => {
+    if (method === "credit" && !credit) {
+      if (!customer?.credit_enabled) {
+        showNotification("Selecciona un cliente con fiado activado", "warning");
+        return;
+      }
+      setCreditDialogOpen(true);
+      return;
+    }
     const registerOpen = await checkRegisterOpen();
     if (!registerOpen) {
       warnRegisterClosed();
@@ -311,8 +328,26 @@ const processSaleRef = useRef(null);
       cashierId: cashier?.id ?? null,
       customerId: customer?.id ?? null,
       registerId: lastRegisterRef.current?.id ?? null,
+      ...(method === "credit"
+        ? {
+            creditPaid: credit.creditPaid,
+            creditPaidMethod: credit.creditPaidMethod,
+            ownerPin: credit.ownerPin,
+          }
+        : {}),
     });
     if (result.success) {
+      const creditInfo =
+        method === "credit"
+          ? { customerName: customer?.name, ...(result.credit || credit.preview) }
+          : null;
+      if (method === "credit") {
+        setCreditDialogOpen(false);
+        // Lo que dejó a cuenta en efectivo entra al cajón.
+        if (credit.creditPaid > 0 && credit.creditPaidMethod === "cash") {
+          window.api.invoke("open-cash-drawer").catch(() => {});
+        }
+      }
       lastSaleFolioRef.current = result.folio || null;
       if (result.offline) {
         showNotification(
@@ -359,7 +394,7 @@ const processSaleRef = useRef(null);
             "get-setting",
             "paper_width_mm",
           );
-          const text = generateReceiptHTML(method, paperWidthMm);
+          const text = generateReceiptHTML(method, paperWidthMm, creditInfo);
           const printResult = await window.api.invoke("print-receipt", text);
           if (printResult?.success) {
             // Si la impresora configurada no existía en este equipo, el main
@@ -369,6 +404,10 @@ const processSaleRef = useRef(null);
                 `La impresora configurada no está disponible; se imprimió en «${printResult.printer}».`,
                 "warning",
               );
+            }
+            // Fiado: segunda copia para que el cliente la firme.
+            if (method === "credit") {
+              await window.api.invoke("print-receipt", text);
             }
             if (method === "card" || method === "transfer") {
               const setting = await window.api.invoke(
@@ -401,6 +440,22 @@ const processSaleRef = useRef(null);
       showNotification(result.error || "Error al registrar la venta", "error");
     }
   };
+
+  const handleCreditConfirm = async (credit) => {
+    setCreditBusy(true);
+    try {
+      await processSale("credit", credit);
+    } finally {
+      setCreditBusy(false);
+    }
+  };
+
+  // Sin cliente con fiado no puede quedar "Fiado" seleccionado.
+  useEffect(() => {
+    if (paymentMethod === "credit" && !customer?.credit_enabled) {
+      setPaymentMethod(lastSavedPaymentMethod());
+    }
+  }, [paymentMethod, customer]);
 
   // Ajustes de la tienda, del ticket y del POS. Se releen al montar y cada
   // vez que cambian (guardados aquí, o replicados desde el Host en una caja).
@@ -1411,6 +1466,8 @@ if (e.key === "Tab" && !isEditable) {
   const handlePayClick = (method) => {
     if (method !== paymentMethod) {
       setPaymentMethod(method);
+      // "Fiado" depende del cliente: no se recuerda como método preferido.
+      if (method === "credit") return;
       try {
         localStorage.setItem("lastPaymentMethod", method);
       } catch {}
@@ -1435,7 +1492,7 @@ if (e.key === "Tab" && !isEditable) {
     refocusBarcode();
   };
 
-  const generateReceiptHTML = (method, paperWidthMm) => {
+  const generateReceiptHTML = (method, paperWidthMm, creditInfo) => {
     const effSubtotal = method === "cash" ? roundCash(subtotal) : subtotal;
     const effTotal = method === "cash" ? roundCash(total) : total;
     const showDiscounts = cart.some(
@@ -1500,8 +1557,17 @@ if (e.key === "Tab" && !isEditable) {
           ? "TARJETA"
           : method === "transfer"
             ? "TRANSFERENCIA"
-            : "EFECTIVO",
+            : method === "credit"
+              ? "FIADO"
+              : "EFECTIVO",
       isCash: method === "cash",
+      credit: creditInfo
+        ? {
+            ...creditInfo,
+            paidMethodLabel:
+              { cash: "efectivo", card: "tarjeta", transfer: "transf." }[creditInfo.paidMethod] || "",
+          }
+        : null,
       paperWidthMm: paperWidthMm ?? 58,
       received: parseFloat(cashAmount) || 0,
       change: change || 0,
@@ -1824,6 +1890,30 @@ if (e.key === "Tab" && !isEditable) {
               />
               <span className="text-sm font-bold leading-none">Transf.</span>
             </button>
+
+            {customer?.credit_enabled ? (
+              <button
+                type="button"
+                onClick={() => handlePayClick("credit")}
+                title="Fiado"
+                className={cn(
+                  "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                  paymentMethod === "credit"
+                    ? "border-primary bg-primary/10 text-primary shadow-sm"
+                    : "border-border bg-background text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <HandCoins
+                  size={17}
+                  className={cn(
+                    paymentMethod === "credit"
+                      ? "text-primary"
+                      : "text-muted-foreground",
+                  )}
+                />
+                <span className="text-sm font-bold leading-none">Fiado</span>
+              </button>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -1975,6 +2065,18 @@ if (e.key === "Tab" && !isEditable) {
         onNameChange={(v) => setManualProduct({ ...manualProduct, name: v })}
         onPriceChange={(v) => setManualProduct({ ...manualProduct, price: v })}
         onConfirm={handleManualProduct}
+      />
+
+      <CreditSaleDialog
+        open={creditDialogOpen}
+        onClose={() => {
+          setCreditDialogOpen(false);
+          refocusBarcode();
+        }}
+        customer={customer}
+        total={cartSummary.total}
+        busy={creditBusy}
+        onConfirm={handleCreditConfirm}
       />
 
       <CustomerSearchDialog

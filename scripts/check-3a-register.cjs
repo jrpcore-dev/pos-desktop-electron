@@ -161,15 +161,18 @@ const cashRegisterRow = (db, id) =>
   // (`service_transactions`, `sale_items.service_transaction_id`) ya están en
   // HEAD: no queda delta sin commitear. Si una entrega nueva toca el esquema,
   // declara aquí sus statements.
-  // Alertas inteligentes: tabla `product_lots` (caducidad por lote) con su
-  // índice, e `insights` gana `payload` (SQLite reescribe su CREATE TABLE:
-  // alta y baja del mismo statement).
+  // Alertas inteligentes (product_lots, insights.payload) ya está en HEAD.
+  // Fiado: tabla `customer_credit_movements` con sus dos índices; `customers`
+  // gana credit_enabled/credit_limit y `sales` credit_amount/credit_paid/
+  // credit_paid_method (SQLite reescribe sus CREATE TABLE: alta y baja).
   const DDL_AGREGADO = [
-    /^CREATE TABLE product_lots\b/,
-    /^CREATE INDEX idx_product_lots_product\b/,
-    /^CREATE TABLE insights\b[\s\S]*\bpayload\b/,
+    /^CREATE TABLE customer_credit_movements\b/,
+    /^CREATE INDEX idx_credit_movements_customer\b/,
+    /^CREATE INDEX idx_credit_movements_register\b/,
+    /^CREATE TABLE customers\b[\s\S]*\bcredit_limit\b/,
+    /^CREATE TABLE sales\b[\s\S]*\bcredit_paid_method\b/,
   ];
-  const DDL_BORRADO = [/^CREATE TABLE insights\b/];
+  const DDL_BORRADO = [/^CREATE TABLE customers\b/, /^CREATE TABLE sales\b/];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -276,6 +279,29 @@ const cashRegisterRow = (db, id) =>
           ]),
       ...(colDe(before.cols.insights, "payload") ? [] : ["+ insights.payload|TEXT|nn=0|dflt=null"]),
     ];
+    // Fiado · movimientos de cuenta y columnas en customers/sales. Si la app
+    // ya corrió con esta entrega en esta máquina, el delta es 0.
+    const ESPERADO_FIADO = [
+      ...(Array.isArray(before.cols.customer_credit_movements)
+        ? []
+        : [
+            "+ tabla nueva customer_credit_movements",
+            ...(after.cols.customer_credit_movements || []).map(
+              (c) => `+ customer_credit_movements.${c}`,
+            ),
+          ]),
+      ...(colDe(before.cols.customers, "credit_enabled")
+        ? []
+        : ["+ customers.credit_enabled|INTEGER|nn=0|dflt=0"]),
+      ...(colDe(before.cols.customers, "credit_limit")
+        ? []
+        : ["+ customers.credit_limit|REAL|nn=0|dflt=0"]),
+      ...(colDe(before.cols.sales, "credit_amount") ? [] : ["+ sales.credit_amount|REAL|nn=0|dflt=0"]),
+      ...(colDe(before.cols.sales, "credit_paid") ? [] : ["+ sales.credit_paid|REAL|nn=0|dflt=0"]),
+      ...(colDe(before.cols.sales, "credit_paid_method")
+        ? []
+        : ["+ sales.credit_paid_method|TEXT|nn=0|dflt=null"]),
+    ];
     const ESPERADO_3D = (yaTieneLog
       ? []
       : [
@@ -316,7 +342,7 @@ const cashRegisterRow = (db, id) =>
     // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
     // falta migrar) más el de 3d más el de 3g.
     const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B)
-      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS)
+      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO)
       .sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
@@ -337,6 +363,9 @@ const cashRegisterRow = (db, id) =>
       ),
       // Alertas inteligentes: índice de lotes por producto.
       "product_lots.idx_product_lots_product",
+      // Fiado: movimientos por cliente y por caja.
+      "customer_credit_movements.idx_credit_movements_customer",
+      "customer_credit_movements.idx_credit_movements_register",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

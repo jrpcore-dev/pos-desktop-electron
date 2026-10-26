@@ -216,6 +216,11 @@ const saleBody = (payload, folio, offline) => {
   }
   if (payload.registerId != null) body.register_id = payload.registerId;
   if (payload.cashierId != null) body.cashier_id = payload.cashierId;
+  if (payload.paymentMethod === "credit") {
+    body.credit_paid = payload.creditPaid || 0;
+    body.credit_paid_method = payload.creditPaidMethod || null;
+    if (payload.ownerPin) body.owner_pin = payload.ownerPin;
+  }
   if (payload.cashierName) body.cashier_name = payload.cashierName;
   if (offline) {
     body.offline = true;
@@ -251,6 +256,28 @@ const recordSale = async (db, payload = {}) => {
   }
 
   let body = saleBody(payload, attempt.folio, false);
+  // Fiado sólo en línea: el saldo y el límite viven en el Host. Sin conexión
+  // NO se encola: se avisa para cobrar de otra forma. El intento (llave y
+  // folio) se conserva: si la red cayó después de que el Host la guardó,
+  // reintentar la misma venta recibe la respuesta original, no un duplicado.
+  if (payload.paymentMethod === "credit") {
+    const offlineFail = () =>
+      fail("CREDIT_REQUIRES_HOST", "El fiado requiere conexión con el Host. Reintenta o cobra con otro método.");
+    let cres;
+    try {
+      cres = await postJson(db, creds, "/api/sales", body, { "idempotency-key": attempt.key });
+    } catch (err) {
+      return offlineFail();
+    }
+    if (!cres.data) return offlineFail();
+    if (cres.status === 401) {
+      expired(db, cres.data);
+      return fail("SESSION_EXPIRED", "La sesión con el Host caducó");
+    }
+    adoptHostFolioSeq(db, cres.data);
+    if (cres.data.success) clearAttempt(db);
+    return cres.data;
+  }
   let res;
   try {
     res = await postJson(db, creds, "/api/sales", body, {

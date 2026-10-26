@@ -54,6 +54,8 @@ export function buildReceiptHTML(model) {
     received = 0,
     change = 0,
     paperWidthMm = 58,
+    // Venta fiada: { customerName, previous, paid, paidMethodLabel, charge, newBalance }
+    credit = null,
   } = model || {};
 
   const lines = [];
@@ -133,6 +135,7 @@ export function buildReceiptHTML(model) {
       `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Cambio:</span><span>$${pad(change)}</span></div>`,
     );
   }
+  if (credit) lines.push(...creditBlock(credit));
   lines.push(`<div class="sep"></div>`);
   lines.push(
     `<div style="text-align:center;font-weight:bold;font-size:13px">${esc(footerNote || "¡GRACIAS POR SU COMPRA!")}</div>`,
@@ -145,6 +148,61 @@ export function buildReceiptHTML(model) {
   );
   lines.push(`<div style="height:20px"></div>`);
 
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${receiptDocCss(paperWidthMm)}
+    </style></head><body>${lines.join("")}</body></html>`;
+}
+
+const row = (label, value, bold = false) =>
+  `<div style="display:flex;justify-content:space-between;font-size:${bold ? 13 : 11}px;${bold ? "font-weight:bold;" : ""}"><span>${label}</span><span>${value}</span></div>`;
+
+// Bloque "VENTA A CRÉDITO" del ticket de una venta fiada, con línea de firma:
+// la copia firmada reemplaza a la libreta.
+function creditBlock(c) {
+  const out = [
+    `<div class="sep"></div>`,
+    `<div style="text-align:center;font-weight:bold;font-size:13px">VENTA A CRÉDITO</div>`,
+    row("Cliente:", esc(c.customerName || "")),
+    row("Saldo anterior:", `$${pad(c.previous)}`),
+  ];
+  if (c.paid > 0) out.push(row(`Pagó (${esc(c.paidMethodLabel || "")}):`, `$${pad(c.paid)}`));
+  out.push(row("Fiado esta venta:", `$${pad(c.charge)}`));
+  out.push(row("SALDO ACTUAL:", `$${pad(c.newBalance)}`, true));
+  out.push(`<div style="height:28px"></div>`);
+  out.push(`<div style="border-top:1px solid #000;margin:0 6px"></div>`);
+  out.push(`<div style="text-align:center;font-size:10px">Firma del cliente</div>`);
+  return out;
+}
+
+// Comprobante de abono a la cuenta de un cliente (pantalla Clientes).
+export function buildCreditPaymentHTML(model) {
+  const {
+    store = {},
+    date = new Date(),
+    cashierName = "",
+    customerName = "",
+    previous = 0,
+    amount = 0,
+    methodLabel = "EFECTIVO",
+    balance = 0,
+    paperWidthMm = 58,
+  } = model || {};
+  const lines = [
+    `<div style="text-align:center;font-weight:bold;font-size:18px;line-height:1.1;text-transform:uppercase;letter-spacing:0.5px">${esc(store.name || "MI TIENDA POS")}</div>`,
+    `<div class="sep"></div>`,
+    `<div style="text-align:center;font-weight:bold;font-size:13px">${balance <= 0.004 ? "LIQUIDACIÓN DE CUENTA" : "ABONO A CUENTA"}</div>`,
+    `<div style="text-align:center;font-size:10px">${date.toLocaleDateString("es-MX", { year: "numeric", month: "long", day: "numeric", timeZone: "America/Mexico_City" })} ${date.toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}</div>`,
+    `<div class="sep"></div>`,
+    row("Cliente:", esc(customerName)),
+    row("Atendió:", esc(cashierName)),
+    `<div class="sep"></div>`,
+    row("Saldo anterior:", `$${pad(previous)}`),
+    row(`Abono (${esc(methodLabel)}):`, `-$${pad(amount)}`),
+    `<div class="sep"></div>`,
+    row("SALDO ACTUAL:", `$${pad(balance)}`, true),
+    `<div class="sep"></div>`,
+    `<div style="text-align:center;font-size:10px">Conserve este comprobante</div>`,
+    `<div style="height:20px"></div>`,
+  ];
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${receiptDocCss(paperWidthMm)}
     </style></head><body>${lines.join("")}</body></html>`;
 }

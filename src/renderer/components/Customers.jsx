@@ -11,6 +11,8 @@ import {
   BadgeCheck,
   Printer,
   Copy,
+  Wallet,
+  HandCoins,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { useToast } from "./ToastProvider";
@@ -55,12 +57,79 @@ import {
   TableRow,
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
+import { Switch } from "./ui/switch";
+import { StatCard } from "./ui/stat-card";
+import CustomerCreditSheet, { debtAge } from "./CustomerCreditSheet";
+import { useCashier } from "../contexts/CashierContext";
 
 import PageHeader from "./PageHeader";
 import { fmtMoney } from "../utils/format";
 import { receiptDocCss } from "../utils/receiptTemplate";
 
 const PAGE_SIZE = 10;
+
+// Fiado del cliente: activar, límite y saldo inicial (sólo la primera vez).
+const CreditForm = ({ value, onChange, isAdmin, hasHistory }) => (
+  <div className="mt-6">
+    <h3 className="mb-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
+      Fiado
+    </h3>
+    <div className="space-y-3 rounded-lg border border-border p-3">
+      <label className="flex cursor-pointer items-center justify-between gap-3">
+        <span>
+          <span className="block text-sm font-semibold text-foreground">Puede fiar</span>
+          <span className="block text-xs text-muted-foreground">
+            Aparece "Fiado" al cobrarle en la terminal
+          </span>
+        </span>
+        <Switch
+          checked={value.credit_enabled}
+          disabled={!isAdmin}
+          onCheckedChange={(v) => onChange({ ...value, credit_enabled: v })}
+        />
+      </label>
+      {value.credit_enabled && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="customer-credit-limit">Límite</Label>
+            <Input
+              id="customer-credit-limit"
+              inputMode="decimal"
+              disabled={!isAdmin}
+              value={value.credit_limit}
+              onChange={(e) =>
+                /^\d*\.?\d{0,2}$/.test(e.target.value) &&
+                onChange({ ...value, credit_limit: e.target.value })
+              }
+              placeholder="Sin límite"
+              className="h-11 tabular-nums"
+            />
+          </div>
+          {!hasHistory && (
+            <div className="space-y-1.5">
+              <Label htmlFor="customer-credit-initial">Ya debía</Label>
+              <Input
+                id="customer-credit-initial"
+                inputMode="decimal"
+                disabled={!isAdmin}
+                value={value.credit_initial}
+                onChange={(e) =>
+                  /^\d*\.?\d{0,2}$/.test(e.target.value) &&
+                  onChange({ ...value, credit_initial: e.target.value })
+                }
+                placeholder="0.00"
+                className="h-11 tabular-nums"
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {!isAdmin && (
+        <p className="text-xs text-muted-foreground">Solo el propietario puede cambiar el fiado.</p>
+      )}
+    </div>
+  </div>
+);
 
 const CustomerForm = ({ value, onChange }) => (
   <div className="space-y-4">
@@ -279,6 +348,12 @@ const QrDialog = ({ customer, open, onClose }) => {
 
 const Customers = () => {
   const notify = useToast();
+  const { cashier } = useCashier();
+  const isAdmin = cashier?.role === "admin";
+  // Saldos de fiado por cliente y total por cobrar (viven en el Host).
+  const [credit, setCredit] = useState({ byCustomer: {}, receivable: 0, debtors: 0 });
+  const [onlyDebt, setOnlyDebt] = useState(false);
+  const [accountCustomer, setAccountCustomer] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [tiers, setTiers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -286,6 +361,8 @@ const Customers = () => {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", tier_id: null, tiers: [] });
+  const emptyCredit = { credit_enabled: false, credit_limit: "", credit_initial: "" };
+  const [creditForm, setCreditForm] = useState(emptyCredit);
   const [exceptions, setExceptions] = useState([]);
   const [showPicker, setShowPicker] = useState(false);
   const [newPrice, setNewPrice] = useState(null);
@@ -306,8 +383,16 @@ const Customers = () => {
     }
   };
 
+  const loadCredit = async () => {
+    try {
+      const res = await window.api.invoke("get-credit-balances");
+      if (res?.success) setCredit(res);
+    } catch {}
+  };
+
   useEffect(() => {
     window.api.invoke("get-tiers").then(setTiers).catch(() => {});
+    loadCredit();
   }, []);
 
   // In vivo: lista, escalas y excepciones por tabla; el sheet/formulario en
@@ -316,8 +401,10 @@ const Customers = () => {
     () => {
       loadCustomers(searchTerm, true);
       window.api.invoke("get-tiers").then(setTiers).catch(() => {});
+      loadCredit();
     },
-    ["customers", "customer_prices", "customer_tiers", "tier_prices"],
+    // sales/cash_register: ventas fiadas, cancelaciones y abonos mueven saldos.
+    ["customers", "customer_prices", "customer_tiers", "tier_prices", "sales", "cash_register"],
   );
 
   // Única carga de la lista: al montar va sin espera; después, cada búsqueda
@@ -337,6 +424,7 @@ const Customers = () => {
   const openCreate = () => {
     setEditItem(null);
     setForm({ name: "", phone: "", tier_id: null, tiers });
+    setCreditForm(emptyCredit);
     setExceptions([]);
     setShowPicker(false);
     setNewPrice(null);
@@ -346,6 +434,11 @@ const Customers = () => {
   const openEdit = async (c) => {
     setEditItem(c);
     setForm({ name: c.name, phone: c.phone || "", tier_id: c.tier_id, tiers });
+    setCreditForm({
+      credit_enabled: !!c.credit_enabled,
+      credit_limit: c.credit_limit > 0 ? String(c.credit_limit) : "",
+      credit_initial: "",
+    });
     setShowPicker(false);
     setNewPrice(null);
     setSheetOpen(true);
@@ -367,29 +460,55 @@ const Customers = () => {
       phone: form.phone.trim(),
       tier_id: form.tier_id,
     };
+    let customerId = editItem?.id;
     if (editItem) {
       const res = await window.api.invoke("update-customer", editItem.id, payload);
       if (!res.success) {
         notify(res.error || "No se pudo guardar", "error");
         return;
       }
-      notify("Cliente actualizado", "success");
     } else {
       const res = await window.api.invoke("add-customer", payload);
       if (!res.success) {
         notify(res.error || "No se pudo crear", "error");
         return;
       }
-      notify("Cliente creado", "success");
+      customerId = res.customer?.id;
     }
+    // Fiado: sólo si cambió algo (y sólo el propietario puede).
+    const creditChanged =
+      creditForm.credit_enabled !== !!editItem?.credit_enabled ||
+      (parseFloat(creditForm.credit_limit) || 0) !== (editItem?.credit_limit || 0) ||
+      (parseFloat(creditForm.credit_initial) || 0) > 0;
+    if (isAdmin && customerId && creditChanged) {
+      const res = await window.api.invoke("set-customer-credit", {
+        customerId,
+        enabled: creditForm.credit_enabled,
+        limit: parseFloat(creditForm.credit_limit) || 0,
+        initialBalance: parseFloat(creditForm.credit_initial) || 0,
+        role: cashier?.role,
+        cashierId: cashier?.id,
+        cashierName: cashier?.name,
+      });
+      if (!res?.success) {
+        notify(res?.error || "No se pudo guardar el fiado", "error");
+        return;
+      }
+    }
+    notify(editItem ? "Cliente actualizado" : "Cliente creado", "success");
     setSheetOpen(false);
     loadCustomers(searchTerm);
+    loadCredit();
   };
 
   const handleDelete = async () => {
     if (!deleteConfirm) return;
-    await window.api.invoke("delete-customer", deleteConfirm.id);
+    const res = await window.api.invoke("delete-customer", deleteConfirm.id);
     setDeleteConfirm(null);
+    if (res && res.success === false) {
+      notify(res.error || "No se pudo eliminar", "error");
+      return;
+    }
     notify("Cliente eliminado", "success");
     loadCustomers(searchTerm);
   };
@@ -424,7 +543,11 @@ const Customers = () => {
     setExceptions(exceptions.filter((e) => e.id !== row.id));
   };
 
-  const list = useMemo(() => customers, [customers]);
+  const balanceOf = (c) => credit.byCustomer[c.id]?.balance || 0;
+  const list = useMemo(
+    () => (onlyDebt ? customers.filter((c) => (credit.byCustomer[c.id]?.balance || 0) > 0) : customers),
+    [customers, onlyDebt, credit],
+  );
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -438,6 +561,35 @@ const Customers = () => {
           </Button>
         }
       />
+
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <StatCard
+          prominent
+          size="sm"
+          icon={<Users />}
+          tone="primary"
+          label="Clientes"
+          value={customers.length}
+          onClick={() => setOnlyDebt(false)}
+          title="Ver todos los clientes"
+        />
+        <StatCard
+          prominent
+          size="sm"
+          icon={<HandCoins />}
+          tone="destructive"
+          label="Cuentas por cobrar"
+          value={fmtMoney(credit.receivable)}
+          caption={
+            credit.debtors > 0
+              ? `${credit.debtors} ${credit.debtors === 1 ? "cliente debe" : "clientes deben"}`
+              : "Nadie debe"
+          }
+          onClick={() => setOnlyDebt((v) => !v)}
+          active={onlyDebt}
+          title={onlyDebt ? "Quitar filtro" : "Ver solo clientes con adeudo"}
+        />
+      </div>
 
       <div className="relative mb-5 max-w-sm">
         <Search
@@ -469,6 +621,9 @@ const Customers = () => {
               <TableHead className="px-4 font-semibold text-foreground/75">
                 Nivel
               </TableHead>
+              <TableHead className="px-4 font-semibold text-foreground/75">
+                Saldo
+              </TableHead>
               <TableHead className="w-32 px-4 text-right font-semibold text-foreground/75">
                 Acciones
               </TableHead>
@@ -493,6 +648,9 @@ const Customers = () => {
                   <TableCell className="px-4">
                     <Skeleton className="h-4 w-20" />
                   </TableCell>
+                  <TableCell className="px-4">
+                    <Skeleton className="h-4 w-20" />
+                  </TableCell>
                   <TableCell className="px-4 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Skeleton className="h-9 w-9 rounded-md" />
@@ -503,13 +661,15 @@ const Customers = () => {
               ))}
             {!loading && list.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="h-28 px-4 text-center">
+                <TableCell colSpan={5} className="h-28 px-4 text-center">
                   <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
                     <Users size={32} className="opacity-40" />
                     <p className="text-sm">
-                      {searchTerm
-                        ? "No se encontraron clientes"
-                        : "No hay clientes registrados"}
+                      {onlyDebt
+                        ? "Ningún cliente debe"
+                        : searchTerm
+                          ? "No se encontraron clientes"
+                          : "No hay clientes registrados"}
                     </p>
                     {!searchTerm && (
                       <Button size="sm" onClick={openCreate}>
@@ -549,8 +709,44 @@ const Customers = () => {
                       <span className="text-xs text-muted-foreground">Normal</span>
                     )}
                   </TableCell>
+                  <TableCell className="px-4 py-3">
+                    {balanceOf(c) > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setAccountCustomer(c)}
+                        className="cursor-pointer text-left"
+                        title="Ver estado de cuenta"
+                      >
+                        <span className="block text-sm font-semibold tabular-nums text-destructive dark:text-red-400">
+                          {fmtMoney(balanceOf(c))}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {debtAge(credit.byCustomer[c.id]?.oldestDebtAt)}
+                        </span>
+                      </button>
+                    ) : c.credit_enabled ? (
+                      <span className="text-xs text-success">Al corriente</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {(c.credit_enabled || credit.byCustomer[c.id]) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setAccountCustomer(c)}
+                              aria-label={`Cuenta de ${c.name}`}
+                            >
+                              <Wallet className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Estado de cuenta</TooltipContent>
+                        </Tooltip>
+                      )}
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -632,6 +828,12 @@ const Customers = () => {
 
           <div className="flex-1 overflow-auto px-6 py-4">
             <CustomerForm value={form} onChange={setForm} />
+            <CreditForm
+              value={creditForm}
+              onChange={setCreditForm}
+              isAdmin={isAdmin}
+              hasHistory={!!(editItem && credit.byCustomer[editItem.id])}
+            />
 
             {editItem && (
               <div className="mt-6">
@@ -739,6 +941,14 @@ const Customers = () => {
       {qrCustomer && (
         <QrDialog customer={qrCustomer} open onClose={() => setQrCustomer(null)} />
       )}
+
+      <CustomerCreditSheet
+        customer={accountCustomer}
+        open={!!accountCustomer}
+        onClose={() => setAccountCustomer(null)}
+        cashier={cashier}
+        onChanged={loadCredit}
+      />
 
       <ConfirmDialog
         open={!!deleteConfirm}

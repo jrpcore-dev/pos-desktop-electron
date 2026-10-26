@@ -9,6 +9,7 @@ import {
   Download,
   Info,
   Landmark,
+  HandCoins,
   Lock,
   Minus,
   PackageX,
@@ -95,6 +96,7 @@ const methodLabels = {
   cash: "Efectivo",
   card: "Tarjeta",
   transfer: "Transferencia",
+  credit: "Fiado",
 };
 
 const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
@@ -352,10 +354,13 @@ const EndOfDay = () => {
 
   // Un solo pase O(n) sobre las ventas para los 3 métodos de pago
   // (antes eran 3 useMemo que filtraban la lista completa por cada render).
-  const { totalCash, totalCard, totalTransfer } = useMemo(() => {
+  // Fiado: lo que pagó al momento suma a su método; la parte fiada va en
+  // su propia línea y NO entra al cajón (igual que en el backend).
+  const { totalCash, totalCard, totalTransfer, totalCredit } = useMemo(() => {
     let cash = 0;
     let card = 0;
     let transfer = 0;
+    let creditPart = 0;
 
     for (const sale of sales) {
       if (sale.status === "cancelado") continue;
@@ -365,10 +370,29 @@ const EndOfDay = () => {
       if (sale.payment_method === "cash") cash += amount;
       else if (sale.payment_method === "card") card += amount;
       else if (sale.payment_method === "transfer") transfer += amount;
+      else if (sale.payment_method === "credit") {
+        creditPart += Number(sale.credit_amount || 0);
+        const paid = Number(sale.credit_paid || 0);
+        if (sale.credit_paid_method === "cash") cash += paid;
+        else if (sale.credit_paid_method === "card") card += paid;
+        else if (sale.credit_paid_method === "transfer") transfer += paid;
+      }
     }
 
-    return { totalCash: cash, totalCard: card, totalTransfer: transfer };
+    return {
+      totalCash: cash,
+      totalCard: card,
+      totalTransfer: transfer,
+      totalCredit: creditPart,
+    };
   }, [sales]);
+
+  // Cobranza de fiado (abonos desde Clientes) de esta caja, por método. La
+  // de efectivo entra al cierre esperado.
+  const collectedCash = Number(register?.credit?.collected?.cash || 0);
+  const collectedOther =
+    Number(register?.credit?.collected?.card || 0) +
+    Number(register?.credit?.collected?.transfer || 0);
 
   const totalExpenses = useMemo(
     () =>
@@ -402,10 +426,11 @@ const EndOfDay = () => {
 
     return (
       Number(register.opening_balance || 0) +
-      totalCash -
+      totalCash +
+      collectedCash -
       Number(register.expenses || 0)
     );
-  }, [register, totalCash]);
+  }, [register, totalCash, collectedCash]);
 
   const cashInRegister = expectedClose;
 
@@ -971,6 +996,10 @@ const EndOfDay = () => {
       ["Efectivo", fmtMoney(totalCash)],
       ["Tarjeta", fmtMoney(totalCard)],
       ["Transferencia", fmtMoney(totalTransfer)],
+      ...(totalCredit > 0 ? [["Fiado (no entra a caja)", fmtMoney(totalCredit)]] : []),
+      ...(collectedCash > 0 || collectedOther > 0
+        ? [["Cobranza de fiado", fmtMoney(collectedCash + collectedOther)]]
+        : []),
     ].forEach(([label, value]) => {
       doc.setFont(undefined, "normal");
       doc.setTextColor(...C.body);
@@ -1323,7 +1352,8 @@ const EndOfDay = () => {
   // de sumarse encima (esperado + declarado).
   const baseExpected =
     Number(register?.opening_balance || 0) +
-    totalCash -
+    totalCash +
+    collectedCash -
     Number(register?.expenses || 0) -
     (parseFloat(expenses) || 0);
   const openCloseDifference =
@@ -1794,6 +1824,16 @@ const EndOfDay = () => {
                         icon: Landmark,
                         color: "#d97706",
                       },
+                      ...(totalCredit > 0
+                        ? [
+                            {
+                              label: "Fiado (no entra a caja)",
+                              value: totalCredit,
+                              icon: HandCoins,
+                              color: "#dc2626",
+                            },
+                          ]
+                        : []),
                     ].map((item) => {
                       const Icon = item.icon;
 
@@ -1829,6 +1869,14 @@ const EndOfDay = () => {
                         fmtMoney(register.opening_balance),
                       ],
                       ["Ventas en efectivo", `+${fmtMoneyAbs(totalCash)}`],
+                      ...(collectedCash > 0 || collectedOther > 0
+                        ? [
+                            [
+                              "Cobranza de fiado (efectivo)",
+                              `+${fmtMoneyAbs(collectedCash)}`,
+                            ],
+                          ]
+                        : []),
                       [
                         "Gastos",
                         `-${fmtMoneyAbs(register.expenses)}`,
@@ -2048,12 +2096,7 @@ const EndOfDay = () => {
                 </span>
 
                 <span className="text-sm font-bold tabular-nums">
-                  {fmtMoney(
-                    Number(register?.opening_balance || 0) +
-                      totalCash -
-                      Number(register?.expenses || 0) -
-                      (parseFloat(expenses) || 0),
-                  )}
+                  {fmtMoney(baseExpected)}
                 </span>
               </div>
 

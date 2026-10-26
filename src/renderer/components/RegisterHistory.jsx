@@ -19,6 +19,7 @@ import {
   TriangleAlert,
   CheckCircle2,
   Landmark,
+  HandCoins,
   Eye,
   CircleDollarSign,
   Clock3,
@@ -789,11 +790,13 @@ const RegisterHistory = () => {
     cash: "Efectivo",
     card: "Tarjeta",
     transfer: "Transferencia",
+    credit: "Fiado",
   };
   const methodIcons = {
     cash: <Banknote size={17} color="#059669" />,
     card: <CreditCard size={17} color="#4f46e5" />,
     transfer: <Landmark size={17} color="#d97706" />,
+    credit: <HandCoins size={17} color="#dc2626" />,
   };
   const formatDuration = (start, end) => {
     const s = new Date(start).getTime();

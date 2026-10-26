@@ -17,6 +17,7 @@
 // producto) sí provocan rollback total.
 
 const crypto = require("crypto");
+const credit = require("./credit");
 
 const MAX_CART_LINES = 500;
 const KNOWN_UNITS = ["piece", "weight", "box", "package", "boxpack"];
@@ -263,6 +264,11 @@ const createSaleTx = (
     // y su línea puede enlazarse con el ledger del proveedor.
     folioDeviceId,
     allowServiceLink,
+    // Fiado (paymentMethod 'credit'): lo que pagó al momento, su método y el
+    // PIN del propietario si la venta rebasa el límite (ver credit.js).
+    creditPaid,
+    creditPaidMethod,
+    ownerPin,
   },
 ) => {
   if (!Array.isArray(cart) || cart.length === 0) {
@@ -297,6 +303,18 @@ const createSaleTx = (
     }
   }
 
+  // Fiado: se valida cliente, límite y monto ANTES de escribir nada.
+  const creditPrep =
+    paymentMethod === "credit"
+      ? credit.prepareCreditSale(db, {
+          customerId: resolvedCustomerId,
+          total,
+          creditPaid,
+          creditPaidMethod,
+          ownerPin,
+        })
+      : null;
+
   const openReg = findOpenRegister(db, cashierId, role, deviceId);
   // 3a.i · la caja exige caja propia; el Host local vende también fuera de caja.
   if (requireRegister && !openReg && !registerId) {
@@ -329,7 +347,7 @@ const createSaleTx = (
   const saleStmt = db.prepare(
     // 3g/C · `device_id` deja constancia de qué aparato hizo la venta: sin él,
     // una venta sin caja abierta no se puede atribuir a nadie.
-    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id, device_id, folio, synced_at, client_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO sales (total, payment_method, discount_total, register_id, cashier_name, customer_id, device_id, folio, synced_at, client_created_at, credit_amount, credit_paid, credit_paid_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const saleInfo = saleStmt.run(
     total,
@@ -342,6 +360,9 @@ const createSaleTx = (
     folioFinal,
     syncedAt || null,
     clientCreatedAt || null,
+    creditPrep ? creditPrep.amount : 0,
+    creditPrep ? creditPrep.paid : 0,
+    creditPrep ? creditPrep.method : null,
   );
   const saleId = saleInfo.lastInsertRowid;
 
@@ -482,7 +503,27 @@ const createSaleTx = (
     warnings.push(lateWarning);
   }
 
-  return { success: true, saleId, folio: folioFinal, warnings };
+  // Cargo a la cuenta del cliente: sólo la parte fiada, en la misma
+  // transacción que la venta (o se guardan las dos o ninguna).
+  const creditInfo = creditPrep
+    ? credit.chargeSale(db, creditPrep, {
+        saleId,
+        folio: folioFinal,
+        total,
+        registerId: registerIdFinal,
+        deviceId,
+        cashierId,
+        cashierName,
+      })
+    : undefined;
+
+  return {
+    success: true,
+    saleId,
+    folio: folioFinal,
+    warnings,
+    ...(creditInfo ? { credit: creditInfo } : {}),
+  };
 };
 
 module.exports = {

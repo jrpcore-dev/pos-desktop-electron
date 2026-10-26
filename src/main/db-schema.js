@@ -504,6 +504,36 @@ const createTables = (db) => {
 const runMigrations = (db) => {
   const ensureColumn = (table, column, definition) => ensureColumnOn(db, table, column, definition);
 
+  // ─── FIADO / CRÉDITO A CLIENTES (ver credit.js) ───────────────────────
+  // customers viaja a las cajas: la terminal necesita saber si puede fiar.
+  // Los movimientos y el saldo viven sólo en el Host.
+  ensureColumn("customers", "credit_enabled", "INTEGER DEFAULT 0");
+  ensureColumn("customers", "credit_limit", "REAL DEFAULT 0");
+  ensureColumn("sales", "credit_amount", "REAL DEFAULT 0");
+  ensureColumn("sales", "credit_paid", "REAL DEFAULT 0");
+  ensureColumn("sales", "credit_paid_method", "TEXT");
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_credit_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    method TEXT,
+    sale_id INTEGER,
+    register_id INTEGER,
+    device_id TEXT,
+    cashier_id INTEGER,
+    cashier_name TEXT,
+    note TEXT,
+    client_request_id TEXT UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_credit_movements_customer ON customer_credit_movements(customer_id, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_credit_movements_register ON customer_credit_movements(register_id)`,
+  );
+
   // Alertas inteligentes: datos estructurados (JSON) para las acciones de
   // cada aviso (producto, lote, cantidad…). `week_key` funciona como llave
   // de deduplicación por tipo.

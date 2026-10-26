@@ -113,6 +113,12 @@ const RPC_CHANNELS = new Set([
   "get-insights",
   "mark-insight",
   "insight-action",
+  // ── fiado: saldo y movimientos viven en el Host ───────────────────────────
+  "set-customer-credit",
+  "get-customer-credit",
+  "get-credit-balances",
+  "credit-payment",
+  "credit-adjust",
   "run-weekly-pulse",
   "touch-customer",
   // ── ajustes de negocio (los del propio aparato se quedan locales) ─────────
