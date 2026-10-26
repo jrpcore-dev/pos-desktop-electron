@@ -1,0 +1,47 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 2400 700"
+  shape-rendering="geometricPrecision"
+>
+  <defs>
+    <linearGradient id="vendiaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2f6fed" />
+      <stop offset="55%" stop-color="#4c8dff" />
+      <stop offset="100%" stop-color="#155ee0" />
+    </linearGradient>
+  </defs>
+
+  <!-- Ícono -->
+  <g transform="translate(60, 30)">
+    <rect x="0" y="0" width="640" height="640" rx="160" ry="160" fill="url(#vendiaGrad)" />
+    <path d="M144 330 L232 500 L322 340 L412 500 L500 330 L500 146 L322 396 L144 146 Z" fill="#ffffff" fill-rule="evenodd" />
+    <path d="M290 330 L322 396 L354 330" fill="#ffffff" fill-opacity="0.55" />
+  </g>
+
+  <!-- Palabra Vendia -->
+  <g transform="translate(760, 40)">
+    <text
+      x="0"
+      y="400"
+      font-family="'Sora', 'Inter', sans-serif"
+      font-weight="800"
+      font-size="300"
+      letter-spacing="-14"
+      fill="#0b1526"
+    >
+      Vendia
+    </text>
+    <text
+      x="0"
+      y="400"
+      font-family="'Sora', 'Inter', sans-serif"
+      font-weight="800"
+      font-size="300"
+      letter-spacing="-14"
+      fill="url(#vendiaGrad)"
+    >
+      <tspan x="0" y="400">V</tspan>
+      <tspan x="175" y="400">endia</tspan>
+    </text>
+  </g>
+</svg>

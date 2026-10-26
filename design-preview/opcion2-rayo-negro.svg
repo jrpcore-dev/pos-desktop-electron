@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" shape-rendering="geometricPrecision">
+  <defs>
+    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2f6fed"/><stop offset="50%" stop-color="#4c8dff"/><stop offset="100%" stop-color="#155ee0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="128" ry="128" fill="url(#g2)"/>
+  <!-- V azul -->
+  <path d="M118 118 L256 360 L394 118" fill="none" stroke="#155ee0" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Rayo negro (como tu imagen original) -->
+  <path d="M198 142 L298 158 L218 360 L318 342 L278 142 Z" fill="#0b1526"/>
+</svg>

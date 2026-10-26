@@ -1,0 +1,16 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 512 512"
+  shape-rendering="geometricPrecision"
+>
+  <defs>
+    <linearGradient id="vendiaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2f6fed" />
+      <stop offset="55%" stop-color="#4c8dff" />
+      <stop offset="100%" stop-color="#155ee0" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="128" ry="128" fill="url(#vendiaGrad)" />
+  <path d="M116 262 L186 397 L256 272 L326 397 L396 262 L396 116 L256 318 L116 116 Z" fill="#ffffff" fill-rule="evenodd" />
+  <path d="M230 262 L256 318 L282 262" fill="#ffffff" fill-opacity="0.55" />
+</svg>
