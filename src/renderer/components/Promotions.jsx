@@ -8,6 +8,8 @@ import {
   Plus,
   Search,
   Settings,
+  Shapes,
+  Sparkles,
   Tag,
   Trash2,
   X,
@@ -39,6 +41,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { StatCard } from "./ui/stat-card";
 import { Switch } from "./ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { DateRangePicker } from "./ui/date-range-picker";
@@ -351,7 +354,7 @@ const GroupPromoDialog = ({ open, initial, categories, brands, onClose, onSaved 
               onCheckedChange={(v) => set("is_active")(v ? 1 : 0)}
             />
           </div>
-          <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[0.8rem] text-sky-800 dark:text-info">
+          <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[0.8rem] text-foreground">
             Si un producto ya tiene su propia promo, se cobra la más barata. No se acumulan,
             y no aplica a clientes con precio especial.
           </p>
@@ -656,7 +659,7 @@ const BundleDialog = ({ open, initial, onClose, onSaved }) => {
               className={cn(
                 "flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-[0.85rem]",
                 savings > 0
-                  ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                  ? "border-success/30 bg-success/10 text-success"
                   : "border-destructive/30 bg-destructive/10 text-destructive",
               )}
             >
@@ -817,25 +820,33 @@ const Promotions = () => {
         }
       />
 
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
-        <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-blue-900 p-4 text-white shadow-[0_16px_32px_-16px_rgba(30,58,138,0.7)] sm:col-span-1">
-          <p className="text-[0.8rem] font-semibold text-white/80">Activas ahora</p>
-          <p className="mt-1 text-3xl font-extrabold tabular-nums">{liveCount}</p>
-          <p className="text-[0.75rem] text-white/75">se están cobrando hoy</p>
-        </div>
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          hero
+          gradient
+          size="sm"
+          prominent
+          icon={<Sparkles />}
+          label="Activas ahora"
+          value={String(liveCount)}
+          caption="se están cobrando hoy"
+        />
         {[
-          ["De productos", productPromos.length, "productos con promo"],
-          ["Por categoría o marca", groups.length, "promos de grupo"],
-          ["Paquetes", bundles.length, "paquetes creados"],
-        ].map(([label, n, hint]) => (
-          <div
-            key={label}
-            className="rounded-2xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05),0_10px_20px_-14px_rgba(15,23,42,0.3)]"
-          >
-            <p className="text-[0.8rem] font-semibold text-muted-foreground">{label}</p>
-            <p className="mt-1 text-3xl font-extrabold tabular-nums text-foreground">{n}</p>
-            <p className="text-[0.75rem] text-muted-foreground">{hint}</p>
-          </div>
+          ["products", "De productos", productPromos.length, "productos con promo", <Tag key="i" />],
+          ["groups", "Por categoría o marca", groups.length, "promos de grupo", <Shapes key="i" />],
+          ["bundles", "Paquetes", bundles.length, "paquetes creados", <Package key="i" />],
+        ].map(([value, label, n, caption, icon]) => (
+          <StatCard
+            key={value}
+            size="sm"
+            prominent
+            icon={icon}
+            label={label}
+            value={String(n)}
+            caption={caption}
+            onClick={() => setTab(value)}
+            active={tab === value}
+          />
         ))}
       </div>
 
@@ -894,7 +905,7 @@ const Promotions = () => {
               <PromoRow
                 key={g.id}
                 icon={BadgePercent}
-                tone="bg-red-500/10 text-red-600"
+                tone="bg-chart-1/12 text-chart-1"
                 title={`-${g.percent}% ${g.name || (g.scope === "brand" ? `marca ${g.brand}` : `en ${g.category_name || "categoría"}`)}`}
                 subtitle={`${g.scope === "brand" ? `Marca ${g.brand}` : `Categoría ${g.category_name || "—"}`} · ${validityText(g)}`}
                 status={statusOf(g)}
@@ -937,7 +948,7 @@ const Promotions = () => {
               <PromoRow
                 key={b.id}
                 icon={Package}
-                tone="bg-amber-500/15 text-amber-700"
+                tone="bg-chart-2/15 text-chart-1"
                 title={`${b.name} · ${fmtMoney(b.price)}`}
                 subtitle={validityText(b)}
                 chips={b.slots.map(

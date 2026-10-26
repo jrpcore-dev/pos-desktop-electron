@@ -757,6 +757,7 @@ const Transacciones = () => {
           <StatCard
             prominent
             hero
+            gradient
             size="sm"
             icon={<CircleDollarSign />}
             label="Total ventas"

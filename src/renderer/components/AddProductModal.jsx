@@ -169,13 +169,13 @@ const TIER_TYPES = [
   {
     value: "llevapaga",
     label: "LLEVA Y PAGA",
-    cls: "bg-violet-500/15 text-violet-600",
+    cls: "bg-chart-1/15 text-chart-1",
     help: "2×1, 3×2… sobre el precio actual: si cambias el precio, la promo se ajusta sola.",
   },
   {
     value: "piezan",
     label: "PIEZA N AL %",
-    cls: "bg-teal-500/15 text-teal-600",
+    cls: "bg-primary/10 text-primary",
     help: "Cada N-ésima unidad con ese % de descuento (ej. la 2ª al 50%).",
   },
 ];

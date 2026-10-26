@@ -161,6 +161,11 @@
   --chart-4: 218 50% 72%;
   --chart-5: 222 47% 12%;
 
+  /* Degradado de la tarjeta protagonista (StatCard hero gradient), con los
+     azules de la marca: en claro, de primary a chart-1. */
+  --hero-gradient-from: var(--primary);
+  --hero-gradient-to: var(--chart-1);
+
   --radius: 0.75rem;
 }
 
@@ -227,6 +232,12 @@
   --chart-3: 211 100% 78%;
   --chart-4: 221 83% 45%;
   --chart-5: 224 76% 30%;
+
+  /* En oscuro primary (58%) y chart-1 (65%) casi no se distinguen y la
+     tarjeta se veía sólida: termina en chart-3, el azul más claro, que
+     mantiene legible el texto marino. */
+  --hero-gradient-from: var(--primary);
+  --hero-gradient-to: var(--chart-3);
 }
 
 * { box-sizing: border-box; }

@@ -143,7 +143,7 @@ const CartItem = React.memo(
               <span
                 className={cn(
                   badgeBase,
-                  "max-w-[130px] truncate bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                  "max-w-[130px] truncate bg-chart-1/12 text-chart-1",
                 )}
                 title={bundleBadge}
               >

@@ -15,6 +15,9 @@ import { Hint } from "./hint";
      (primary, success, warning, destructive, info).
    - `hero`: métrica protagonista (una por pantalla); fondo `primary` de la
      paleta (marino en claro, azul en oscuro) con su `primary-foreground`.
+   - `gradient` (con `hero`): el fondo pasa a un degradado de los azules de
+     la marca (`--hero-gradient-from` → `--hero-gradient-to`: primary →
+     chart-1 en claro, primary → chart-3 en oscuro); sigue al tema de la app.
    - `size`: "lg" para métricas principales, "sm" para secundarias.
    - `prominent`: título un paso más grande y cifra más grande (pantallas de
      operación: corte, transacciones, inventario, movimientos).
@@ -77,6 +80,7 @@ const StatCard = React.forwardRef(
       icon,
       tone = "primary",
       hero = false,
+      gradient = false,
       delta,
       invert,
       caption,
@@ -106,7 +110,12 @@ const StatCard = React.forwardRef(
           "relative isolate flex min-w-0 flex-col justify-between overflow-hidden rounded-xl border transition-all duration-200 hover:-translate-y-0.5",
           lg ? "min-h-[8.5rem] gap-4 p-5" : prominent ? "gap-2 px-4 py-3" : "gap-3 p-4",
           hero
-            ? "border-transparent bg-primary text-primary-foreground shadow-[0_12px_28px_-12px_hsl(var(--primary)/0.6)] hover:shadow-[0_16px_32px_-12px_hsl(var(--primary)/0.75)]"
+            ? cn(
+                "border-transparent text-primary-foreground shadow-[0_12px_28px_-12px_hsl(var(--primary)/0.6)] hover:shadow-[0_16px_32px_-12px_hsl(var(--primary)/0.75)]",
+                gradient
+                  ? "bg-gradient-to-br from-[hsl(var(--hero-gradient-from))] to-[hsl(var(--hero-gradient-to))]"
+                  : "bg-primary"
+              )
             : cn(
                 "bg-card text-card-foreground shadow-sm hover:shadow-md",
                 HOVER_BORDER[tone] || HOVER_BORDER.primary

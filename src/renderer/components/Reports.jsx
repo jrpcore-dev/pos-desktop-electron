@@ -1899,6 +1899,7 @@ const Reports = () => {
         <section className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             hero
+            gradient
             loading={loading}
             icon={<Banknote />}
             label="Ventas totales"
