@@ -1,19 +1,29 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ArrowRight, CheckCircle2, User, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Loader2, Store } from "lucide-react";
 import { useCashier } from "../contexts/CashierContext";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
+import { InitialsAvatar } from "./ui/initials-avatar";
 import { cn } from "@/lib/utils";
+import vendiaIcon from "../assets/icon-vendia.svg";
 
-const colors = [
-  "hsl(var(--category-1))",
-  "hsl(var(--category-2))",
-  "hsl(var(--category-3))",
-  "hsl(var(--category-4))",
-  "hsl(var(--category-5))",
-  "hsl(var(--category-6))",
-];
+// Hora y fecha del panel de marca (zona de la tienda).
+const fmtTime = (d) =>
+  d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" });
+const fmtDate = (d) => {
+  const t = d.toLocaleDateString("es-MX", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "America/Mexico_City",
+  });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+// Círculos del PIN: 4 fijos; aparece el 5.º/6.º sólo al escribir ese dígito.
+const PIN_MIN_SLOTS = 4;
+const PIN_MAX = 6;
 
 const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
   const [cashiers, setCashiers] = useState([]);
@@ -27,6 +37,14 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
   const [storeLogo, setStoreLogo] = useState("");
   const { setCashier } = useCashier();
   const pinRef = useRef(null);
+  const [now, setNow] = useState(() => new Date());
+  const [pinFocused, setPinFocused] = useState(false);
+  const [shakeKey, setShakeKey] = useState(0);
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(new Date()), 15000);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const load = async (initial) => {
@@ -72,7 +90,7 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
   };
 
   const handlePinChange = (e) => {
-    setPin(e.target.value.replace(/\D/g, "").slice(0, 6));
+    setPin(e.target.value.replace(/\D/g, "").slice(0, PIN_MAX));
     setError("");
   };
 
@@ -88,6 +106,8 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
         if (onLogin) onLogin(result.cashier);
       } else {
         setError(result.error || "PIN incorrecto");
+        setPin("");
+        setShakeKey((k) => k + 1);
       }
     } catch { setError("Error al verificar PIN"); }
     setLoading(false);
@@ -109,181 +129,157 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
   };
 
   const selectedCashier = cashiers.find((c) => c.id === selectedId);
-  const selectedColor = selectedId !== null ? colors[selectedId % colors.length] : null;
+  const slots = Math.max(PIN_MIN_SLOTS, Math.min(PIN_MAX, pin.length));
 
   return (
-    <div className="fade-in login-shell relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background p-4 sm:p-8">
-      {/* ══ Fondo de marca full-bleed (gradiente derivado de primary + trama) ══ */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: "linear-gradient(135deg, hsl(222 47% 14%), hsl(218 55% 32%))",
-        }}
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          backgroundImage: "radial-gradient(hsl(0 0% 100% / 0.10) 1px, transparent 1px)",
-          backgroundSize: "22px 22px",
-        }}
-      />
-
-      {/* ══ Marca ══ */}
-      <div className="login-brand relative z-10 mb-5 flex flex-col items-center text-center">
-        <div className="login-logo mb-3 flex h-16 w-16 items-center justify-center rounded-xl bg-white/10 p-2 ring-1 ring-white/20 backdrop-blur">
-          {storeLogo ? (
-            <img src={storeLogo} alt={`Logo de ${storeName}`} className="h-full w-full rounded-lg object-contain" />
-          ) : (
-            <User size={30} className="text-white" />
-          )}
-        </div>
-        <h1 className="text-3xl font-bold tracking-tight text-white text-display">
-          {storeName}
-        </h1>
-        <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.3em] text-white/60">
-          VENDIA
-        </p>
-      </div>
-
-      {/* ══ Card de acceso ══ */}
-      {/* La card se ensancha sola con 4+ cajeros para que todos quepan
-          en una fila (sin envolver a 2 filas y sin scroll). */}
-      <div className={cn(
-        "login-card relative z-10 w-full rounded-xl border border-border bg-card px-7 py-10 shadow-md transition-[max-width] duration-300 sm:px-9 sm:py-12",
-        cashiers.length >= 4 ? "max-w-3xl" : "max-w-2xl"
-      )}>
-        <h2 className="mb-6 text-center text-sm font-bold uppercase tracking-wider text-muted-foreground">
-          Selecciona tu usuario
-        </h2>
-
-        {/* Grid de cajeros (estilo profile picker) */}
-        {usersLoading ? (
-          <div className="flex flex-wrap justify-center gap-3 sm:gap-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="w-32 sm:w-40">
-                <Skeleton className="mx-auto h-[72px] w-[72px] rounded-full" />
-                <Skeleton className="mx-auto mt-3 h-4 w-20" />
-                <Skeleton className="mx-auto mt-1.5 h-3 w-12" />
-              </div>
-            ))}
+    <div className="fade-in flex min-h-screen flex-col items-center justify-center bg-background p-4 sm:p-8">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-border bg-card shadow-lg md:min-h-[600px] md:grid-cols-[5fr_7fr]">
+        {/* ══ Panel de marca: degradado con tonos de la paleta ══ */}
+        <aside className="relative flex flex-col gap-10 overflow-hidden bg-gradient-to-br from-[hsl(var(--chart-5))] to-[hsl(var(--chart-1))] p-8 text-white dark:to-[hsl(var(--chart-4))] sm:p-12">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 opacity-50"
+            style={{
+              backgroundImage: "radial-gradient(hsl(0 0% 100% / 0.12) 1px, transparent 1px)",
+              backgroundSize: "22px 22px",
+            }}
+          />
+          <div className="relative flex flex-1 flex-col items-center justify-center text-center">
+            <div className="flex size-32 items-center justify-center rounded-3xl bg-white/10 p-4 shadow-lg ring-1 ring-white/20 backdrop-blur">
+              {storeLogo ? (
+                <img src={storeLogo} alt="" className="size-full rounded-2xl object-contain" />
+              ) : (
+                <Store size={56} strokeWidth={1.5} />
+              )}
+            </div>
+            <h1 className="mt-6 text-3xl font-bold leading-tight tracking-tight">{storeName}</h1>
           </div>
-        ) : (
-          <div className="flex flex-wrap justify-center gap-3 sm:gap-4">
-            {cashiers.map((c, idx) => {
-              const isSelected = selectedId === c.id;
-              const initial = c.name.charAt(0).toUpperCase();
-              const bgColor = colors[idx % colors.length];
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => handleUserClick(c.id)}
-                  aria-pressed={isSelected}
-                  className={cn(
-                    "flex w-32 flex-col items-center gap-2 rounded-lg border px-4 py-4 text-center transition-colors duration-150 sm:w-40",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-card cursor-pointer",
-                    isSelected
-                      ? "shadow-sm"
-                      : "border-border bg-muted hover:border-foreground/20 hover:bg-foreground/[0.04]"
-                  )}
-                  style={
-                    isSelected
-                      ? {
-                          borderColor: bgColor,
-                          backgroundColor: `color-mix(in srgb, ${bgColor} 12%, transparent)`,
-                        }
-                      : undefined
-                  }
-                >
-                  <span className="relative">
-                    <span
-                      className={cn(
-                        "flex h-[72px] w-[72px] items-center justify-center rounded-full text-xl font-bold",
-                        isSelected ? "" : "border border-border bg-card text-muted-foreground"
-                      )}
-                      style={isSelected ? { background: bgColor, color: "white" } : undefined}
-                    >
-                      {initial}
-                    </span>
-                    {isSelected && (
-                      <span className="absolute -right-1 -top-1 rounded-full bg-card p-0.5 shadow-sm ring-1 ring-border">
-                        <CheckCircle2 size={16} style={{ color: bgColor }} aria-hidden="true" />
-                      </span>
-                    )}
-                  </span>
-                  <span className="w-full truncate text-base font-semibold text-foreground">
-                    {c.name}
-                  </span>
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    {c.role === "admin" ? "Propietario" : "Cajero"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
 
-        {/* ══ Zona PIN — altura reservada, sin salto de layout ══ */}
-        <div className="login-zone relative mt-10 min-h-[304px]">
+          <div className="relative text-center">
+            <p className="text-4xl font-medium leading-none tracking-tight text-white/90 tabular-nums">{fmtTime(now)}</p>
+            <p className="mt-2 text-sm text-white/70">{fmtDate(now)}</p>
+          </div>
+        </aside>
+
+        {/* ══ Acceso ══ */}
+        <section className="flex flex-col p-8 sm:p-12">
           {selectedId === null ? (
-            <div
-              aria-hidden="true"
-              className="absolute inset-0 flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/50 px-6 text-center text-sm text-muted-foreground"
-            >
-              Selecciona tu usuario para ingresar tu PIN
+            <div key="users" className="fade-in flex flex-1 flex-col">
+              <h2 className="text-3xl font-semibold tracking-tight text-foreground">Bienvenido</h2>
+              <p className="mt-1.5 text-base text-muted-foreground">Selecciona tu usuario para continuar</p>
+
+              <div className="-mx-2 mt-8 max-h-[400px] flex-1 space-y-1.5 overflow-y-auto px-2">
+                {usersLoading
+                  ? Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+                        <Skeleton className="size-11 rounded-full" />
+                        <div className="flex-1 space-y-1.5">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-20" />
+                        </div>
+                      </div>
+                    ))
+                  : cashiers.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => handleUserClick(c.id)}
+                        className="group flex w-full cursor-pointer items-center gap-4 rounded-xl border border-transparent px-3 py-3 text-left transition-colors hover:border-border hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <InitialsAvatar
+                          id={c.id}
+                          name={c.name}
+                          letters={1}
+                          solid={c.role === "admin"}
+                          className="size-12 text-lg"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-lg font-semibold text-foreground">{c.name}</span>
+                          <Badge
+                            variant={c.role === "admin" ? "soft-primary" : "soft-neutral"}
+                            className="mt-0.5 px-1.5 py-0"
+                          >
+                            {c.role === "admin" ? "Propietario" : "Cajero"}
+                          </Badge>
+                        </span>
+                        <ChevronRight className="size-5 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                      </button>
+                    ))}
+                {!usersLoading && cashiers.length === 0 && (
+                  <p className="py-8 text-center text-sm text-muted-foreground">No hay usuarios registrados.</p>
+                )}
+              </div>
             </div>
           ) : (
-            <div className="login-pin fade-in rounded-lg border border-border bg-muted p-7">
-              <div className="mb-5 flex items-center gap-3">
-                <span
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-bold"
-                  style={{ background: selectedColor, color: "white" }}
+            <div key="pin" className="fade-in flex flex-1 flex-col">
+              <button
+                type="button"
+                onClick={() => { setSelectedId(null); setPin(""); setError(""); }}
+                className="-ml-2 inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <ArrowLeft className="size-4" />
+                Cambiar usuario
+              </button>
+
+              <div className="flex flex-1 flex-col items-center justify-center py-6">
+                <InitialsAvatar
+                  id={selectedCashier?.id}
+                  name={selectedCashier?.name || ""}
+                  letters={1}
+                  solid={selectedCashier?.role === "admin"}
+                  className="size-24 text-4xl"
+                />
+                <p className="mt-4 text-2xl font-semibold text-foreground">{selectedCashier?.name}</p>
+                <p className="text-sm text-muted-foreground">Ingresa tu PIN</p>
+
+                {/* El PIN se escribe en un input oculto; los círculos sólo lo muestran. */}
+                <div
+                  key={shakeKey}
+                  onClick={() => pinRef.current?.focus()}
+                  className={cn(
+                    "mt-6 flex cursor-text items-center gap-3 rounded-xl px-4 py-3 transition-shadow",
+                    pinFocused && "ring-2 ring-ring/20",
+                    shakeKey > 0 && "shake",
+                  )}
                 >
-                  {selectedCashier?.name.charAt(0).toUpperCase()}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-base font-bold text-foreground">
-                    {selectedCashier?.name}
-                  </p>
-                  <p className="text-xs font-medium text-muted-foreground">
-                    Ingresa tu PIN de acceso
-                  </p>
+                  {Array.from({ length: slots }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={cn(
+                        "size-5 rounded-full transition-all duration-150",
+                        i < pin.length
+                          ? error
+                            ? "scale-110 bg-destructive"
+                            : "scale-110 bg-primary"
+                          : "border-2 border-border bg-transparent",
+                      )}
+                    />
+                  ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setSelectedId(null); setPin(""); setError(""); }}
-                  className="shrink-0 cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-                >
-                  Cambiar
-                </button>
-              </div>
+                <input
+                  ref={pinRef}
+                  value={pin}
+                  onChange={handlePinChange}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+                  onFocus={() => setPinFocused(true)}
+                  onBlur={() => setPinFocused(false)}
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={PIN_MAX}
+                  aria-label="PIN de acceso"
+                  className="sr-only"
+                />
 
-              <Input
-                ref={pinRef}
-                value={pin}
-                onChange={handlePinChange}
-                onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
-                type="password"
-                placeholder="••••"
-                maxLength={6}
-                aria-label="PIN de acceso"
-                className="h-16 rounded-lg pl-[0.6em] text-center text-3xl font-bold tracking-[0.6em] shadow-none"
-              />
-
-              <div className="mt-3 flex min-h-[24px] items-center justify-center">
-                {error && (
-                  <p role="alert" className="text-sm font-medium text-destructive">
-                    {error}
-                  </p>
-                )}
+                <p role="alert" className="mt-3 min-h-5 text-sm font-medium text-destructive dark:text-red-400">
+                  {error}
+                </p>
               </div>
 
               <Button
                 onClick={handleSubmit}
                 disabled={loading || pin.length < 3}
-                className="mt-4 h-14 w-full rounded-lg text-base font-bold"
+                className="h-14 w-full rounded-xl text-lg font-semibold"
               >
                 {loading ? (
                   <>
@@ -299,7 +295,16 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
               </Button>
             </div>
           )}
-        </div>
+        </section>
+      </div>
+
+      {/* Marca del sistema, fuera de la tarjeta. */}
+      <div className="mt-6 flex flex-col items-center gap-0.5">
+        <span className="inline-flex items-center gap-2 text-xl font-bold tracking-tight text-foreground">
+          <img src={vendiaIcon} alt="" className="size-7" />
+          Vendia
+        </span>
+        <span className="text-xs text-muted-foreground">Powered by JRP Core v2.0</span>
       </div>
 
       {isFirstTime && (
@@ -307,15 +312,11 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
           type="button"
           onClick={handleConvertToBox}
           disabled={converting}
-          className="relative z-10 mx-auto mt-6 block cursor-pointer rounded-lg px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-white/60 transition-colors hover:text-white/90 disabled:opacity-50"
+          className="mt-5 cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
         >
           {converting ? "Activando caja..." : "¿Esta PC será una caja adicional? Actívala aquí"}
         </button>
       )}
-
-      <p className="login-footer relative z-10 mt-6 text-center text-[11px] font-medium uppercase tracking-wider text-white/50">
-        Powered by JRP Core v2.0
-      </p>
     </div>
   );
 };

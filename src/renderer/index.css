@@ -355,21 +355,6 @@ body {
 .animate-panel-in {
   animation: enterTransition 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-/* ─── Login compacto en pantallas bajas ───
-   Si la ventana mide ≤ 820px de alto se aprietan solo paddings y
-   márgenes para que el login quepa sin scroll; los tamaños de los
-   tiles de cajero y del nombre de tienda no cambian. */
-@media (max-height: 820px) {
-  .login-shell { padding-top: 1rem; padding-bottom: 1rem; }
-  .login-brand { margin-bottom: 0.75rem; }
-  .login-logo { height: 3rem; width: 3rem; }
-  .login-card { padding: 1.25rem; }
-  .login-card > h2 { margin-bottom: 0.75rem; }
-  .login-zone { margin-top: 1rem; min-height: 284px; }
-  .login-pin { padding: 1.25rem; }
-  .login-footer { margin-top: 0.75rem; }
-}
-
 /* ─── Entrada escalonada de los items del sidebar (sólo GPU) ───
    Se reproduce al colapsar/expandir: el contenedor cambia de key
    y los items vuelven a montarse con un delay progresivo. ─── */

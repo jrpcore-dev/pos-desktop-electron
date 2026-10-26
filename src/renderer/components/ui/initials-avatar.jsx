@@ -8,16 +8,17 @@ import { cn } from "@/lib/utils";
 
 const TONES = ["--primary", "--chart-1", "--chart-2", "--chart-3"];
 
-export const initialsOf = (name = "") =>
+export const initialsOf = (name = "", letters = 2) =>
   name
     .trim()
     .split(/\s+/)
-    .slice(0, 2)
+    .slice(0, letters)
     .map((w) => w[0] || "")
     .join("")
     .toUpperCase() || "?";
 
-function InitialsAvatar({ id, name, solid = false, className }) {
+// `letters`: cuántas iniciales (1 = sólo la primera, p. ej. en el login).
+function InitialsAvatar({ id, name, solid = false, letters = 2, className }) {
   const tone = TONES[Math.abs(Number(id) || 0) % TONES.length];
   return (
     <span
@@ -33,7 +34,7 @@ function InitialsAvatar({ id, name, solid = false, className }) {
           : { background: `hsl(var(${tone}) / 0.12)`, color: `hsl(var(${tone}))` }
       }
     >
-      {initialsOf(name)}
+      {initialsOf(name, letters)}
     </span>
   );
 }
