@@ -31,6 +31,9 @@ const badgeVariants = cva(
           "border-destructive/25 bg-destructive/10 text-destructive dark:text-red-400",
         "soft-info": "border-info/25 bg-info/10 text-sky-700 dark:text-info",
         "soft-neutral": "border-border bg-muted text-muted-foreground",
+        // Unidad o tipo de producto (Pieza, A granel, Caja…): etiqueta
+        // informativa en el azul de marca, no un estado.
+        unit: "border-transparent bg-chart-2/12 text-chart-1",
       },
     },
     defaultVariants: {

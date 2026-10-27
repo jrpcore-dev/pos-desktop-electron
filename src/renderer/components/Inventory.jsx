@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -24,7 +24,6 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  ChevronsUpDown,
   Coins,
   History,
   MoreHorizontal,
@@ -72,12 +71,6 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
   Sheet,
   SheetContent,
   SheetHeader,
@@ -89,6 +82,7 @@ import {
   StockStatus,
 } from "./ui";
 import PaginationBar from "./PaginationBar";
+import FilterCombobox from "./FilterCombobox";
 import { cn } from "@/lib/utils";
 import { useToast } from "./ToastProvider";
 import { useCashier } from "../contexts/CashierContext";
@@ -593,80 +587,6 @@ const ProductRow = React.memo(
   },
 );
 ProductRow.displayName = "ProductRow";
-
-const FilterCombobox = ({ label, value, options, emptyValue, onChange }) => {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  // Si la lista vino undefined (RPC rechazada), no truena el combobox.
-  const opts = options || [];
-  const selected = opts.find((o) => String(o.id) === String(value));
-  const filtered = useMemo(
-    () =>
-      query.trim()
-        ? opts.filter((o) =>
-            o.name.toLowerCase().includes(query.trim().toLowerCase()),
-          )
-        : opts,
-    [opts, query],
-  );
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <SButton
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            className="w-full justify-between font-normal"
-          >
-            {selected ? selected.name : emptyValue}
-            {open ? (
-              <ArrowUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-            ) : (
-              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-            )}
-          </SButton>
-        </PopoverTrigger>
-        <PopoverContent className="w-full p-0">
-          <Command>
-            <CommandInput
-              placeholder={`Buscar ${label.toLowerCase()}...`}
-              value={query}
-              onValueChange={setQuery}
-            />
-            <CommandList>
-              <CommandEmpty>Sin resultados</CommandEmpty>
-              <CommandGroup>
-                <CommandItem
-                  value=""
-                  onSelect={() => {
-                    onChange("");
-                    setOpen(false);
-                  }}
-                >
-                  {emptyValue}
-                </CommandItem>
-                {filtered.map((o) => (
-                  <CommandItem
-                    key={o.id}
-                    value={o.name}
-                    onSelect={() => {
-                      onChange(String(o.id));
-                      setOpen(false);
-                    }}
-                  >
-                    {o.name}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-};
 
 // Las tarjetas son filtros rápidos: "Stock bajo" y "En rebaja" filtran la
 // tabla (clic de nuevo para quitarlo); "Total productos" quita el filtro.

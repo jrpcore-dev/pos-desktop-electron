@@ -1,7 +1,7 @@
 // Foto de producto: se guarda como data URL en `products.image_path` y viaja
 // a las cajas con el catálogo, así que se reduce a algo ligero (lado mayor
-// MAX_SIDE px, JPEG). Fondo blanco para que un PNG con transparencia no se
-// vea negro.
+// MAX_SIDE px, WebP; JPEG si el navegador no sabe codificar WebP). Fondo
+// blanco para que un PNG con transparencia no se vea negro.
 
 const MAX_SIDE = 320;
 const QUALITY = 0.82;
@@ -33,7 +33,12 @@ export const fileToProductImage = (file) =>
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", QUALITY));
+        const webp = canvas.toDataURL("image/webp", QUALITY);
+        resolve(
+          webp.startsWith("data:image/webp")
+            ? webp
+            : canvas.toDataURL("image/jpeg", QUALITY),
+        );
       };
       img.src = reader.result;
     };

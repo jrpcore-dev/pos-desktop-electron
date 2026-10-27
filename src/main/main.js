@@ -1044,7 +1044,7 @@ ipcMain.handle("check-barcode-exists", async (event, barcode) => {
   const row = db
     .prepare(
       `SELECT id, name, cat_name, brand, is_active, is_catalog,
-              sale_unit, box_qty, box_price, category_id
+              sale_unit, box_qty, box_price, category_id, image_path
        FROM products WHERE barcode = ?`,
     )
     .get(String(barcode).trim());
@@ -1059,7 +1059,7 @@ ipcMain.handle("check-barcode-exists", async (event, barcode) => {
     is_catalog: row.is_catalog === 1,
     cat_image:
       row.is_catalog === 1 && row.is_active !== 1
-        ? catalogImageFor(barcode)
+        ? row.image_path || catalogImageFor(barcode)
         : null,
     sale_unit: row.sale_unit || null,
     box_qty: row.box_qty || 0,
@@ -6301,16 +6301,34 @@ const catalogImagesDir = () =>
     : path.join(app.getAppPath(), "catalog-images");
 
 let catalogImageIndex = null;
+let catalogImageCodes = null;
+const loadCatalogImageIndex = () => {
+  if (catalogImageIndex) return catalogImageIndex;
+  try {
+    const file = path.join(catalogImagesDir(), "index.json");
+    catalogImageIndex = fs.existsSync(file)
+      ? JSON.parse(fs.readFileSync(file, "utf8"))
+      : {};
+  } catch {
+    catalogImageIndex = {};
+  }
+  return catalogImageIndex;
+};
+
+// Condición SQL "tiene foto": una propia en `image_path` o una empaquetada.
+// Los códigos van como un solo parámetro JSON (`json_each`).
+const HAS_PHOTO_SQL =
+  "(COALESCE(p.image_path,'') <> '' OR p.barcode IN (SELECT value FROM json_each(?)))";
+const catalogImageCodesParam = () => {
+  if (catalogImageCodes === null)
+    catalogImageCodes = JSON.stringify(Object.keys(loadCatalogImageIndex()));
+  return catalogImageCodes;
+};
+
 const catalogImageFor = (barcode) => {
   if (!barcode) return null;
   try {
-    if (!catalogImageIndex) {
-      const file = path.join(catalogImagesDir(), "index.json");
-      catalogImageIndex = fs.existsSync(file)
-        ? JSON.parse(fs.readFileSync(file, "utf8"))
-        : {};
-    }
-    const name = catalogImageIndex[String(barcode).trim()];
+    const name = loadCatalogImageIndex()[String(barcode).trim()];
     if (!name) return null;
     const data = fs.readFileSync(path.join(catalogImagesDir(), name));
     return `data:image/webp;base64,${data.toString("base64")}`;
@@ -6405,10 +6423,26 @@ const migrateCatalogNames = async () => {
 
 ipcMain.handle(
   "get-catalog-products",
-  async (event, { search = "", categoryId, page = 1, pageSize = 50 } = {}) => {
+  async (
+    event,
+    {
+      search = "",
+      categoryId,
+      status = "all",
+      withPhoto = false,
+      page = 1,
+      pageSize = 50,
+    } = {},
+  ) => {
     try {
       const where = ["p.is_catalog = 1"];
       const params = [];
+      if (status === "available") where.push("p.is_active = 0");
+      else if (status === "registered") where.push("p.is_active = 1");
+      if (withPhoto) {
+        where.push(HAS_PHOTO_SQL);
+        params.push(catalogImageCodesParam());
+      }
       if (search && search.trim()) {
         const n = `%${nomarize(search.trim())}%`;
         where.push(
@@ -6470,7 +6504,19 @@ ipcMain.handle("get-catalog-stats", async () => {
     const sinCategoria = one(
       "SELECT COUNT(*) c FROM products WHERE is_catalog = 1 AND category_id IS NULL",
     );
-    return { success: true, total, pendientes, registrados, sinCategoria };
+    const conFoto = db
+      .prepare(
+        `SELECT COUNT(*) c FROM products p WHERE p.is_catalog = 1 AND ${HAS_PHOTO_SQL}`,
+      )
+      .get(catalogImageCodesParam()).c;
+    return {
+      success: true,
+      total,
+      pendientes,
+      registrados,
+      sinCategoria,
+      conFoto,
+    };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -6575,7 +6621,10 @@ ipcMain.handle("delete-catalog-product", async (event, id) => {
   }
 });
 
-ipcMain.handle("update-catalog-name", async (event, id, name) => {
+// Editar un producto del catálogo: nombre y, si llega `image` (data URL, o ""
+// para quitarla), su foto propia. Sin foto propia se muestra la empaquetada.
+// `null` cuenta como "no tocar": por RPC un argumento `undefined` llega así.
+ipcMain.handle("update-catalog-name", async (event, id, name, image) => {
   try {
     const prod = db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     if (!prod || prod.is_catalog !== 1)
@@ -6584,7 +6633,17 @@ ipcMain.handle("update-catalog-name", async (event, id, name) => {
       .replace(/\s+/g, " ")
       .trim();
     if (!clean) return { success: false, error: "El nombre no puede ir vacío" };
-    db.prepare("UPDATE products SET cat_name = ? WHERE id = ?").run(clean, id);
+    const setImage = typeof image === "string";
+    if (setImage && image && !/^data:image\//.test(image))
+      return { success: false, error: "La foto no es válida" };
+    db.transaction(() => {
+      db.prepare("UPDATE products SET cat_name = ? WHERE id = ?").run(clean, id);
+      if (setImage)
+        db.prepare("UPDATE products SET image_path = ? WHERE id = ?").run(
+          image || null,
+          id,
+        );
+    })();
     return { success: true, cat_name: clean };
   } catch (error) {
     return { success: false, error: error.message };

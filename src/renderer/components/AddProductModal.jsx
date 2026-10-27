@@ -522,7 +522,7 @@ const InventoryFields = ({
 
 // Foto del producto: recuadro con clic o arrastrar; con foto, "Cambiar" y
 // "Quitar" al pasar el ratón. La imagen se reduce antes de guardarse.
-const ProductImagePicker = ({ value, onChange, disabled, onError }) => {
+export const ProductImagePicker = ({ value, onChange, disabled, onError }) => {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -660,7 +660,9 @@ const AddProductModal = ({
 
   useEffect(() => {
     if (!open) return;
-    const catImage = !editProduct ? catalogProduct?.cat_image || "" : "";
+    const catImage = !editProduct
+      ? catalogProduct?.image_path || catalogProduct?.cat_image || ""
+      : "";
     setProductImage(editProduct?.image_path || catImage);
     setImageTouched(!!catImage);
     catalogImageRef.current = !!catImage;
