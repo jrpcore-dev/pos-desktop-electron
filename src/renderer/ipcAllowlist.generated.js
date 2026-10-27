@@ -43,6 +43,7 @@ export const invoke = [
   "delete-tier-price",
   "disconnect-scale",
   "download-backup",
+  "find-sales-by-folio",
   "get-activation-status",
   "get-all-products",
   "get-all-settings",

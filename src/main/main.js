@@ -3335,6 +3335,25 @@ ipcMain.handle("list-sale-devices", async () => {
   }
 });
 
+// Paleta de comandos (Ctrl+K): ventas cuyo folio contiene lo escrito.
+ipcMain.handle("find-sales-by-folio", async (event, query) => {
+  try {
+    const q = String(query || "").trim().toUpperCase();
+    if (q.length < 3) return [];
+    return db
+      .prepare(
+        `SELECT s.id, s.folio, s.total, s.payment_method, s.status, s.created_at,
+                c.name AS customer_name
+         FROM sales s LEFT JOIN customers c ON c.id = s.customer_id
+         WHERE UPPER(s.folio) LIKE ?
+         ORDER BY s.id DESC LIMIT 5`,
+      )
+      .all(`%${q}%`);
+  } catch (error) {
+    return [];
+  }
+});
+
 ipcMain.handle("get-sale-details", async (event, saleId) => {  try {
     const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
     const items = db

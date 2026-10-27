@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useDbChanges } from "../lib/useDbChanges";
 import {
   PlusCircle,
@@ -288,6 +289,9 @@ const Customers = () => {
   const [onlyDebt, setOnlyDebt] = useState(false);
   const [accountCustomer, setAccountCustomer] = useState(null);
   const [tiersOpen, setTiersOpen] = useState(false);
+  const [accountPanel, setAccountPanel] = useState(null);
+  const location = useLocation();
+  const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
   const [tiers, setTiers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -364,6 +368,26 @@ const Customers = () => {
     setNewPrice(null);
     setSheetOpen(true);
   };
+
+  // Desde la paleta (Ctrl+K): { newCustomer } o { openAccountId, accountPanel }.
+  useEffect(() => {
+    const st = location.state || {};
+    if (!st.newCustomer && !st.openAccountId) return;
+    navigate(location.pathname, { replace: true, state: null });
+    if (st.newCustomer) {
+      openCreate();
+      return;
+    }
+    window.api
+      .invoke("get-customer", st.openAccountId)
+      .then((res) => {
+        if (!res?.customer) return notify("Cliente no encontrado", "error");
+        setAccountPanel(st.accountPanel || null);
+        setAccountCustomer(res.customer);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const openEdit = async (c) => {
     setEditItem(c);
@@ -891,7 +915,11 @@ const Customers = () => {
       <CustomerCreditSheet
         customer={accountCustomer}
         open={!!accountCustomer}
-        onClose={() => setAccountCustomer(null)}
+        initialPanel={accountPanel}
+        onClose={() => {
+          setAccountCustomer(null);
+          setAccountPanel(null);
+        }}
         cashier={cashier}
         onChanged={loadCredit}
       />

@@ -41,6 +41,7 @@
   "delete-tier-price": "rpc",
   "disconnect-scale": "system",
   "download-backup": "system",
+  "find-sales-by-folio": "rpc",
   "get-activation-status": "host_read",
   "get-all-products": "host_read",
   "get-all-settings": "host_read",

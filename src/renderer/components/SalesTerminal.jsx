@@ -429,6 +429,10 @@ const processSaleRef = useRef(null);
             "paper_width_mm",
           );
           const text = generateReceiptHTML(method, paperWidthMm, creditInfo);
+          // Para "Imprimir último ticket" en la paleta (Ctrl+K).
+          try {
+            sessionStorage.setItem("lastReceiptHtml", text);
+          } catch {}
           const printResult = await window.api.invoke("print-receipt", text);
           if (printResult?.success) {
             // Si la impresora configurada no existía en este equipo, el main
@@ -1505,6 +1509,23 @@ if (e.key === "Tab" && !isEditable) {
     applyDiscount(item, discountValue);
     setDiscountDialog({ open: false, item: null });
   };
+
+  // Paleta (Ctrl+K) → "Agregar al carrito": deja el producto en
+  // window.__paletteAddProduct y avisa; si la terminal aún no estaba montada,
+  // lo toma al montarse.
+  const addToCartRef = useRef(null);
+  addToCartRef.current = addProductToCart;
+  useEffect(() => {
+    const take = () => {
+      const p = window.__paletteAddProduct;
+      if (!p) return;
+      window.__paletteAddProduct = null;
+      addToCartRef.current?.(p);
+    };
+    take();
+    window.addEventListener("palette-add-product", take);
+    return () => window.removeEventListener("palette-add-product", take);
+  }, []);
 
   const handlePayClick = (method) => {
     if (method !== paymentMethod) {

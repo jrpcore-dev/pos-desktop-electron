@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useDbChanges } from "../lib/useDbChanges";
 import FreshDataChip from "./FreshDataChip";
 import {
@@ -671,6 +672,17 @@ const Transacciones = () => {
     pageStart: expPageStart,
     pagedRows: pagedExpenses,
   } = expPagination;
+
+  // Desde la paleta (Ctrl+K): { saleId } abre el detalle de esa venta.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const id = location.state?.saleId;
+    if (!id) return;
+    navigate(location.pathname, { replace: true, state: null });
+    openDetail(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const openDetail = useCallback(async (saleId) => {
     setDetailOpen(true);

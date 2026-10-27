@@ -1010,10 +1010,19 @@ const Inventory = () => {
   // Llegada desde un aviso: navigate("/inventory", { state: { editProductId,
   // focus } }) abre ese producto en edición. El state se limpia para que
   // volver atrás no lo reabra.
+  // También desde la paleta (Ctrl+K): { newProduct } abre "Nuevo producto" y
+  // { addStockProductId } abre "Agregar stock" de ese producto.
   useEffect(() => {
-    const id = location.state?.editProductId;
+    const st = location.state || {};
+    if (st.newProduct) {
+      navigate(location.pathname, { replace: true, state: null });
+      setIsModalOpen(true);
+      return;
+    }
+    const id = st.editProductId || st.addStockProductId;
     if (!id) return;
-    const focus = location.state?.focus || null;
+    const focus = st.focus || null;
+    const forStock = !!st.addStockProductId;
     navigate(location.pathname, { replace: true, state: null });
     window.api
       .invoke("get-products", { product_id: id, page: 0, rowsPerPage: 1 })
@@ -1023,11 +1032,17 @@ const Inventory = () => {
           notify("Ese producto ya no existe o está inactivo.", "error");
           return;
         }
+        if (forStock) {
+          handleAddStock(product);
+          return;
+        }
         setSelectedProduct(product);
         setEditFocus(focus);
         setEditModalOpen(true);
       })
       .catch(() => {});
+    // handleAddStock se declara más abajo; se usa al resolver, no al render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, location.pathname, navigate, notify]);
   const handleDeleteProduct = useCallback((product) => {
     setSelectedProduct(product);

@@ -97,6 +97,7 @@ const RPC_CHANNELS = new Set([
   "add-tier",
   "update-tier",
   "delete-tier",
+  "find-sales-by-folio",
   // ── promociones avanzadas (categoría/marca y paquetes) ────────────────────
   "save-group-promo",
   "delete-group-promo",

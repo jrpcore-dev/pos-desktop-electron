@@ -66,7 +66,8 @@ const fmtWhen = (sqlDate) =>
 
 const money2 = (v) => /^\d*\.?\d{0,2}$/.test(v);
 
-const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged }) => {
+// `initialPanel`: "pay" abre directo el abono (p. ej. desde la paleta).
+const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, initialPanel }) => {
   const notify = useToast();
   const isAdmin = cashier?.role === "admin";
   const [data, setData] = useState(null);
@@ -81,9 +82,12 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged }) =>
   const load = useCallback(async () => {
     if (!customer) return;
     const res = await window.api.invoke("get-customer-credit", { customerId: customer.id });
-    if (res?.success) setData(res);
+    if (res?.success) {
+      setData(res);
+      if (initialPanel === "pay" && res.balance > 0) setPanel((p) => p || "pay");
+    }
     else notify(res?.error || "No se pudo cargar la cuenta", "error");
-  }, [customer, notify]);
+  }, [customer, notify, initialPanel]);
 
   useEffect(() => {
     if (!open) return;
