@@ -9,7 +9,9 @@ import {
   CheckCircle2,
   Library,
   ScrollText,
+  Package,
 } from "lucide-react";
+import { Avatar, AvatarImage, AvatarFallback } from "./ui/avatar";
 import AddProductModal from "./AddProductModal";
 import { useToast } from "./ToastProvider";
 import { Badge } from "./ui/badge";
@@ -187,34 +189,50 @@ const CatalogRow = memo(function CatalogRow({
   const pendiente = product.is_active !== 1;
   const showInvHint =
     !pendiente && product.inv_name && product.inv_name !== product.cat_name;
+  const image = product.image_path || product.cat_image;
   return (
     <TableRow className="hover:bg-primary/[0.03]">
       <TableCell className="px-4">
-        <div className="flex flex-col gap-0.5">
-          <span className="font-semibold text-foreground">{product.cat_name}</span>
-          <div className="flex items-center gap-2">
-            {product.ref_unit && (
-              <span className="text-xs text-muted-foreground">
-                {product.ref_unit}
-              </span>
+        <div className="flex items-center gap-2.5">
+          <Avatar className="h-9 w-9 shrink-0 rounded-md">
+            {image ? (
+              <AvatarImage
+                src={image}
+                alt={product.cat_name}
+                className="bg-white object-contain"
+              />
+            ) : (
+              <AvatarFallback className="rounded-md bg-primary/10 text-primary">
+                <Package className="h-4 w-4" />
+              </AvatarFallback>
             )}
-            {product.sale_unit && (
-              <Badge variant="outline" className="h-4 px-1.5 text-[0.65rem]">
-                {product.sale_unit}
-              </Badge>
-            )}
-            {showInvHint && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="text-xs text-muted-foreground">
-                    (inv.: {product.inv_name})
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  En inventario se muestra como: {product.inv_name}
-                </TooltipContent>
-              </Tooltip>
-            )}
+          </Avatar>
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold text-foreground">{product.cat_name}</span>
+            <div className="flex items-center gap-2">
+              {product.ref_unit && (
+                <span className="text-xs text-muted-foreground">
+                  {product.ref_unit}
+                </span>
+              )}
+              {product.sale_unit && (
+                <Badge variant="outline" className="h-4 px-1.5 text-[0.65rem]">
+                  {product.sale_unit}
+                </Badge>
+              )}
+              {showInvHint && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs text-muted-foreground">
+                      (inv.: {product.inv_name})
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    En inventario se muestra como: {product.inv_name}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
         </div>
       </TableCell>

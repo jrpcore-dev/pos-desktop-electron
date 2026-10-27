@@ -1057,6 +1057,10 @@ ipcMain.handle("check-barcode-exists", async (event, barcode) => {
     brand: row.brand || "",
     id: row.id,
     is_catalog: row.is_catalog === 1,
+    cat_image:
+      row.is_catalog === 1 && row.is_active !== 1
+        ? catalogImageFor(barcode)
+        : null,
     sale_unit: row.sale_unit || null,
     box_qty: row.box_qty || 0,
     box_price: row.box_price || 0,
@@ -6268,6 +6272,34 @@ const catalogSeedFile = () =>
     ? path.join(process.resourcesPath, "bd sku.xlsx")
     : path.join(app.getAppPath(), "bd sku.xlsx");
 
+// Fotos del catálogo precargado (`catalog-images/`, generadas con
+// scripts/build-catalog-images.mjs). `index.json` liga código → archivo. Se
+// entregan como data URL, igual que una foto subida a mano, así que al dar de
+// alta el producto se guardan y viajan a las cajas por el camino de siempre.
+const catalogImagesDir = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, "catalog-images")
+    : path.join(app.getAppPath(), "catalog-images");
+
+let catalogImageIndex = null;
+const catalogImageFor = (barcode) => {
+  if (!barcode) return null;
+  try {
+    if (!catalogImageIndex) {
+      const file = path.join(catalogImagesDir(), "index.json");
+      catalogImageIndex = fs.existsSync(file)
+        ? JSON.parse(fs.readFileSync(file, "utf8"))
+        : {};
+    }
+    const name = catalogImageIndex[String(barcode).trim()];
+    if (!name) return null;
+    const data = fs.readFileSync(path.join(catalogImagesDir(), name));
+    return `data:image/webp;base64,${data.toString("base64")}`;
+  } catch {
+    return null;
+  }
+};
+
 const seedCatalogIfEmpty = async (force = false) => {
   try {
     const count = db
@@ -6389,14 +6421,16 @@ ipcMain.handle(
                   COALESCE(NULLIF(p.cat_name,''), p.name) AS cat_name,
                   p.name AS inv_name, p.brand, p.price, p.cost_price, p.stock,
                   p.min_stock, p.sale_unit, p.ref_unit, p.box_qty, p.box_price,
-                  p.is_active, p.category_id, c.name AS category_name
+                  p.is_active, p.category_id, c.name AS category_name,
+                  p.image_path
            FROM products p
            LEFT JOIN categories c ON p.category_id = c.id
            WHERE ${sqlWhere}
            ORDER BY COALESCE(NULLIF(p.cat_name,''), p.name) COLLATE NOCASE ASC
            LIMIT ? OFFSET ?`,
         )
-        .all(...params, sizeN, (pageN - 1) * sizeN);
+        .all(...params, sizeN, (pageN - 1) * sizeN)
+        .map((r) => ({ ...r, cat_image: catalogImageFor(r.barcode) }));
       return { success: true, rows, total, page: pageN, pageSize: sizeN };
     } catch (error) {
       return { success: false, error: error.message, rows: [], total: 0 };
@@ -6493,6 +6527,12 @@ ipcMain.handle("activate-catalog-product", async (event, id, data) => {
         }))
         .filter((p) => p.qty > 0 && p.price > 0),
     );
+    // La foto llega solo si el modal la trae (la del catálogo o una propia).
+    if (data.image_path !== undefined)
+      db.prepare("UPDATE products SET image_path = ? WHERE id = ?").run(
+        data.image_path || null,
+        id,
+      );
     return { success: true, id };
   } catch (error) {
     return { success: false, error: error.message };

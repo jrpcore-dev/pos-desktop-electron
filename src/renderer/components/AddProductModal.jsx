@@ -649,6 +649,10 @@ const AddProductModal = ({
   // la que había).
   const [productImage, setProductImage] = useState("");
   const [imageTouched, setImageTouched] = useState(false);
+  // La foto del catálogo se precarga sola; una elegida por el usuario nunca
+  // se reemplaza por la del catálogo.
+  const catalogImageRef = useRef(false);
+  const userImageRef = useRef(false);
   const discountColRef = useRef(null);
   const promoColRef = useRef(null);
   const [focusFlash, setFocusFlash] = useState(null);
@@ -656,9 +660,12 @@ const AddProductModal = ({
 
   useEffect(() => {
     if (!open) return;
-    setProductImage(editProduct?.image_path || "");
-    setImageTouched(false);
-  }, [open, editProduct]);
+    const catImage = !editProduct ? catalogProduct?.cat_image || "" : "";
+    setProductImage(editProduct?.image_path || catImage);
+    setImageTouched(!!catImage);
+    catalogImageRef.current = !!catImage;
+    userImageRef.current = false;
+  }, [open, editProduct, catalogProduct]);
 
   const addPriceTier = () =>
     setPriceTiers((prev) => [
@@ -770,6 +777,11 @@ const AddProductModal = ({
           if (!editProduct && !isCatalogMode) {
             setValue("name", "");
             setValue("brand", "");
+            if (catalogImageRef.current) {
+              setProductImage("");
+              setImageTouched(false);
+              catalogImageRef.current = false;
+            }
           }
         } else if (editProduct && res.id === editProduct.id) {
           setBarcodeStatus({ type: null, name: "" });
@@ -784,6 +796,11 @@ const AddProductModal = ({
             setValue("box_qty", String(res.box_qty || ""));
             if (res.category_id)
               setValue("category_id", String(res.category_id));
+            if (res.cat_image && !userImageRef.current) {
+              setProductImage(res.cat_image);
+              setImageTouched(true);
+              catalogImageRef.current = true;
+            }
             requestAnimationFrame(() => {
               const priceInput = document.getElementById("add-product-price");
               if (priceInput) {
@@ -1368,10 +1385,11 @@ const AddProductModal = ({
               <div className="flex flex-col gap-5 sm:flex-row sm:items-stretch">
               <ProductImagePicker
                 value={productImage}
-                disabled={isCatalogMode}
                 onChange={(v) => {
                   setProductImage(v);
                   setImageTouched(true);
+                  catalogImageRef.current = false;
+                  userImageRef.current = true;
                 }}
                 onError={(msg) => setSubmitError(msg)}
               />

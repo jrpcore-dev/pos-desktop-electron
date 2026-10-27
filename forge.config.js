@@ -11,7 +11,12 @@ module.exports = {
     asar: true,
     executableName: "Vendia",
     icon: "./build/Icon.ico",
-    extraResource: ["./build/Icon.ico", "./bd sku.xlsx", "./app-update.yml"],
+    extraResource: [
+      "./build/Icon.ico",
+      "./bd sku.xlsx",
+      "./catalog-images",
+      "./app-update.yml",
+    ],
   },
   // serialport trae binarios N-API precompilados (válidos para cualquier
   // Electron): recompilarlo sólo exige Python/VS Build Tools sin necesidad.

@@ -111,6 +111,7 @@ mobile/.expo/
 
 # Datos de negocio y artefactos de importacion del catalogo
 /bd sku.xlsx
+/catalog-images/
 /off-mexico.xlsx
 /off-mexico-checkpoint.json
 /sheet-preview.html
