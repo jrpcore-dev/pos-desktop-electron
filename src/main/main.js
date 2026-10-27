@@ -37,6 +37,7 @@ const offlineQueue = require("./offline-queue");
 const backupService = require("./backup-service");
 const smartAlerts = require("./smart-alerts");
 const credit = require("./credit");
+const { cleanCatalogName } = require("./catalog-names");
 
 // El PASO 2 extrajo ensureColumn/createTables/runMigrations de este fichero
 // a ./db-schema: aquí se reimportan con los MISMOS nombres para que los call
@@ -569,6 +570,7 @@ app.on("ready", async () => {
   // con `swap`, así que importar el catálogo local sólo sería perder tiempo.
   if (!boxDevice) {
     await seedCatalogIfEmpty(process.env.JRP_FORCE_CATALOG_IMPORT === "1");
+    await migrateCatalogNames();
   }
 
   createMainWindow();
@@ -5909,71 +5911,6 @@ ipcMain.handle("read-import-file", async (event, filePath) => {
 });
 
 // ─── CATÁLOGO (productos de referencia, no activos) ──────────────
-const CATALOG_STOP_WORDS = new Set([
-  "de",
-  "del",
-  "la",
-  "el",
-  "los",
-  "las",
-  "y",
-  "e",
-  "o",
-  "u",
-  "en",
-  "al",
-  "con",
-  "por",
-  "para",
-  "sin",
-  "a",
-  "que",
-  "un",
-  "una",
-  "sus",
-  "no",
-]);
-
-const titleCase = (s) => {
-  if (s == null) return "";
-  const clean = String(s).replace(/\s+/g, " ").trim();
-  if (!clean) return "";
-  return clean
-    .split(" ")
-    .map((word, i) => {
-      if (!word) return "";
-      if (/^[A-ZÑ]{2,4}$/.test(word)) return word;
-      if (/^\d+[A-ZÑ]{1,4}$/.test(word)) return word;
-      if (/^[A-ZÑ]{1,4}\d+$/.test(word)) return word;
-      const lower = word.toLowerCase();
-      const stripped = lower.replace(/^[^a-zñáéíóúü0-9]+/, "");
-      if (
-        i > 0 &&
-        /^[a-zñáéíóúü]+$/.test(stripped) &&
-        CATALOG_STOP_WORDS.has(stripped)
-      )
-        return lower;
-      const lead = lower.slice(0, lower.length - stripped.length);
-      const capped = stripped
-        .split("-")
-        .map((seg, si) => {
-          if (!seg) return "";
-          if (
-            si > 0 &&
-            CATALOG_STOP_WORDS.has(seg) &&
-            /^[a-zñáéíóúü]+$/.test(seg)
-          )
-            return seg;
-          const m = seg.search(/[a-zñáéíóúü]/);
-          if (m === -1) return seg;
-          return seg.slice(0, m) + seg[m].toUpperCase() + seg.slice(m + 1);
-        })
-        .join("-");
-      return lead + capped;
-    })
-    .join(" ");
-};
-
 const catalogImportKey = (s) =>
   String(s || "")
     .replace(/\s+/g, " ")
@@ -6229,7 +6166,7 @@ const runCatalogImport = async (filePath) => {
             skipped++;
             continue;
           }
-          const catName = titleCase(rawName);
+          const catName = cleanCatalogName(rawName);
           const barcode = getVal(row, "barcode");
           const key = barcode || catName.toLowerCase();
           if (key && seen.has(key)) {
@@ -6359,6 +6296,59 @@ const seedCatalogIfEmpty = async (force = false) => {
     }
   } catch (error) {
     console.error("[catálogo] Error en carga automática:", error.message);
+  }
+};
+
+// Las instalaciones que cargaron el catálogo antes de `catalog-names` tienen
+// los nombres viejos ("Har. Trigo Globo"). Se reescriben una sola vez. A un
+// producto ya dado de alta solo le cambia la referencia `cat_name`; su nombre
+// de venta es del usuario y no se toca.
+const CATALOG_NAMES_VERSION = "1";
+
+const migrateCatalogNames = async () => {
+  try {
+    const done = db
+      .prepare("SELECT value FROM settings WHERE key = 'catalog_names_version'")
+      .get();
+    if (done && done.value === CATALOG_NAMES_VERSION) return;
+
+    const changed = db
+      .prepare(
+        "SELECT id, name, cat_name, is_active FROM products WHERE is_catalog = 1 AND cat_name IS NOT NULL AND cat_name <> ''",
+      )
+      .all()
+      .map((r) => ({ ...r, clean: cleanCatalogName(r.cat_name) }))
+      .filter((r) => r.clean && r.clean !== r.cat_name);
+
+    const setCat = db.prepare("UPDATE products SET cat_name = ? WHERE id = ?");
+    const setBoth = db.prepare(
+      "UPDATE products SET cat_name = ?, name = ? WHERE id = ?",
+    );
+    const txn = db.transaction((rows) => {
+      for (const r of rows) {
+        if (r.is_active !== 1 && r.name === r.cat_name)
+          setBoth.run(r.clean, r.clean, r.id);
+        else setCat.run(r.clean, r.id);
+      }
+    });
+
+    const bulk = changed.length >= dbSchema.BULK_MIN_ROWS;
+    apiServer.hostBusy("catalog-names");
+    if (bulk) dbSchema.beginBulk(db);
+    try {
+      await runBatched(changed, (rows) => txn(rows));
+    } finally {
+      if (bulk) dbSchema.endBulk(db);
+      apiServer.hostReady("catalog-names");
+    }
+
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('catalog_names_version', ?)",
+    ).run(CATALOG_NAMES_VERSION);
+    if (changed.length)
+      console.log(`[catálogo] Nombres limpiados: ${changed.length}`);
+  } catch (error) {
+    console.error("[catálogo] Error al limpiar nombres:", error.message);
   }
 };
 
