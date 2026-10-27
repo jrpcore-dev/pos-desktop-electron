@@ -66,7 +66,7 @@ function StateTile({ icon: Icon, label, status, tone, onClick, title, dot = true
       className={cn(
         "flex min-w-0 flex-col rounded-md px-2.5 py-2 text-left",
         onClick &&
-          "cursor-pointer transition-colors duration-150 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+          "cursor-pointer transition-colors duration-150 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -152,7 +152,7 @@ const openRegister = () => {
           className={cn(
             "flex h-full cursor-pointer items-center gap-2 px-3 text-left outline-none last:rounded-r-lg",
             "transition-colors duration-150",
-            "hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+            "hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40",
             isOpen ? "text-foreground" : "text-muted-foreground",
           )}
         >

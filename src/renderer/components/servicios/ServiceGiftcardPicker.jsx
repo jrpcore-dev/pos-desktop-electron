@@ -53,7 +53,7 @@ const GiftTile = ({ product, operator, active, onSelect, disabled }) => {
       className={cn(
         "group relative flex aspect-[1.6/1] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border p-2.5 text-left transition-all duration-150",
         "bg-gradient-to-br from-card to-muted/70",
-        "active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+        "active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
           ? "border-primary shadow-md ring-2 ring-primary/25"

@@ -441,7 +441,7 @@ const ServiceCheckout = ({
                         onClick={() => switchMember(m)}
                         className={cn(
                           "h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-all",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                           active
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:bg-muted hover:text-foreground",

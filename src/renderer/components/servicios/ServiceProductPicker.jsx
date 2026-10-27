@@ -53,7 +53,7 @@ export const AmountPill = ({ product, active, onSelect, disabled }) => {
       data-option
       className={cn(
         "relative flex h-16 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border px-2 transition-all duration-150",
-        "active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1",
+        "active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-1",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
           ? "border-transparent bg-primary text-primary-foreground shadow-md shadow-primary/20"
@@ -103,7 +103,7 @@ export const PackageCard = ({ product, active, onSelect, disabled }) => {
       data-option
       className={cn(
         "relative flex w-full cursor-pointer flex-col gap-2 rounded-xl border p-3 text-left transition-all duration-150",
-        "active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+        "active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
           ? "border-primary bg-primary/[0.07] shadow-sm ring-1 ring-primary"

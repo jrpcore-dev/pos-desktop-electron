@@ -33,7 +33,7 @@ const FreeAmount = ({ value, onChange, disabled }) => {
           className={cn(
             "h-14 w-full rounded-xl border bg-field pl-8 pr-24 text-2xl font-extrabold tabular-nums shadow-sm",
             "placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-4",
-            "border-input focus-visible:border-primary focus-visible:ring-primary/15",
+            "border-input focus-visible:border-ring focus-visible:ring-ring/15",
           )}
         />
         <span className="pointer-events-none absolute right-3.5 top-1/2 flex -translate-y-1/2 items-center gap-1 text-[11px] font-semibold text-muted-foreground">
@@ -80,7 +80,7 @@ const PlanCard = ({ product, operator, active, onSelect, disabled }) => {
       data-option
       className={cn(
         "relative flex w-full cursor-pointer items-center gap-3 rounded-xl border p-3 text-left transition-all duration-150",
-        "active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+        "active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
           ? "border-primary bg-primary/[0.07] shadow-sm ring-1 ring-primary"

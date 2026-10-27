@@ -428,7 +428,7 @@ const filtered = useMemo(
                 control={control}
                 render={({ field }) => (
                   <textarea
-                    className="flex min-h-[80px] w-full rounded-lg border border-input bg-field px-3.5 py-2.5 text-sm shadow-sm transition-colors duration-150 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/50"
+                    className="flex min-h-[80px] w-full rounded-lg border border-input bg-field px-3.5 py-2.5 text-sm shadow-sm transition-colors duration-150 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
                     placeholder="Describa la categoría"
                     rows={2}
                     {...field}

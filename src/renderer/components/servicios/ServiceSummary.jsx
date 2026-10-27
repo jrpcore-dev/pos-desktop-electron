@@ -29,7 +29,7 @@ const PaymentMethods = ({ value, onChange, disabled }) => (
           onClick={() => onChange?.(key)}
           className={cn(
             "flex h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-xs font-semibold transition-all duration-150",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
             active
               ? "bg-card text-primary shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -120,7 +120,7 @@ const ServiceSummary = ({
                 "focus-visible:outline-none focus-visible:ring-4",
                 short
                   ? "border-destructive focus-visible:ring-destructive/15"
-                  : "border-input focus-visible:border-primary focus-visible:ring-primary/15",
+                  : "border-input focus-visible:border-ring focus-visible:ring-ring/15",
               )}
             />
           </label>

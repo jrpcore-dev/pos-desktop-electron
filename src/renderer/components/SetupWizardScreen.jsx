@@ -149,7 +149,7 @@ const PinBoxes = ({ value, onValueChange, show, error, groupLabel, firstCellRef 
             aria-label={`${groupLabel}, dígito ${i + 1}`}
             className={cn(
               "h-16 w-16 rounded-lg border border-border bg-field text-center text-2xl font-bold text-foreground shadow-sm outline-none transition-all duration-150 will-change-transform",
-              "focus:scale-[1.06] focus:border-primary focus:ring-4 focus:ring-primary/15",
+              "focus:scale-[1.06] focus:border-ring focus:ring-4 focus:ring-ring/15",
               error && "border-destructive focus:border-destructive focus:ring-destructive/15"
             )}
           />

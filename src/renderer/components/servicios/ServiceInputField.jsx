@@ -18,7 +18,7 @@ const fieldClass = (tone) =>
       ? "border-destructive focus-visible:ring-destructive/15"
       : tone === "ok"
         ? "border-success focus-visible:ring-success/15"
-        : "border-input focus-visible:border-primary focus-visible:ring-primary/15",
+        : "border-input focus-visible:border-ring focus-visible:ring-ring/15",
   );
 
 const ServiceInputField = ({

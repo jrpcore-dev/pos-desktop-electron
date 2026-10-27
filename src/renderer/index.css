@@ -142,7 +142,7 @@
   --border: 214 32% 91%;
   --input: 214 32% 91%;
   --field: 0 0% 100%;
-  --ring: 222 47% 11%;
+  --ring: 218 55% 55%; /* = chart-2: el azul de foco de toda la app */
 
   --font-display: "Instrument Sans", -apple-system, BlinkMacSystemFont,
     "Segoe UI", Roboto,

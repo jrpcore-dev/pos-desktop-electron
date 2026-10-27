@@ -132,7 +132,7 @@ const ServiceCatalog = ({
           className={cn(
             "h-12 w-full rounded-xl border border-input bg-field pl-10 pr-24 text-sm shadow-sm transition-colors",
             "placeholder:text-muted-foreground/80",
-            "focus-visible:border-primary focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15",
+            "focus-visible:border-ring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/15",
           )}
         />
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
@@ -173,7 +173,7 @@ const ServiceCatalog = ({
                 onClick={() => onCategoryChange(tab.key)}
                 className={cn(
                   "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                   active
                     ? "bg-card text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground",
@@ -221,7 +221,7 @@ const ServiceCatalog = ({
                     onClick={() => onPick(fam, {})}
                     className={cn(
                       "flex h-11 cursor-pointer items-center gap-2 rounded-xl border bg-card pl-2 pr-3.5 text-sm font-semibold shadow-xs transition-all",
-                      "hover:-translate-y-px hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+                      "hover:-translate-y-px hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                       "disabled:cursor-not-allowed disabled:opacity-50",
                       active ? "border-primary text-primary" : "border-border text-foreground",
                     )}
@@ -382,7 +382,7 @@ const FamilyTile = ({ family, active, disabled, onClick }) => (
     className={cn(
       "group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border bg-card text-left shadow-xs transition-all duration-150",
       "hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.99]",
-      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
       "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0",
       active
         ? "border-primary ring-2 ring-primary/25"
@@ -468,7 +468,7 @@ const HitRow = ({ hit, disabled, onClick }) => {
       onClick={onClick}
       className={cn(
         "flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2 pr-3 text-left shadow-xs transition-all",
-        "hover:border-primary/50 hover:shadow-md focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+        "hover:border-primary/50 hover:shadow-md focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
         "disabled:cursor-not-allowed disabled:opacity-50",
       )}
     >

@@ -1898,7 +1898,7 @@ if (e.key === "Tab" && !isEditable) {
             className={cn(
               "mb-1.5 flex gap-1 rounded-lg p-1 transition-all duration-150",
               focusZone === "payment"
-                ? "ring-2 ring-primary ring-inset"
+                ? "ring-2 ring-ring ring-inset"
                 : "ring-2 ring-transparent ring-inset",
             )}
           >

@@ -64,7 +64,7 @@ const UpdateButton = () => {
   };
 
   const btnClass =
-    "flex h-full w-10 shrink-0 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 last:rounded-r-lg";
+    "flex h-full w-10 shrink-0 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 last:rounded-r-lg";
 
   if (state.status === "downloading") {
     return (
