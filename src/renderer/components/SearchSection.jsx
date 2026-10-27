@@ -213,7 +213,7 @@ const SearchSection =
                                   : "Sin stock"}
                               </span>
                               {unit && (
-                                <Badge variant="soft-primary" className="shrink-0 px-1.5 py-0">
+                                <Badge variant="unit" className="shrink-0 px-1.5 py-0">
                                   {unit}
                                 </Badge>
                               )}

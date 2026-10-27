@@ -30,12 +30,12 @@ const cap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
 
 // Unidad de la línea: badges de la paleta (kg en minúscula: es símbolo).
 const unitBadgeLabel = (item) => {
-  if (item.isWeightItem) return { label: "kg", variant: "soft-primary" };
+  if (item.isWeightItem) return { label: "kg", variant: "unit" };
   if (item.isBoxItem)
-    return { label: cap(unitLabels(item.sale_unit)?.badge || "caja"), variant: "soft-primary" };
-  if (item.isPackItem) return { label: "Paquete", variant: "soft-primary" };
+    return { label: cap(unitLabels(item.sale_unit)?.badge || "caja"), variant: "unit" };
+  if (item.isPackItem) return { label: "Paquete", variant: "unit" };
   if (item.sale_unit && isContainerUnit(item.sale_unit))
-    return { label: "Pieza", variant: "soft-neutral" };
+    return { label: "Pieza", variant: "unit" };
   return null;
 };
 
