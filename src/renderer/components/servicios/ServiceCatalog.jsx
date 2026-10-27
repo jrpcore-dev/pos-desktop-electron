@@ -223,7 +223,7 @@ const ServiceCatalog = ({
                       "flex h-11 cursor-pointer items-center gap-2 rounded-xl border bg-card pl-2 pr-3.5 text-sm font-semibold shadow-xs transition-all",
                       "hover:-translate-y-px hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                       "disabled:cursor-not-allowed disabled:opacity-50",
-                      active ? "border-primary text-primary" : "border-border text-foreground",
+                      active ? "border-chart-2 text-primary ring-2 ring-chart-2/40" : "border-border text-foreground",
                     )}
                   >
                     <OperatorIcon id={fam.logo} remote={fam.remoteLogo} name={fam.name} size="sm" className="w-12" />
@@ -385,7 +385,7 @@ const FamilyTile = ({ family, active, disabled, onClick }) => (
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
       "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0",
       active
-        ? "border-primary ring-2 ring-primary/25"
+        ? "border-chart-2 ring-2 ring-chart-2/40"
         : "border-border hover:border-primary/40",
     )}
   >

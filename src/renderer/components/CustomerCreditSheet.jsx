@@ -291,7 +291,7 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
                     className={cn(
                       "flex h-11 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border text-xs font-semibold transition-colors",
                       method === key
-                        ? "border-primary bg-primary/10 text-primary"
+                        ? "border-chart-2 bg-primary/10 text-primary ring-2 ring-chart-2/40"
                         : "border-border text-muted-foreground hover:bg-muted",
                     )}
                   >
@@ -337,7 +337,7 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
                     className={cn(
                       "h-10 cursor-pointer rounded-lg border text-sm font-semibold transition-colors",
                       adjustSign === o.sign
-                        ? "border-primary bg-primary/10 text-primary"
+                        ? "border-chart-2 bg-primary/10 text-primary ring-2 ring-chart-2/40"
                         : "border-border text-muted-foreground hover:bg-muted",
                     )}
                   >

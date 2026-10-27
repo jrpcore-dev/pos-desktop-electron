@@ -83,7 +83,7 @@ const PlanCard = ({ product, operator, active, onSelect, disabled }) => {
         "active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
-          ? "border-primary bg-primary/[0.07] shadow-sm ring-1 ring-primary"
+          ? "border-chart-2 bg-primary/[0.07] shadow-sm ring-2 ring-chart-2/40"
           : "border-border bg-card hover:border-primary/50 hover:shadow-sm",
       )}
     >

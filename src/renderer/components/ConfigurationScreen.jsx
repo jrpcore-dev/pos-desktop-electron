@@ -278,7 +278,7 @@ function PrinterOption({
         "group flex w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors duration-150",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         selected
-          ? "border-primary bg-primary/10 ring-1 ring-inset ring-primary/20"
+          ? "border-chart-2 bg-primary/10 ring-2 ring-inset ring-chart-2/40"
           : "border-border bg-card hover:border-primary/40 hover:bg-primary/[0.04]",
       )}
     >
@@ -1365,7 +1365,7 @@ function ConfigurationScreen() {
                     className={cn(
                       "rounded-lg border p-3 text-left transition-colors",
                       active
-                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                        ? "border-chart-2 bg-primary/10 ring-2 ring-chart-2/40"
                         : "border-border/60 bg-background hover:bg-muted/50"
                     )}
                   >
@@ -1781,7 +1781,7 @@ function ConfigurationScreen() {
                     "h-9 flex-1 cursor-pointer rounded-md border text-sm font-bold tabular-nums transition-colors duration-150",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                     paperWidth === String(w)
-                      ? "border-primary bg-primary/10 text-primary shadow-sm"
+                      ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-inset ring-chart-2/40"
                       : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >
@@ -1810,7 +1810,7 @@ function ConfigurationScreen() {
                       "h-9 flex-1 cursor-pointer rounded-md border px-2 text-sm font-bold transition-colors duration-150",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                       printMode === o.value
-                        ? "border-primary bg-primary/10 text-primary shadow-sm"
+                        ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-inset ring-chart-2/40"
                         : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >

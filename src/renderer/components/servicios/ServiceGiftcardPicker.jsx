@@ -56,7 +56,7 @@ const GiftTile = ({ product, operator, active, onSelect, disabled }) => {
         "active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
-          ? "border-primary shadow-md ring-2 ring-primary/25"
+          ? "border-chart-2 shadow-md ring-2 ring-chart-2/40"
           : "border-border hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md",
       )}
     >

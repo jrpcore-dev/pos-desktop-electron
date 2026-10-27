@@ -153,7 +153,7 @@ const CreditSaleDialog = ({ open, onClose, customer, total, onConfirm, busy }) =
                     className={cn(
                       "flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                       method === key && paidNum > 0
-                        ? "border-primary bg-primary/10 text-primary"
+                        ? "border-chart-2 bg-primary/10 text-primary ring-2 ring-chart-2/40"
                         : "border-border text-muted-foreground hover:bg-muted",
                     )}
                   >

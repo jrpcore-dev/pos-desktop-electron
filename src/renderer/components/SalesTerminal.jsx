@@ -1909,7 +1909,7 @@ if (e.key === "Tab" && !isEditable) {
               className={cn(
                 "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "cash"
-                  ? "border-primary bg-primary/10 text-primary shadow-sm"
+                  ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
               )}
             >
@@ -1931,7 +1931,7 @@ if (e.key === "Tab" && !isEditable) {
               className={cn(
                 "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "card"
-                  ? "border-primary bg-primary/10 text-primary shadow-sm"
+                  ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
               )}
             >
@@ -1953,7 +1953,7 @@ if (e.key === "Tab" && !isEditable) {
               className={cn(
                 "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "transfer"
-                  ? "border-primary bg-primary/10 text-primary shadow-sm"
+                  ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
               )}
             >
@@ -1975,7 +1975,7 @@ if (e.key === "Tab" && !isEditable) {
                 className={cn(
                   "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
                   paymentMethod === "credit"
-                    ? "border-primary bg-primary/10 text-primary shadow-sm"
+                    ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                     : "border-border bg-background text-muted-foreground hover:bg-muted",
                 )}
               >

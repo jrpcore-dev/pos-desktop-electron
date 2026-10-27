@@ -157,7 +157,7 @@ const BoxChoiceDialog = ({
                   className={cn(
                     "group flex w-full cursor-pointer items-center justify-between rounded-xl border px-4 py-3.5 text-left transition-all duration-150 focus:outline-none",
                     activeIndex === idx
-                      ? "border-primary bg-primary/5 ring-2 ring-primary"
+                      ? "border-chart-2 bg-primary/5 ring-2 ring-chart-2/40"
                       : "border-border bg-background hover:border-primary/50 hover:bg-accent"
                   )}
                 >

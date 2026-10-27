@@ -56,7 +56,7 @@ export const AmountPill = ({ product, active, onSelect, disabled }) => {
         "active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-1",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
-          ? "border-transparent bg-primary text-primary-foreground shadow-md shadow-primary/20"
+          ? "border-chart-2 bg-primary text-primary-foreground shadow-md ring-2 ring-chart-2/40"
           : "border-border bg-card text-foreground hover:border-primary/50 hover:bg-primary/[0.05]",
       )}
     >
@@ -106,7 +106,7 @@ export const PackageCard = ({ product, active, onSelect, disabled }) => {
         "active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         active
-          ? "border-primary bg-primary/[0.07] shadow-sm ring-1 ring-primary"
+          ? "border-chart-2 bg-primary/[0.07] shadow-sm ring-2 ring-chart-2/40"
           : "border-border bg-card hover:border-primary/50 hover:shadow-sm",
       )}
     >
