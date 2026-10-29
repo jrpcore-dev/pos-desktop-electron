@@ -148,3 +148,6 @@ skills-lock.json
 /scroll-*.js
 /wait-*.js
 /check-empty-db.cjs
+# Bocetos de logo (solo locales)
+/design-preview/
+/scripts/generate-preview.js
