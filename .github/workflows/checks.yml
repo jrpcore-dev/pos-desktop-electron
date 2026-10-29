@@ -34,6 +34,16 @@ jobs:
       - name: Compilar better-sqlite3 para Electron
         run: npx @electron/rebuild -f -o better-sqlite3
 
+      # forge.config.js exige `bd sku.xlsx` y `catalog-images/` como
+      # extraResource, pero son datos de negocio fuera de git: en el runner
+      # basta con rellenos vacíos (ningún check los lee).
+      - name: Rellenos de datos del catálogo
+        shell: bash
+        run: |
+          touch "bd sku.xlsx"
+          mkdir -p catalog-images
+          echo '{}' > catalog-images/index.json
+
       # check-build-requires y check-main-load revisan .vite/build y el
       # app.asar de out/: sin empaquetar, el runner no los tiene.
       - name: Empaquetar
