@@ -34,5 +34,10 @@ jobs:
       - name: Compilar better-sqlite3 para Electron
         run: npx @electron/rebuild -f -o better-sqlite3
 
+      # check-build-requires y check-main-load revisan .vite/build y el
+      # app.asar de out/: sin empaquetar, el runner no los tiene.
+      - name: Empaquetar
+        run: npm run package
+
       - name: Checks
         run: npm test
