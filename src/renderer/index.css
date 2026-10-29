@@ -101,6 +101,14 @@
      usan esta variable en vez de un número mágico, así el checkout no se
      rompe si cambia el navbar. */
   --app-chrome-h: 56px;
+  /* Barra de título de Windows (titleBarOverlay): alto de la franja y ancho
+     que ocupan los botones nativos (minimizar/maximizar/cerrar), reportado
+     por Chromium. Todo lo fijo arriba a la derecha debe respetarlos. */
+  --titlebar-h: 56px;
+  --titlebar-safe-right: max(
+    0.75rem,
+    calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 0px))
+  );
 
   --background: 210 40% 98%;
   --foreground: 222 47% 11%;

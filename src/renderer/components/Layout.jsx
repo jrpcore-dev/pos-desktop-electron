@@ -139,8 +139,7 @@ const miniDrawerWidth = 72;
 /* Ancho que ocupa el bloque nativo de minimizar/maximizar/cerrar en Windows
    (reportado por Chromium vía env(titlebar-area-*)). Se le suman 14px para
    dejar aire entre el clúster del navbar y esos botones. */
-const RIGHT_TITLEBAR_PAD =
-  "max(0.75rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 0px)))";
+const RIGHT_TITLEBAR_PAD = "var(--titlebar-safe-right)";
 
 const PAGE_META = {
   "/": { title: "Terminal de Venta", crumb: "Punto de venta" },

@@ -124,12 +124,35 @@ const AppInner = () => {
   // En las pantallas de marca (Login y SetupWizard) el fondo es un gradiente
   // full-bleed, así que el overlay se tiñe con el modo "brand" para que los
   // controles nativos se fundan con la marca en vez de verse un bloque sólido.
-  const onBrandScreen = !loggedIn || showSetup;
+  // El login ya no es full-bleed de marca (tarjeta sobre el fondo normal):
+  // sólo el SetupWizard conserva el gradiente.
+  const onBrandScreen = showSetup;
+  // Con un diálogo o panel abierto el fondo se oscurece: la franja nativa se
+  // atenúa igual (se detecta en el DOM para no tocar cada diálogo).
+  const [modalOpen, setModalOpen] = useState(false);
   useEffect(() => {
+    const check = () =>
+      setModalOpen(
+        !!document.querySelector(
+          '[data-state="open"].dialog-content, [data-state="open"].sheet-overlay',
+        ),
+      );
+    const obs = new MutationObserver(check);
+    obs.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-state"],
+    });
+    check();
+    return () => obs.disconnect();
+  }, []);
+  useEffect(() => {
+    const base = onBrandScreen ? "brand" : mode;
     try {
-      window.api?.setTitlebarTheme(onBrandScreen ? "brand" : mode);
+      window.api?.setTitlebarTheme(modalOpen ? `${base}-dim` : base);
     } catch {}
-  }, [mode, onBrandScreen]);
+  }, [mode, onBrandScreen, modalOpen]);
 
   useEffect(() => {
     const checkFirstTime = async () => {

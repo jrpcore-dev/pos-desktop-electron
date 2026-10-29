@@ -475,6 +475,11 @@ const TITLEBAR_COLORS = {
   // superior derecha del gradiente para que los controles nativos se
   // fundan con la marca en vez de verse un rectángulo blanco/negro.
   brand: { color: "#1c3259", symbolColor: "#f8fafc" },
+  // Atenuados: mismos tonos bajo el fondo oscurecido de un diálogo o panel
+  // abierto (≈ bg-black/55), para que la franja no quede como un parche claro.
+  "light-dim": { color: "#707172", symbolColor: "#070a12" },
+  "dark-dim": { color: "#05060c", symbolColor: "#707172" },
+  "brand-dim": { color: "#0d1728", symbolColor: "#707172" },
 };
 const TITLEBAR_HEIGHT = 56; // Alineado con la altura del navbar (h-14)
 
