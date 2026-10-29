@@ -483,7 +483,7 @@ const Suppliers = () => {
         />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">

@@ -1321,7 +1321,7 @@ const Inventory = () => {
           <div
             ref={tableScrollRef}
             onScroll={handleScroll}
-            className="min-h-0 w-full flex-1 overflow-y-auto rounded-xl border border-border bg-card shadow-xs"
+            className="min-h-0 w-full flex-1 overflow-y-auto rounded-xl border border-border bg-card shadow-md"
           >
             <STable containerClassName="overflow-visible">
               <STableHeader>

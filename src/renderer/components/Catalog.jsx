@@ -870,7 +870,7 @@ const Catalog = () => {
           </div>
         )
       ) : (
-        <div className="w-full overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
+        <div className="w-full overflow-x-auto rounded-xl border border-border bg-card shadow-md">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

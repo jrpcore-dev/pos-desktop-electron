@@ -574,7 +574,7 @@ const Customers = () => {
         />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
         <Table containerClassName="max-h-[calc(100vh-21rem)]">
           <TableHeader>
             <TableRow className="hover:bg-transparent">

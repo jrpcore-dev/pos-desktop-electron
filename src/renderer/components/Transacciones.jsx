@@ -879,7 +879,7 @@ const Transacciones = () => {
       </div>
 
         <TabsContent value="ventas" className="space-y-4">
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -967,7 +967,7 @@ const Transacciones = () => {
         </TabsContent>
 
         <TabsContent value="gastos" className="space-y-4">
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
