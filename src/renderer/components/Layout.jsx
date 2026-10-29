@@ -1317,7 +1317,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                           ? `${todayTasksCount} tarea(s) pendiente(s)`
                           : "Avisos del negocio"
                     }
-                    className="relative flex w-10 shrink-0 cursor-pointer items-center justify-center rounded-l-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    className="relative flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted data-[state=open]:text-foreground"
                   >
                     <Bell size={16} />
                     {insightsUnread > 0 && (
