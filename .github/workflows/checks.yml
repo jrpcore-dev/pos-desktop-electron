@@ -3,6 +3,11 @@ name: checks
 # Fase 6 · los checks headless del repo (npm test) en cada push y PR.
 # Windows porque la app y sus módulos nativos (better-sqlite3 para Electron)
 # se construyen y se usan ahí.
+#
+# Dos jobs en paralelo: `build` empaqueta y corre sólo los checks que leen el
+# paquete; `test` corre el resto en otra máquina. Empaquetar en la misma
+# máquina la dejaba tan cargada que los checks de multicaja (3c/3d/3f) se
+# quedaban sin respuesta del Host local y vencían sus timeouts.
 on:
   push:
     branches: [main]
@@ -13,6 +18,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # check-main-load corre con el binario de Electron en modo Node: el
+      # módulo nativo tiene que estar compilado para la ABI de Electron.
+      - name: Compilar better-sqlite3 para Electron
+        run: npx @electron/rebuild -f -o better-sqlite3
+
+      # forge.config.js exige `bd sku.xlsx` y `catalog-images/` como
+      # extraResource, pero son datos de negocio fuera de git: en el runner
+      # basta con rellenos vacíos (ningún check los lee). Los releases se
+      # empaquetan en la PC con los datos reales, no aquí.
+      - name: Rellenos de datos del catálogo
+        shell: bash
+        run: |
+          touch "bd sku.xlsx"
+          mkdir -p catalog-images
+          echo '{}' > catalog-images/index.json
+
+      - name: Empaquetar
+        run: npm run package
+
+      - name: Checks del build
+        run: npm test -- --only=check-build-requires --only=check-main-load
+
   test:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -29,25 +72,8 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
-      # Los checks .cjs corren con el binario de Electron en modo Node: el
-      # módulo nativo tiene que estar compilado para la ABI de Electron.
       - name: Compilar better-sqlite3 para Electron
         run: npx @electron/rebuild -f -o better-sqlite3
 
-      # forge.config.js exige `bd sku.xlsx` y `catalog-images/` como
-      # extraResource, pero son datos de negocio fuera de git: en el runner
-      # basta con rellenos vacíos (ningún check los lee).
-      - name: Rellenos de datos del catálogo
-        shell: bash
-        run: |
-          touch "bd sku.xlsx"
-          mkdir -p catalog-images
-          echo '{}' > catalog-images/index.json
-
-      # check-build-requires y check-main-load revisan .vite/build y el
-      # app.asar de out/: sin empaquetar, el runner no los tiene.
-      - name: Empaquetar
-        run: npm run package
-
       - name: Checks
-        run: npm test
+        run: npm test -- --skip=check-build-requires --skip=check-main-load
