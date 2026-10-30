@@ -342,7 +342,7 @@ const EndOfDay = () => {
 
   // In vivo: un cierre/apertura de caja (también el del encabezado) refresca
   // el corte sola. Eventos raros → refresco directo y silencioso, sin chip.
-  useDbChanges(() => fetchData(true), ["cash_register"]);
+  useDbChanges(() => fetchData(true), ["cash_register", "sales", "cash_register_expenses"]);
 
   useEffect(() => {
     const handleSaleRegistered = () => fetchData();

@@ -386,7 +386,9 @@ const dropTriggers = (db) => {
   check(keys.includes("store_name") && keys.includes("currency"), "settings replicadas: store_name y currency", keys.join(","));
   check(!keys.includes("activation_code") && !keys.includes("box_paired_token"), "settings: activation_code y box_paired_token NUNCA salen", keys.join(","));
 
-  r = await get(`${URL}/api/replica/snapshot?table=sales&limit=5`, SESSION);
+  // `sales` se replica desde el paso 1 (lectura local); la cola de idempotencia
+  // del Host sigue siendo propia y nunca viaja.
+  r = await get(`${URL}/api/replica/snapshot?table=idempotency_keys&limit=5`, SESSION);
   check(r.status === 400 && r.data.code === "REPLICA_TABLE_UNKNOWN", "tabla no replicable → 400 REPLICA_TABLE_UNKNOWN", JSON.stringify(r.data));
 
   r = await get(`${URL}/api/replica/snapshot?table=products&limit=2`, {});

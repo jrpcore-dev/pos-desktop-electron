@@ -85,7 +85,9 @@ const tombstones = (db, tbl, rowId) =>
       check(has, `columna updated_at en ${tbl}`);
     }
     check(
-      dbSchema.UPDATED_AT_TABLES.length === dbSchema.REPLICATED_TABLES.length - 1 &&
+      // settings y las tablas de movimientos (paso 1) no llevan updated_at.
+      dbSchema.UPDATED_AT_TABLES.length ===
+        dbSchema.REPLICATED_TABLES.length - 1 - dbSchema.LEDGER_TABLES.length &&
         !dbA.prepare("PRAGMA table_info(settings)").all().some((c) => c.name === "updated_at"),
       "settings NO lleva updated_at (es clave/valor, no entidad)",
       JSON.stringify(dbSchema.UPDATED_AT_TABLES),

@@ -148,6 +148,12 @@ const pullDelta = async (ctx, opts = {}) => {
         }
         ctx.applyFailures = null;
       }
+      // Página aplicada entera: el cursor llega hasta donde el Host dijo, aunque
+      // los últimos eventos fueran filtrados (no viajan) y no movieran nada.
+      const pageEnd = Number(r.data.next_seq);
+      if (Number.isFinite(pageEnd) && pageEnd > replicaEngine.state(ctx.db).last_seq) {
+        activation.setSetting(ctx.db, replicaEngine.KEYS.LAST_SEQ, String(pageEnd));
+      }
       if (!r.data.has_more) break;
       const next = Number(r.data.next_seq);
       if (!Number.isFinite(next) || next <= since) break; // nada que avanzar
@@ -443,6 +449,32 @@ const startLiveSync = (opts = {}) => {
   return stop;
 };
 
+// Paso 1 · "lee lo que escribiste": tras una escritura en el Host, la caja
+// espera a tener aplicado hasta `seq` antes de que la pantalla relea local.
+// Pide el delta en vez de esperar al aviso del flujo (ahorra el coalesce).
+// Con el Host caído o sin bucle vivo devuelve enseguida: leer local un poco
+// atrasado es mejor que trabar la pantalla.
+const waitForSeq = async (db, seq, timeoutMs = 3000) => {
+  const target = Number(seq) || 0;
+  if (!target) return true;
+  const ctx = active && active.db === db ? active : null;
+  if (!ctx) return replicaEngine.state(db).last_seq >= target;
+  const deadline = Date.now() + timeoutMs;
+  while (replicaEngine.state(db).last_seq < target) {
+    if (Date.now() > deadline || !ctx.running) return false;
+    if (!ctx.pulling && !ctx.resyncing) {
+      try {
+        await pullDelta(ctx, { quiet: true });
+      } catch (err) {
+        return false;
+      }
+      if (replicaEngine.state(db).last_seq >= target) break;
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return true;
+};
+
 const liveState = (db) => ({
   state: activation.getSetting(db, KEYS.STATE) || "stopped",
   error: activation.getSetting(db, KEYS.ERROR) || null,
@@ -483,5 +515,6 @@ module.exports = {
   liveState,
   hostOkInfo,
   markHostOk,
+  waitForSeq,
   parseFrames,
 };

@@ -32,6 +32,10 @@ const KEYS = Object.freeze({
   // (snapshot o delta aplicado). `SYNCED_AT` sigue siendo el del snapshot y
   // decide el resync de 24 h; éste decide los avisos de "datos viejos".
   FRESH_AT: "replica_fresh_at",
+  // Paso 1 · tablas que trajo el último snapshot completo. Una actualización
+  // que sume tablas replicadas (Movimientos, ventas…) deja la copia "vieja"
+  // y se rehace una vez sin dejar de vender.
+  TABLES: "replica_tables",
   STATE: "replica_state",
   MODE: "replica_mode",
   ERROR: "replica_error",
@@ -50,6 +54,8 @@ const SWAP_ORDER = [
   "group_promos",
   "bundles",
   "bundle_items",
+  // Paso 1 (local-first) · padres antes que hijos (cortes → ventas → líneas).
+  ...dbSchema.LEDGER_TABLES,
 ];
 
 const fail = (code, error, extra = {}) => ({ success: false, code, error, ...extra });
@@ -105,8 +111,18 @@ const state = (db) => {
     state: activation.getSetting(db, KEYS.STATE) || "idle",
     mode: activation.getSetting(db, KEYS.MODE) || "offline",
     error: activation.getSetting(db, KEYS.ERROR) || null,
-    stale: syncedAt ? Date.now() - syncedAt > RESYNC_AFTER_MS : true,
+    stale: syncedAt ? Date.now() - syncedAt > RESYNC_AFTER_MS || missingTables(db).length > 0 : true,
   };
+};
+
+// Tablas que el plan actual replica y la copia local todavía no tiene.
+const missingTables = (db) => {
+  const have = new Set(
+    String(activation.getSetting(db, KEYS.TABLES) || "")
+      .split(",")
+      .filter(Boolean),
+  );
+  return SWAP_ORDER.filter((t) => !have.has(t));
 };
 
 const setState = (db, values) => {
@@ -153,11 +169,18 @@ const clearStaging = (db, table) => {
 // Swap atómico: con foreign_keys OFF, dentro de una única transacción se vacía
 // y recarga cada tabla desde su staging. `settings` no se vacía: sólo se
 // actualizan las claves replicadas, para no borrar las que son de la caja.
+const fillFor = (table) => dbSchema.REPLICATED_FILL_COLUMNS[table] || {};
+
 const swap = (db, tables, plan) => {
-  const insertInto = (table, cols) =>
-    db.prepare(
-      `INSERT INTO ${table} (${cols.join(", ")}) SELECT ${cols.join(", ")} FROM ${STAGING_PREFIX}${table}`,
+  const insertInto = (table, cols) => {
+    const fill = Object.entries(fillFor(table));
+    const target = [...cols, ...fill.map(([c]) => c)];
+    const source = [...cols, ...fill.map(() => "?")];
+    const stmt = db.prepare(
+      `INSERT INTO ${table} (${target.join(", ")}) SELECT ${source.join(", ")} FROM ${STAGING_PREFIX}${table}`,
     );
+    return { run: () => stmt.run(...fill.map(([, v]) => v)) };
+  };
   const stagingRows = (table) =>
     db.prepare(`SELECT * FROM ${STAGING_PREFIX}${table}`).all();
 
@@ -271,6 +294,8 @@ const downloadSnapshot = async (db, opts = {}) => {
       [KEYS.HOST_EPOCH]: hostEpoch || undefined,
       [KEYS.SYNCED_AT]: String(Date.now()),
       [KEYS.FRESH_AT]: String(Date.now()),
+      // Sólo un snapshot COMPLETO deja constancia de las tablas.
+      [KEYS.TABLES]: opts.tables ? undefined : SWAP_ORDER.join(","),
       [KEYS.STATE]: "synced",
       [KEYS.MODE]: "online",
       [KEYS.ERROR]: null,
@@ -312,9 +337,14 @@ const applyChanges = (db, changes = []) => {
     } else {
       const row = c.row;
       if (!row) return false;
-      const values = cols.map((col) => (row[col] === undefined ? null : row[col]));
+      const fill = Object.entries(fillFor(c.tbl));
+      const target = [...cols, ...fill.map(([col]) => col)];
+      const values = [
+        ...cols.map((col) => (row[col] === undefined ? null : row[col])),
+        ...fill.map(([, v]) => v),
+      ];
       db.prepare(
-        `INSERT OR REPLACE INTO ${c.tbl} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(",")})`,
+        `INSERT OR REPLACE INTO ${c.tbl} (${target.join(", ")}) VALUES (${target.map(() => "?").join(",")})`,
       ).run(...values);
     }
     tables.add(c.tbl);
@@ -395,6 +425,7 @@ module.exports = {
   STAGING_PREFIX,
   KEYS,
   SWAP_ORDER,
+  missingTables,
   RESYNC_AFTER_MS,
   state,
   setState,

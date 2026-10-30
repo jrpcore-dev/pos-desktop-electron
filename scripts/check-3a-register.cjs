@@ -172,10 +172,17 @@ const cashRegisterRow = (db, id) =>
   // varios, p. ej. los 3 triggers de una tabla).
   // Funciones de la tienda (claves feature_* en los triggers de settings) ya
   // está en HEAD. Sin delta pendiente: 0 altas / 0 bajas.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  // Paso 1 local-first · las tablas de movimientos se replican: 3 triggers
+  // de change_log por cada una de las 8 (24 altas, sin `*_touch`), y los 3 de
+  // settings se reescriben por la clave nueva `host_device_name`.
+  const LEDGER = "(suppliers|paired_devices|cash_register|sales|sale_items|cash_register_expenses|stock_movements|customer_credit_movements)";
+  const DDL_AGREGADO = [
+    new RegExp(`^CREATE TRIGGER trg_change_log_${LEDGER}_(insert|update|delete) `),
+    /^CREATE TRIGGER trg_change_log_settings_(insert|update|delete) [\s\S]*'host_device_name'/,
+  ];
+  const DDL_AGREGADO_TOTAL = 27;
+  const DDL_BORRADO = [/^CREATE TRIGGER trg_change_log_settings_(insert|update|delete) /];
+  const DDL_BORRADO_TOTAL = 3;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);

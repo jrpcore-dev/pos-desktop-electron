@@ -131,6 +131,10 @@ const startServer = async (
   if (server) return { success: true, port };
 
   const app = express();
+  let replicaSeqStmtCache = null;
+  const replicaSeqStmt = () =>
+    replicaSeqStmtCache ||
+    (replicaSeqStmtCache = db.prepare("SELECT MAX(seq) AS seq FROM change_log"));
   // Medición multicaja · cuánto tarda el Host en contestar cada petición
   // (desde que llega hasta el JSON). La caja lo resta de su tiempo total para
   // separar red de Host. Va primero para incluir el parseo del cuerpo.
@@ -140,6 +144,13 @@ const startServer = async (
     res.json = (body) => {
       if (!res.headersSent) {
         res.setHeader("x-host-ms", String(Math.round(performance.now() - startedAt)));
+        // Paso 1 · hasta qué evento del change_log va el Host al contestar.
+        // Tras una escritura la caja espera a tenerlo aplicado antes de leer
+        // local: así nunca ve su propia acción "un instante antes".
+        try {
+          const row = replicaSeqStmt().get();
+          res.setHeader("x-replica-seq", String((row && row.seq) || 0));
+        } catch (err) {}
       }
       return json(body);
     };

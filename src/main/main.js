@@ -185,10 +185,29 @@ const setHostDeviceName = (name) => {
   activation.setSetting(db, HOST_DEVICE_NAME_KEY, name);
   hostDeviceNameCache = name;
 };
+// Paso 1 · en una CAJA las ventas y cortes del Host llevan el device_id del
+// Host vinculado, no el host_device_id que esta BD generó al nacer. También
+// en memoria, por el mismo motivo que el nombre (la función SQL de abajo).
+let businessHostIdCache = hostDeviceId;
+const businessHostId = () => businessHostIdCache;
+// Se relee al arrancar, al emparejar y cuando la réplica trae ajustes (el
+// nombre del Host viaja como ajuste de negocio).
+const refreshHostIdentity = () => {
+  try {
+    const linked = isBoxDevice()
+      ? String(activation.getSetting(db, "linked_host_device_id") || "").trim()
+      : "";
+    businessHostIdCache = linked || hostDeviceId;
+    hostDeviceNameCache =
+      String(activation.getSetting(db, HOST_DEVICE_NAME_KEY) || "").trim() ||
+      DEFAULT_HOST_DEVICE_NAME;
+  } catch (err) {}
+};
+refreshHostIdentity();
 // Para el SQL: `device_name` de una fila del Host (device_id NULL = ventas
 // anteriores a la 3g/C, o el propio host_device_id) sale con este nombre.
 db.function("host_device_name", () => hostDeviceName());
-db.function("host_device_id", () => hostDeviceId);
+db.function("host_device_id", () => businessHostId());
 const deviceNameSql = (alias) =>
   `COALESCE(pd.device_name, CASE WHEN ${alias}.device_id IS NULL OR ${alias}.device_id = host_device_id() THEN host_device_name() END) AS device_name`;
 
@@ -3143,7 +3162,7 @@ const deviceWhere = (deviceId, alias = "") => {
   // Las ventas nuevas del Host llevan su `host_device_id`, no NULL: el filtro
   // "Host" debe incluir ambas (NULL = ventas anteriores a la 3g/C).
   if (deviceId === "__host__")
-    return { sql: ` AND (${col} IS NULL OR ${col} = ?)`, args: [hostDeviceId] };
+    return { sql: ` AND (${col} IS NULL OR ${col} = ?)`, args: [businessHostId()] };
   return { sql: ` AND ${col} = ?`, args: [deviceId] };
 };
 
@@ -3356,7 +3375,7 @@ ipcMain.handle("list-sale-devices", async () => {
       .prepare(
         "SELECT 1 FROM sales WHERE (device_id IS NULL OR device_id = ?) LIMIT 1",
       )
-      .get(hostDeviceId);
+      .get(businessHostId());
     return { success: true, devices, hasHost, hostName: hostDeviceName() };
   } catch (error) {
     return { success: false, error: error.message, devices: [], hasHost: false };
@@ -3704,9 +3723,11 @@ ipcMain.handle("box-discover-hosts", async (event, opts) =>
   clientLink.discoverHosts(opts || {}),
 );
 
-ipcMain.handle("box-pair", async (event, { hostUrl, code, deviceName } = {}) =>
-  clientLink.pairAsBox(db, { hostUrl, code, deviceName }),
-);
+ipcMain.handle("box-pair", async (event, { hostUrl, code, deviceName } = {}) => {
+  const out = await clientLink.pairAsBox(db, { hostUrl, code, deviceName });
+  refreshHostIdentity();
+  return out;
+});
 
 ipcMain.handle("box-wait-approval", async (event, opts) =>
   clientLink.waitForApproval(db, opts || {}),
@@ -3806,6 +3827,7 @@ function startOfflineQueueSync() {
 const dbChangedPending = { tables: new Set(), ids: {} };
 let dbChangedTimer = null;
 const emitDbChanged = (tables = [], ids = {}) => {
+  if (tables.includes("settings")) refreshHostIdentity();
   for (const t of tables) dbChangedPending.tables.add(t);
   for (const [t, list] of Object.entries(ids)) {
     const acc = (dbChangedPending.ids[t] = dbChangedPending.ids[t] || new Set());

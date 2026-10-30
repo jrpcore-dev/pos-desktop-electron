@@ -975,6 +975,29 @@ const runMigrations = (db) => {
 // (`replicaPlan`) es la única fuente de verdad de qué columnas salen.
 // ─────────────────────────────────────────────────────────────────────────────
 const CHANGE_LOG_TABLE = "change_log";
+// Tablas de movimientos (ventas, cortes, retiros, stock, abonos) y los
+// catálogos que sus pantallas necesitan para unir nombres. No llevan
+// `updated_at` ni trigger de toque: casi todo es INSERT y, además, sumar una
+// columna a `sales` cambiaría el esquema que vigilan los checks de la 3a.
+const LEDGER_TABLES = Object.freeze([
+  "suppliers",
+  "paired_devices",
+  "cash_register",
+  "sales",
+  "sale_items",
+  "cash_register_expenses",
+  "stock_movements",
+  "customer_credit_movements",
+]);
+// De `paired_devices` sólo viaja la identidad visible: nunca el hash del
+// token ni los scopes.
+const REPLICATED_PAIRED_DEVICE_COLUMNS = ["id", "device_id", "device_name", "device_code", "device_type"];
+// Columnas NOT NULL que no viajan y la caja rellena al escribir su copia. El
+// hash vacío nunca coincide con el de un token real (timingSafe de sha256),
+// y además la caja no levanta API: esa fila sólo sirve para unir nombres.
+const REPLICATED_FILL_COLUMNS = Object.freeze({
+  paired_devices: Object.freeze({ paired_token_hash: "" }),
+});
 const REPLICATED_TABLES = [
   "categories",
   "customer_tiers",
@@ -987,6 +1010,10 @@ const REPLICATED_TABLES = [
   "group_promos",
   "bundles",
   "bundle_items",
+  // Paso 1 (local-first) · lo del día a día: la caja lee local Movimientos,
+  // Transacciones y Caja en vez de pedirlos al Host en cada pantalla. Siguen
+  // escribiéndose SÓLO en el Host; la caja recibe la copia.
+  ...LEDGER_TABLES,
   "settings",
 ];
 const REPLICATED_DENY_COLUMNS = ["cost_price"]; // costos: no viajan a la caja
@@ -997,7 +1024,9 @@ const REPLICATED_LOCAL_COLUMNS = ["updated_at"];
 // 3f · tablas de entidad que llevan `updated_at`. `settings` queda fuera: es
 // clave/valor, no hay fila-entidad que marcar, y su `change_log.ts` ya dice
 // cuándo cambió.
-const UPDATED_AT_TABLES = REPLICATED_TABLES.filter((t) => t !== "settings");
+const UPDATED_AT_TABLES = REPLICATED_TABLES.filter(
+  (t) => t !== "settings" && !LEDGER_TABLES.includes(t),
+);
 // 3f · tumba-sigilo: «(tbl, row_id) ya no está en el conjunto replicable».
 // A diferencia de `change_log` no se compacta, así que aunque la caja pierda
 // el evento `delete` le sigue quedando de dónde reconciliar.
@@ -1032,6 +1061,9 @@ const REPLICATED_SETTINGS_KEYS = [
   "feature_credit",
   "feature_services",
   "feature_expiry",
+  // Nombre visible del Host ("Caja 1"): las cajas lo muestran en sus copias
+  // locales de ventas y cortes.
+  "host_device_name",
 ];
 // 3e · Fila replicable por tabla (fuente única de verdad). Las tablas no
 // listadas replican TODAS sus filas. Lo consumen por igual los triggers, el
@@ -1090,8 +1122,11 @@ const touchUpdatedAt = (tbl, ref) => {
 // conjunto replicable no generan eventos.
 const changeLogTrigger = (tbl, op) => {
   const whens = [];
-  if (tbl === "cashiers" && op === "UPDATE") {
-    const cols = REPLICATED_CASHIER_COLUMNS.filter((c) => c !== "id");
+  if ((tbl === "cashiers" || tbl === "paired_devices") && op === "UPDATE") {
+    // `paired_devices` se toca en cada sondeo (last_seen_at, pending_sync):
+    // sólo cuenta si cambió algo de lo que viaja.
+    const list = tbl === "cashiers" ? REPLICATED_CASHIER_COLUMNS : REPLICATED_PAIRED_DEVICE_COLUMNS;
+    const cols = list.filter((c) => c !== "id");
     whens.push(cols.map((c) => `NEW.${c} IS NOT OLD.${c}`).join(" OR "));
   } else if (tbl === "settings") {
     whens.push(`${op === "DELETE" ? "OLD" : "NEW"}.key IN (${sqlList(REPLICATED_SETTINGS_KEYS)})`);
@@ -1332,7 +1367,9 @@ const replicaPlan = (db) => {
     plan[tbl] =
       tbl === "cashiers"
         ? cols.filter((c) => REPLICATED_CASHIER_COLUMNS.includes(c))
-        : cols.filter(
+        : tbl === "paired_devices"
+          ? cols.filter((c) => REPLICATED_PAIRED_DEVICE_COLUMNS.includes(c))
+          : cols.filter(
             (c) =>
               !REPLICATED_DENY_COLUMNS.includes(c) &&
               !REPLICATED_LOCAL_COLUMNS.includes(c),
@@ -1359,6 +1396,8 @@ module.exports = {
   endBulk,
   CHANGE_LOG_TABLE,
   REPLICATED_TABLES,
+  LEDGER_TABLES,
+  REPLICATED_FILL_COLUMNS,
   REPLICATED_FILTERS,
   REPLICATED_DENY_COLUMNS,
   REPLICATED_LOCAL_COLUMNS,

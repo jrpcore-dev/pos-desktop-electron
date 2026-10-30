@@ -19,6 +19,8 @@ const salesCore = require("./sales-core");
 // caja las claves de `save-setting` que son del propio aparato.
 const ipcRegistry = require("./ipc-registry");
 const replicaLive = require("./replica-live");
+const replicaEngine = require("./replica-engine");
+const rpcContext = require("./rpc-context");
 
 const TIMEOUT_MS = 8000;
 const OFFLINE_PIN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -52,6 +54,57 @@ const RPC_TIMEOUTS = {
 // veces. Así un timeout ya no termina en "error" con la caja abierta.
 const IDEMPOTENT_RPC = new Set(Object.keys(RPC_TIMEOUTS).filter((c) => !c.startsWith("taecel:") && c !== "import-products-content"));
 const IDEMPOTENT_RETRIES = 2;
+
+// ── Lectura local (paso 1 local-first) ──────────────────────────────────────
+// Con la copia del Host completa, estas pantallas (Caja, Transacciones,
+// Movimientos, cortes, proveedores) se resuelven con la BD de la caja: sin
+// viaje por la red y también sin Host. Se ejecuta el MISMO handler que en el
+// Host, con el contexto de esta caja (callerDeviceId → su device_id), así que
+// los filtros "sólo lo de esta caja" son idénticos.
+const LOCAL_READ_CHANNELS = new Set([
+  "get-cash-register-status",
+  "get-previous-register-today",
+  "get-sales-for-today",
+  "get-outside-register-sales",
+  "get-cash-register-expenses",
+  "get-closed-registers",
+  "get-register-movements",
+  "get-register-products",
+  "get-register-sales-detail",
+  "get-sale-details",
+  "get-sales-by-date",
+  "get-sales-by-range",
+  "get-expenses-by-date",
+  "get-expenses-by-range",
+  "get-stock-movements",
+  "list-sale-devices",
+  "find-sales-by-folio",
+  "get-suppliers",
+]);
+const localReady = (db) => {
+  const st = replicaEngine.state(db);
+  return st.sync_completed && replicaEngine.missingTables(db).length === 0;
+};
+const runLocal = (db, channel, args) => {
+  const listener = ipcRegistry.get(channel);
+  if (!listener) return null;
+  const deviceId = activation.getSetting(db, "box_device_id") || null;
+  return rpcContext.runWithCallContext({ deviceId, cashierId: null }, () => listener(null, ...args));
+};
+
+// "Lee lo que escribiste": el Host informa en cada respuesta hasta qué evento
+// va (x-replica-seq). Tras una escritura se espera a tenerlo aplicado en local
+// antes de devolver, para que la pantalla que relee local vea su acción.
+const READ_CHANNEL_RE = /^(get|list|find)-|^taecel:(status|get-|history|transaction-status)/;
+let latestHostSeq = 0;
+const noteHostSeq = (headers) => {
+  const seq = Number(headers && headers.get && headers.get("x-replica-seq"));
+  if (Number.isFinite(seq) && seq > latestHostSeq) latestHostSeq = seq;
+};
+const settleWrite = async (db) => {
+  if (!localReady(db)) return;
+  await replicaLive.waitForSeq(db, latestHostSeq);
+};
 
 // Claves de `save-setting` que el negocio comparte entre cajas (van al Host).
 const BUSINESS_SETTING_KEYS = new Set(dbSchema.REPLICATED_SETTINGS_KEYS);
@@ -236,6 +289,7 @@ const postJson = async (
     const warning = res.headers.get("x-protocol-warning");
     activation.setSetting(db, "protocol_warning", warning || "");
   } catch (err) {}
+  noteHostSeq(res.headers);
   return { status: res.status, data, headers: res.headers };
 };
 
@@ -642,7 +696,22 @@ const HOST_REQUIRED = (what) =>
 // Punto de entrada del guard: el canal entra igual que por IPC y sale traducido.
 const forward = (db, channel, args = []) => {
   if (channel === "verify-cashier-pin") return verifyPin(db, args[0], args[1]);
-  if (channel === "record-sale") return recordSale(db, args[0]);
+  if (channel === "record-sale") {
+    return recordSale(db, args[0]).then(async (r) => {
+      // Venta en línea: que Caja y Transacciones (locales) ya la vean.
+      if (r && r.success && !r.offline) await settleWrite(db);
+      return r;
+    });
+  }
+  if (LOCAL_READ_CHANNELS.has(channel) && localReady(db)) {
+    const local = runLocal(db, channel, args);
+    if (local) {
+      return Promise.resolve(local).then((r) => {
+        if (channel === "get-cash-register-status" && r && r.success) cacheRegister(db, r);
+        return r;
+      });
+    }
+  }
   // Cerrar caja exige que la cola esté vacía (decisión de negocio).
   if (channel === "close-cash-register") {
     const pending = offlineQueue.countBlocking(db);
@@ -720,6 +789,7 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null) => {
   if (res.status === 401) return expired(db, res.data);
   // Éxito: el Host envuelve el valor del handler en {success, result}.
   if (res.status === 200 && res.data.success) {
+    if (!READ_CHANNEL_RE.test(channel)) await settleWrite(db);
     return res.data.result === undefined ? null : res.data.result;
   }
   return res.data; // fallo del Host ({success:false, code, error}) tal cual.
