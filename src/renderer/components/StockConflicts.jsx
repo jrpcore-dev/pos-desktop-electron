@@ -201,8 +201,8 @@ export default function StockConflicts() {
                   <AlertTriangle className="h-4 w-4 text-warning" />
                   Venta {sale.folio || `#${sale.id}`}
                   <span className="text-xs font-normal text-muted-foreground">
-                    {sale.device_code || sale.device_id || "Host"}
-                    {sale.device_name ? ` · ${sale.device_name}` : ""}
+                    {sale.device_code || sale.device_name || "—"}
+                    {sale.device_code && sale.device_name ? ` · ${sale.device_name}` : ""}
                     {sale.cashier_name ? ` · ${sale.cashier_name}` : ""}
                     {sale.created_at
                       ? ` · ${formatMXDateTime(sale.created_at)}`

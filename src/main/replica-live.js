@@ -108,6 +108,7 @@ const parseFrames = (text) => {
 const pullDelta = async (ctx, opts = {}) => {
   if (ctx.pulling) return; // un solo vuelo a la vez: el bucle se re-entraría
   ctx.pulling = true;
+  let total = 0;
   try {
     const creds = credentials(ctx.db);
     let since = replicaEngine.state(ctx.db).last_seq;
@@ -127,6 +128,7 @@ const pullDelta = async (ctx, opts = {}) => {
       const changes = r.data.changes || [];
       if (changes.length) {
         const applied = replicaEngine.applyChanges(ctx.db, changes);
+        total += Number(applied.applied) || 0;
         if (applied.applied && typeof ctx.onChanged === "function") {
           ctx.onChanged(applied.tables, applied.ids, applied);
         }
@@ -156,9 +158,19 @@ const pullDelta = async (ctx, opts = {}) => {
     // flujo sigue caído aunque el HTTP conteste, y enseñar "conectado" mientras
     // pasa eso engaña a quien esté mirando `replica-status`.
     if (!opts.quiet) setLive(ctx, "connected", null);
+    return total;
   } finally {
     ctx.pulling = false;
   }
+};
+
+// Avisos de sincronización para el renderer (inicio/avance/fin). Un fallo del
+// receptor nunca corta el bucle de réplica.
+const emitSync = (ctx, payload) => {
+  if (typeof ctx.onSync !== "function") return;
+  try {
+    ctx.onSync({ at: Date.now(), ...payload });
+  } catch (err) {}
 };
 
 // Un delta con un hueco silencioso es peor que no vender: se deja la caja en
@@ -170,11 +182,18 @@ const handleResync = async (ctx, reason) => {
     // El resync de 24 h no viene de un hueco: se renueva sin dejar de vender.
     replicaEngine.resetSync(ctx.db, { keepSelling: reason === "PERIODIC" });
     if (typeof ctx.onResync === "function") ctx.onResync(reason);
-    const r = await replicaEngine.downloadSnapshot(ctx.db);
+    emitSync(ctx, { phase: "start", kind: "resync", reason });
+    const r = await replicaEngine.downloadSnapshot(ctx.db, {
+      onProgress: (p) => emitSync(ctx, { phase: "progress", kind: "resync", reason, ...p }),
+    });
     if (r && r.success && typeof ctx.onChanged === "function") {
       ctx.onChanged(r.tables || [], {}, { resync: true, reason });
     }
-    if (!r || !r.success) throw new Error((r && r.error) || "resync fallido");
+    if (!r || !r.success) {
+      emitSync(ctx, { phase: "error", kind: "resync", reason, error: (r && r.error) || "resync fallido" });
+      throw new Error((r && r.error) || "resync fallido");
+    }
+    emitSync(ctx, { phase: "done", kind: "resync", reason });
   } finally {
     ctx.resyncing = false;
   }
@@ -246,6 +265,13 @@ let lastHostOkAt = 0;
 const markHostOk = () => {
   lastHostOkAt = Date.now();
 };
+// Margen antes de dar al Host por caído. Era 15 s, el mismo plazo del
+// watchdog: en cuanto éste cortaba un flujo sin latidos (Host ocupado unos
+// segundos, Wi-Fi que cambió de AP) la última huella YA tenía 15 s y el
+// encabezado decía "Host desconectado" hasta el siguiente sondeo, aunque la
+// reconexión tardara 1 s. Cualquier respuesta HTTP buena del Host (ventas,
+// RPC) también cuenta como huella, no sólo la réplica.
+const HOST_OK_GRACE_MS = 30000;
 
 const sleepWhilePolling = async (ctx, waitMs) => {
   const deadline = Date.now() + waitMs;
@@ -308,12 +334,18 @@ const connectOnce = async (ctx) => {
     lastFrameAt = Date.now();
     // Fase 4 · conectado: la espera de la próxima caída vuelve a empezar corta.
     ctx.backoff = 0;
+    const firstConnect = !ctx.connectedOnce;
+    const wasDown = ctx.downSince > 0 && Date.now() - ctx.downSince >= HOST_OK_GRACE_MS;
+    ctx.connectedOnce = true;
+    ctx.downSince = 0;
     // Fase 4 · si el último snapshot tiene más de 24 h, se rehace entero.
     if (replicaEngine.isStale(ctx.db)) {
       await handleResync(ctx, "PERIODIC");
     } else {
       // Conectado: por si el cursor se quedó atrás de lo que ya se aplicó.
-      await pullDelta(ctx);
+      emitSync(ctx, { phase: "start", kind: "catchup", firstConnect, wasDown });
+      const applied = await pullDelta(ctx);
+      emitSync(ctx, { phase: "done", kind: "catchup", firstConnect, wasDown, applied: applied || 0 });
     }
 
     const reader = res.body.getReader();
@@ -345,7 +377,7 @@ const connectOnce = async (ctx) => {
 // Arranca el bucle. Devuelve `stop()`. Si ya había uno vivo para esta BD, la
 // segunda llamada no hace nada.
 const startLiveSync = (opts = {}) => {
-  const { db, onChanged, onResync } = opts;
+  const { db, onChanged, onResync, onSync } = opts;
   if (!db) throw new Error("startLiveSync: falta `db`");
   if (active && active.db === db) return active.stop;
   if (active) active.stop();
@@ -354,7 +386,10 @@ const startLiveSync = (opts = {}) => {
     db,
     onChanged,
     onResync,
+    onSync,
     running: true,
+    connectedOnce: false,
+    downSince: 0,
     pulling: false,
     resyncing: false,
     retry: 0,
@@ -381,6 +416,7 @@ const startLiveSync = (opts = {}) => {
         await connectOnce(ctx);
       } catch (err) {
         if (!ctx.running) return;
+        if (!ctx.downSince) ctx.downSince = Date.now();
         setLive(ctx, "reconnecting", (err && err.message) || String(err));
         const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.backoff, 5));
         ctx.backoff += 1;
@@ -390,6 +426,7 @@ const startLiveSync = (opts = {}) => {
         continue;
       }
       if (!ctx.running) return;
+      if (!ctx.downSince) ctx.downSince = Date.now();
       // El flujo se cerró sin error: se trata igual que una caída.
       const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(ctx.backoff, 5));
       ctx.backoff += 1;
@@ -415,7 +452,7 @@ const liveState = (db) => ({
 });
 
 // 3g/F · ¿el Host está vivo? Un SSE conectado lo prueba; con el flujo en
-// reconstrucción manda la huella del último HTTP bueno (< 15 s = vivo).
+// reconstrucción manda la huella del último HTTP bueno (< 30 s = vivo).
 const hostOkInfo = (db) => {
   const ls = liveState(db);
   const busy = activation.getSetting(db, KEYS.BUSY) === "1";
@@ -425,7 +462,7 @@ const hostOkInfo = (db) => {
     reachable:
       ls.state === "connected" ||
       busyFresh ||
-      (lastHostOkAt > 0 && Date.now() - lastHostOkAt < 15000) ||
+      (lastHostOkAt > 0 && Date.now() - lastHostOkAt < HOST_OK_GRACE_MS) ||
       // Descarga inicial activa: cada página del snapshot ES tráfico HTTP bueno
       // contra el Host aunque el flujo en vivo todavía no arrancó. Sin ésto el
       // badge decía "Host desconectado" durante la primera sincronización.
@@ -445,5 +482,6 @@ module.exports = {
   startLiveSync,
   liveState,
   hostOkInfo,
+  markHostOk,
   parseFrames,
 };

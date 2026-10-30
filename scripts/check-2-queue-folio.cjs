@@ -157,6 +157,37 @@ const saleRow = (id) => host.prepare("SELECT * FROM sales WHERE id = ?").get(id)
   const localNext = Number(activation.getSetting(boxA, "folio_next_seq"));
   check(localNext > 40, "el contador local adoptó la serie del Host", String(localNext));
 
+  console.log("=== 2.5 · código local desalineado con el del Host ===");
+  // La caja cree ser "B" pero el Host la tiene como "A": antes cada venta
+  // rebotaba con "no es de la serie de esta caja" y el reintento repetía "B".
+  activation.setSetting(boxA, "box_device_code", "B");
+  const misaligned = await boxRpc.recordSale(boxA, salePayload(4));
+  check(
+    misaligned.success === true && /^A-\d{6}$/.test(misaligned.folio || ""),
+    "con el código local equivocado la venta entra con la serie que dicta el Host",
+    JSON.stringify(misaligned),
+  );
+  check(
+    activation.getSetting(boxA, "box_folio_prefix") === "A",
+    "la caja recuerda la serie del Host para las siguientes ventas",
+  );
+  offlineQueue.enqueue(boxA, {
+    folio: "B-000070",
+    payload: salePayload(1),
+    idempotencyKey: "misaligned-q",
+    registerId: 1,
+    cashierId: 1,
+    cashierName: "Ana",
+  });
+  const qsync = await boxRpc.syncPending(boxA);
+  const qrow = boxA.prepare("SELECT status, folio FROM pending_sales WHERE idempotency_key = 'misaligned-q'").get();
+  check(
+    qsync.synced === 1 && qrow.status === "synced" && /^A-/.test(qrow.folio),
+    "una venta en cola con serie ajena se re-folia y sube (no queda en revisión)",
+    JSON.stringify({ qsync, qrow }),
+  );
+  activation.setSetting(boxA, "box_device_code", "A");
+
   console.log("=== 2.6 · needs_auth vuelve a subir tras login ===");
   offlineQueue.enqueue(boxA, {
     folio: "A-000060",

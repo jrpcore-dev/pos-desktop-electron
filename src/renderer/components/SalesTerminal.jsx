@@ -219,6 +219,10 @@ const SalesTerminal = () => {
   });
   const [discountValue, setDiscountValue] = useState("");
   const [printing, setPrinting] = useState(false);
+  // Venta en curso (Host contestando + ticket). El ref corta el doble envío
+  // en el mismo tick (Enter repetido); el estado pinta el spinner.
+  const [saleBusy, setSaleBusy] = useState(false);
+  const saleBusyRef = useRef(false);
   const suggestionListRef = useRef(null);
   const cartRef = useRef(cart);
   const lastEscRef = useRef(0);
@@ -334,6 +338,21 @@ const processSaleRef = useRef(null);
   // `credit` llega desde CreditSaleDialog; sin él, "Fiado" sólo abre el
   // diálogo (así Enter/F8/Cobrar pasan siempre por la confirmación).
   const processSale = async (method, credit) => {
+    if (saleBusyRef.current) return;
+    saleBusyRef.current = true;
+    setSaleBusy(true);
+    try {
+      await runSale(method, credit);
+    } catch (e) {
+      console.error("[SALE]", e);
+      showNotification("Error al registrar la venta", "error");
+    } finally {
+      saleBusyRef.current = false;
+      setSaleBusy(false);
+    }
+  };
+
+  const runSale = async (method, credit) => {
     if (method === "credit" && !credit) {
       if (!features.credit || !customer?.credit_enabled) {
         showNotification("Selecciona un cliente con fiado activado", "warning");
@@ -1996,7 +2015,7 @@ if (e.key === "Tab" && !isEditable) {
             <ShadButton
               type="button"
               size="lg"
-              disabled={!paymentMethod}
+              disabled={!paymentMethod || saleBusy}
               onClick={() => {
                 if (paymentMethod === "cash") setCashDialogOpen(true);
                 else processSale(paymentMethod);
@@ -2007,14 +2026,14 @@ if (e.key === "Tab" && !isEditable) {
                   queda ópticamente alineado, no desplazado por un ícono pequeño
                   y un Kbd ancho asimétricos. */}
               <span className="flex w-10 shrink-0 items-center justify-start">
-                {printing ? (
+                {printing || saleBusy ? (
                   <Spinner size={20} />
                 ) : (
                   <Banknote size={22} />
                 )}
               </span>
               <span className="flex-1 text-center">
-                {printing ? "Cobrando..." : "Cobrar"}
+                {printing || saleBusy ? "Cobrando..." : "Cobrar"}
               </span>
               <span className="flex w-10 shrink-0 items-center justify-end">
                 <Kbd className={HINT_KBD_CLS}>Enter</Kbd>
@@ -2105,6 +2124,7 @@ if (e.key === "Tab" && !isEditable) {
         }}
         change={change}
         waitingDrawer={waitingDrawer}
+        processing={saleBusy && !waitingDrawer}
         onConfirm={handleCashConfirm}
         onDrawerDone={handleDrawerDone}
       />

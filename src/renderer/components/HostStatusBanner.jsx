@@ -32,6 +32,9 @@ export default function HostStatusBanner() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
+  // Sincronización en curso que avisa main por `replica-sync` (resync entero
+  // o puesta al día al conectar). null = nada en curso.
+  const [sync, setSync] = useState(null);
 
   // Fase 5 · en el Host este aviso nunca se muestra: se deja de sondear en
   // cuanto se sabe el rol. Un fallo de lectura conserva el último estado en
@@ -58,6 +61,42 @@ export default function HostStatusBanner() {
       timerRef.current = null;
     };
   }, [refresh]);
+
+  // Avisos de sincronización: un banner mientras corre y un toast al terminar,
+  // para que el cajero sepa que los datos se están trayendo del Host y cuándo
+  // quedaron al día. La puesta al día silenciosa (0 cambios, flujo normal)
+  // no avisa: sólo hace ruido.
+  useEffect(() => {
+    if (!window.api || typeof window.api.on !== "function") return undefined;
+    const off = window.api.on("replica-sync", (p) => {
+      if (!p || !p.phase) return;
+      if (p.phase === "start" || p.phase === "progress") {
+        // La puesta al día suele durar milisegundos: sólo el resync pinta banner.
+        if (p.kind === "resync") setSync({ done: Number(p.done) || 0 });
+        return;
+      }
+      setSync(null);
+      if (p.phase === "error") {
+        notify("No se pudieron sincronizar los datos con el Host; se reintentará solo", "error");
+        refresh();
+        return;
+      }
+      if (p.kind === "resync") {
+        notify("Datos sincronizados con el Host", "success");
+      } else if (p.applied > 0) {
+        notify(
+          `${p.wasDown ? "Conexión con el Host restablecida · " : ""}${p.applied} cambio(s) sincronizado(s)`,
+          "success",
+        );
+      } else if (p.wasDown) {
+        notify("Conexión con el Host restablecida · datos al día", "success");
+      } else if (p.firstConnect) {
+        notify("Conectado al Host · datos al día", "success");
+      }
+      refresh();
+    });
+    return typeof off === "function" ? off : undefined;
+  }, [notify, refresh]);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -124,9 +163,26 @@ export default function HostStatusBanner() {
   const protocolWarning = String(status.protocolWarning || "").trim();
   // Fase 5 · ventas que esperan PIN: la cola no sube sola hasta un login.
   const needsAuth = Number(pending.needsAuth) || 0;
+  // También por sondeo: si el aviso de inicio llegó antes de montar la pantalla.
+  const syncing = !hostDown && (!!sync || status.replica?.state === "downloading");
 
-  if (!hostDown && !busy && !pending.count && !staleWarn && !protocolWarning)
+  if (!hostDown && !busy && !pending.count && !staleWarn && !protocolWarning && !syncing)
     return null;
+
+  if (syncing && !busy && !pending.count && !protocolWarning) {
+    return (
+      <div className="mb-4 flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-4 py-3 text-primary">
+        <RefreshCw size={18} className="mt-0.5 shrink-0 animate-spin" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">Sincronizando datos con el Host…</p>
+          <p className="mt-0.5 text-xs opacity-90">
+            Catálogo, precios y clientes se están actualizando
+            {sync?.done ? ` (${sync.done} registros)` : ""}. Puedes seguir vendiendo.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const tone = hostDown
     ? "border-destructive/40 bg-destructive/[0.07] text-destructive"

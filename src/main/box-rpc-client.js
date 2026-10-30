@@ -18,6 +18,7 @@ const salesCore = require("./sales-core");
 // 3g/D · registro de listeners CRUDOS: el puente lo usa para ejecutar en la
 // caja las claves de `save-setting` que son del propio aparato.
 const ipcRegistry = require("./ipc-registry");
+const replicaLive = require("./replica-live");
 
 const TIMEOUT_MS = 8000;
 const OFFLINE_PIN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -34,7 +35,23 @@ const RPC_TIMEOUTS = {
   "taecel:reconcile": 40000,
   // El import manda el archivo completo y el Host lo procesa por lotes.
   "import-products-content": 120000,
+  // Movimientos de caja: mejor esperar a que el Host termine que cortar a
+  // las 8 s y enseñar un error de algo que sí se hizo.
+  "open-cash-register": 20000,
+  "close-cash-register": 20000,
+  "register-cash-expense": 20000,
+  "delete-cash-expense": 20000,
+  "cancel-sale": 20000,
+  "cancel-sale-item": 20000,
 };
+
+// Escrituras que NO se pueden repetir a ciegas (abrir caja cierra la que esté
+// abierta; un retiro duplicado descuadra el corte). Viajan con
+// Idempotency-Key y, si la red falla o vence el tiempo, se reintentan con la
+// MISMA llave: el Host devuelve la respuesta original en vez de ejecutar dos
+// veces. Así un timeout ya no termina en "error" con la caja abierta.
+const IDEMPOTENT_RPC = new Set(Object.keys(RPC_TIMEOUTS).filter((c) => !c.startsWith("taecel:") && c !== "import-products-content"));
+const IDEMPOTENT_RETRIES = 2;
 
 // Claves de `save-setting` que el negocio comparte entre cajas (van al Host).
 const BUSINESS_SETTING_KEYS = new Set(dbSchema.REPLICATED_SETTINGS_KEYS);
@@ -69,10 +86,19 @@ const sha256 = (text) => crypto.createHash("sha256").update(String(text)).digest
 // reserva viaja en la cola; el contador local nunca retrocede.
 // Fase 2 · el prefijo es el mismo que el Host valida (`folioPrefixFor`).
 const FOLIO_SEQ_KEY = "folio_next_seq";
+// Serie que el propio Host dijo que es la de esta caja (`expected_prefix` de un
+// FOLIO_INVALID). Manda sobre la calculada: si el `box_device_code` local
+// quedó desalineado con el del Host, cada venta se rechazaba con "no es de la
+// serie de esta caja" y el reintento volvía a salir con el mismo prefijo.
+const FOLIO_PREFIX_KEY = "box_folio_prefix";
+const PREFIX_RE = /^[A-Z][A-Z0-9]{0,7}$/;
 const nextBoxFolio = (db) => {
   const code = activation.getSetting(db, "box_device_code") || "";
   const deviceId = activation.getSetting(db, "box_device_id") || "";
-  const prefix = salesCore.folioPrefixFor(code, deviceId);
+  const hostPrefix = String(activation.getSetting(db, FOLIO_PREFIX_KEY) || "");
+  const prefix = PREFIX_RE.test(hostPrefix)
+    ? hostPrefix
+    : salesCore.folioPrefixFor(code, deviceId);
   const seq = Math.max(1, Number(activation.getSetting(db, FOLIO_SEQ_KEY) || 1) || 1);
   activation.setSetting(db, FOLIO_SEQ_KEY, String(seq + 1));
   return salesCore.formatFolio(prefix, seq);
@@ -82,6 +108,8 @@ const nextBoxFolio = (db) => {
 // reinstalación o un respaldo restaurado el contador local quedaría atrás y
 // cada venta chocaría con un folio ya usado; nunca retrocede.
 const adoptHostFolioSeq = (db, data) => {
+  const expected = String((data && data.expected_prefix) || "").toUpperCase();
+  if (PREFIX_RE.test(expected)) activation.setSetting(db, FOLIO_PREFIX_KEY, expected);
   const hostNext = Number(data && data.folio_next_seq);
   if (!Number.isFinite(hostNext) || hostNext < 1) return;
   const local = Math.max(1, Number(activation.getSetting(db, FOLIO_SEQ_KEY) || 1) || 1);
@@ -137,6 +165,9 @@ const postJson = async (
   try {
     data = await res.json();
   } catch (err) {}
+  // El Host contestó con JSON: está vivo aunque el flujo de réplica esté
+  // reconectando (el encabezado deja de decir "desconectado" en falso).
+  if (data) replicaLive.markHostOk();
   try {
     const warning = res.headers.get("x-protocol-warning");
     activation.setSetting(db, "protocol_warning", warning || "");
@@ -275,6 +306,23 @@ const recordSale = async (db, payload = {}) => {
       return fail("SESSION_EXPIRED", "La sesión con el Host caducó");
     }
     adoptHostFolioSeq(db, cres.data);
+    // Mismo realineado de serie que la venta normal: una vez, con clave nueva.
+    if (cres.data.code === "FOLIO_INVALID" || cres.data.code === "SQLITE_CONSTRAINT_UNIQUE") {
+      attempt = { signature, key: crypto.randomUUID(), folio: nextBoxFolio(db) };
+      saveAttempt(db, attempt);
+      body = saleBody(payload, attempt.folio, false);
+      try {
+        cres = await postJson(db, creds, "/api/sales", body, { "idempotency-key": attempt.key });
+      } catch (err) {
+        return offlineFail();
+      }
+      if (!cres.data) return offlineFail();
+      if (cres.status === 401) {
+        expired(db, cres.data);
+        return fail("SESSION_EXPIRED", "La sesión con el Host caducó");
+      }
+      adoptHostFolioSeq(db, cres.data);
+    }
     if (cres.data.success) clearAttempt(db);
     return cres.data;
   }
@@ -378,12 +426,25 @@ const syncPending = async (db) => {
       cashier_name: row.cashierName,
       client_created_at: row.localCreatedAt,
     };
-    const res = await postJson(db, creds, "/api/sales", body, {
+    let res = await postJson(db, creds, "/api/sales", body, {
       "idempotency-key": row.idempotencyKey,
     });
     if (!res.data) return { success: false, code: "HOST_UNREACHABLE" };
     if (res.status === 401) return { success: false, code: "SESSION_EXPIRED", error: "Sesión expirada" };
     adoptHostFolioSeq(db, res.data);
+    // Folio fuera de serie: ya con el prefijo del Host se le da uno nuevo y se
+    // reintenta una vez. El Host sólo guarda la llave al aceptar, así que la
+    // misma llave sirve; sin esto la venta quedaba en "Revisión" para siempre.
+    if (res.data.code === "FOLIO_INVALID" && res.data.expected_prefix) {
+      const folio = nextBoxFolio(db);
+      db.prepare("UPDATE pending_sales SET folio = ? WHERE id = ?").run(folio, row.id);
+      res = await postJson(db, creds, "/api/sales", { ...body, folio }, {
+        "idempotency-key": row.idempotencyKey,
+      });
+      if (!res.data) return { success: false, code: "HOST_UNREACHABLE" };
+      if (res.status === 401) return { success: false, code: "SESSION_EXPIRED", error: "Sesión expirada" };
+      adoptHostFolioSeq(db, res.data);
+    }
     return res.data;
   });
   try {
@@ -571,18 +632,25 @@ const forward = (db, channel, args = []) => {
 const rpcCall = async (db, channel, args = [], timeoutMs = null) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  const idempotent = IDEMPOTENT_RPC.has(channel);
+  const headers = idempotent ? { "idempotency-key": crypto.randomUUID() } : {};
+  const attempts = idempotent ? 1 + IDEMPOTENT_RETRIES : 1;
   let res;
-  try {
-    res = await postJson(
-      db,
-      creds,
-      "/api/rpc",
-      { channel, args },
-      {},
-      timeoutMs || RPC_TIMEOUTS[channel] || TIMEOUT_MS,
-    );
-  } catch (err) {
-    return unreachable(err);
+  for (let i = 0; i < attempts; i++) {
+    try {
+      res = await postJson(
+        db,
+        creds,
+        "/api/rpc",
+        { channel, args },
+        headers,
+        timeoutMs || RPC_TIMEOUTS[channel] || TIMEOUT_MS,
+      );
+      break;
+    } catch (err) {
+      if (i === attempts - 1) return unreachable(err);
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
   if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
   if (res.status === 401) return expired(db, res.data);

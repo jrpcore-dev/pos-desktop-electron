@@ -40,6 +40,14 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/components/ToastProvider";
 import { cn } from "@/lib/utils";
 
@@ -936,21 +944,37 @@ function ConfigurationScreen() {
     }
   };
 
-  // Bloque 5 · renombrar una caja sin revocar ni re-emparejar.
-  const handleRenameDevice = async (deviceId, currentName) => {
-    const name = window.prompt("Nuevo nombre para esta caja", currentName || "");
-    if (name == null) return;
-    const next = name.trim();
-    if (!next || next === currentName) return;
-    const res = await window.api.invoke("rename-device", {
-      deviceId,
-      name: next,
-    });
-    if (res?.success) {
-      setActivation(res.status);
-      notify("Nombre actualizado.", "success");
-    } else {
-      notify(res?.error || "No se pudo renombrar la caja.", "error");
+  // Bloque 5 · renombrar una caja sin revocar ni re-emparejar. Diálogo propio:
+  // `window.prompt` no existe en Electron (devolvía null y no pasaba nada).
+  const [renameTarget, setRenameTarget] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const handleRenameDevice = (deviceId, currentName) => {
+    setRenameTarget({ deviceId, currentName: currentName || "" });
+    setRenameValue(currentName || "");
+  };
+  const submitRename = async () => {
+    if (!renameTarget || renaming) return;
+    const next = renameValue.trim();
+    if (!next || next === renameTarget.currentName) {
+      setRenameTarget(null);
+      return;
+    }
+    setRenaming(true);
+    try {
+      const res = await window.api.invoke("rename-device", {
+        deviceId: renameTarget.deviceId,
+        name: next,
+      });
+      if (res?.success) {
+        setActivation(res.status);
+        setRenameTarget(null);
+        notify("Nombre actualizado.", "success");
+      } else {
+        notify(res?.error || "No se pudo renombrar la caja.", "error");
+      }
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -1479,6 +1503,30 @@ function ConfigurationScreen() {
                 </p>
               </div>
             </div>
+            {!loadingActivation && activation?.host && (
+              <div className="mt-1 mb-2 flex items-center gap-3 rounded-xl border border-border/40 px-3.5 py-3">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="Esta PC" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {activation.host.deviceName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    Esta PC · Host del negocio · así aparece en ventas, cortes y reportes
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    handleRenameDevice(activation.host.deviceId, activation.host.deviceName)
+                  }
+                >
+                  <Pencil className="h-4 w-4" />
+                  Renombrar
+                </Button>
+              </div>
+            )}
             {loadingActivation ? (
               <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -2107,6 +2155,58 @@ function ConfigurationScreen() {
               </div>
             </div>
           )}
+
+          <Dialog
+            open={!!renameTarget}
+            onOpenChange={(o) => {
+              if (!o && !renaming) setRenameTarget(null);
+            }}
+          >
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Renombrar caja</DialogTitle>
+                <DialogDescription>
+                  Así se verá en ventas, cortes y reportes.
+                </DialogDescription>
+              </DialogHeader>
+              <Input
+                autoFocus
+                value={renameValue}
+                maxLength={80}
+                disabled={renaming}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitRename();
+                  }
+                }}
+                placeholder="Caja 1"
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={renaming}
+                  onClick={() => setRenameTarget(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={renaming || !renameValue.trim()}
+                  onClick={submitRename}
+                >
+                  {renaming ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                  {renaming ? "Guardando..." : "Guardar"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <ConfirmDialog
             open={!!pendingTab}

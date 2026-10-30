@@ -334,6 +334,11 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
   if (data.device_code) {
     activation.setSetting(db, SETTINGS.BOX_DEVICE_CODE, data.device_code);
   }
+  // Serie de folio dictada por un Host anterior: con el emparejamiento nuevo
+  // vuelve a mandar el código que acaba de asignar éste.
+  try {
+    db.prepare("DELETE FROM settings WHERE key = 'box_folio_prefix'").run();
+  } catch (err) {}
   // A3 · el rol acaba de pasar a "client": los triggers creados con el rol
   // por defecto se retiran YA, sin esperar al próximo arranque.
   dbSchema.ensureTriggersForRole(db);

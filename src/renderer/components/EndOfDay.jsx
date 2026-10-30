@@ -221,6 +221,10 @@ const EndOfDay = () => {
 
   const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
   const [withdrawLoading, setWithdrawLoading] = useState(false);
+  // Abrir/cerrar caja: spinner y candado contra el doble envío (Enter repetido
+  // o doble clic mientras el Host contesta).
+  const [openLoading, setOpenLoading] = useState(false);
+  const [closeLoading, setCloseLoading] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawReason, setWithdrawReason] = useState("");
 
@@ -430,13 +434,22 @@ const EndOfDay = () => {
   const cashInRegister = expectedClose;
 
   const handleOpenRegister = async () => {
-    const result = await window.api.invoke("open-cash-register", {
-      openingBalance: parseFloat(openingBalance) || 0,
-      cashierId: cashier?.id,
-      role: cashier?.role,
-    });
+    if (openLoading) return;
+    setOpenLoading(true);
+    let result;
+    try {
+      result = await window.api.invoke("open-cash-register", {
+        openingBalance: parseFloat(openingBalance) || 0,
+        cashierId: cashier?.id,
+        role: cashier?.role,
+      });
+    } catch (e) {
+      result = { success: false, error: e?.message || "No se pudo abrir la caja" };
+    } finally {
+      setOpenLoading(false);
+    }
 
-    if (result.success) {
+    if (result?.success) {
       setOpenRegisterModal(false);
       setOpeningBalance("");
 
@@ -447,26 +460,38 @@ const EndOfDay = () => {
         text: "Caja abierta exitosamente.",
       });
     } else {
+      // Se relee el estado real: la pantalla nunca se queda con una caja
+      // distinta de la que tiene el Host.
+      await fetchData();
       setRegisterMessage({
         type: "error",
-        text: result.error,
+        text: result?.error || "No se pudo abrir la caja.",
       });
     }
   };
 
   const handleCloseRegister = async () => {
-    const result = await window.api.invoke("close-cash-register", {
-      declaredClose: parseFloat(declaredClose) || 0,
+    if (closeLoading) return;
+    setCloseLoading(true);
+    let result;
+    try {
+      result = await window.api.invoke("close-cash-register", {
+        declaredClose: parseFloat(declaredClose) || 0,
 
-      expenses: parseFloat(expenses) || 0,
+        expenses: parseFloat(expenses) || 0,
 
-      name: registerName.trim() || register?.opener_name || "Cierre sin nombre",
+        name: registerName.trim() || register?.opener_name || "Cierre sin nombre",
 
-      cashierId: cashier?.id,
-      role: cashier?.role,
-    });
+        cashierId: cashier?.id,
+        role: cashier?.role,
+      });
+    } catch (e) {
+      result = { success: false, error: e?.message || "No se pudo cerrar la caja" };
+    } finally {
+      setCloseLoading(false);
+    }
 
-    if (result.success) {
+    if (result?.success) {
       setCloseRegisterModal(false);
       setRegisterName("");
       setDeclaredClose("");
@@ -481,9 +506,10 @@ const EndOfDay = () => {
           `Diferencia: ${fmtMoney(result.difference)}`,
       });
     } else {
+      await fetchData();
       setRegisterMessage({
         type: "error",
-        text: result.error,
+        text: result?.error || "No se pudo cerrar la caja.",
       });
     }
   };
@@ -507,6 +533,7 @@ const EndOfDay = () => {
       return;
     }
 
+    if (withdrawLoading) return;
     setWithdrawLoading(true);
 
     try {
@@ -535,6 +562,7 @@ const EndOfDay = () => {
             withdrawReason.trim(),
         });
       } else {
+        await fetchData();
         setRegisterMessage({
           type: "error",
           text: result.error,
@@ -1912,7 +1940,7 @@ const EndOfDay = () => {
       <Dialog
         open={openRegisterModal}
         onOpenChange={(open) => {
-          if (!open) setOpenRegisterModal(false);
+          if (!open && !openLoading) setOpenRegisterModal(false);
         }}
       >
         <DialogContent
@@ -1965,6 +1993,7 @@ const EndOfDay = () => {
           <DialogFooter className="sm:justify-between">
             <Button
               variant="ghost"
+              disabled={openLoading}
               onClick={() => setOpenRegisterModal(false)}
             >
               Cancelar
@@ -1972,10 +2001,11 @@ const EndOfDay = () => {
 
             <Button
               onClick={handleOpenRegister}
+              disabled={openLoading}
               className="bg-emerald-600 text-white hover:bg-emerald-700"
             >
-              <CircleCheck size={18} />
-              Abrir caja
+              {openLoading ? <Spinner size={18} /> : <CircleCheck size={18} />}
+              {openLoading ? "Abriendo..." : "Abrir caja"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1985,7 +2015,7 @@ const EndOfDay = () => {
       <Dialog
         open={closeRegisterModal}
         onOpenChange={(open) => {
-          if (!open) setCloseRegisterModal(false);
+          if (!open && !closeLoading) setCloseRegisterModal(false);
         }}
       >
         <DialogContent
@@ -2149,17 +2179,21 @@ const EndOfDay = () => {
           </div>
 
           <DialogFooter className="sm:justify-between">
-            <CancelButton onClick={() => setCloseRegisterModal(false)}>
+            <CancelButton
+              disabled={closeLoading}
+              onClick={() => setCloseRegisterModal(false)}
+            >
               Cancelar
             </CancelButton>
 
             <Button
               variant="outline"
+              disabled={closeLoading}
               onClick={handleCloseRegister}
               className="border-amber-600 bg-amber-500/10 text-amber-600 hover:border-amber-600 hover:bg-amber-500/20 hover:text-amber-600 dark:border-amber-500 dark:text-amber-400 dark:hover:border-amber-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-300"
             >
-              <CircleCheck size={18} />
-              Cerrar caja
+              {closeLoading ? <Spinner size={18} /> : <CircleCheck size={18} />}
+              {closeLoading ? "Cerrando..." : "Cerrar caja"}
             </Button>
           </DialogFooter>
         </DialogContent>

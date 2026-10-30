@@ -714,7 +714,10 @@ const Inventory = () => {
   // orden y página (regla 1).
   const fetchProducts = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
-    const [result, cats, sups] = await Promise.all([
+    // Proveedores aparte: en una caja `get-suppliers` viaja al Host (no se
+    // replica) y meterlo aquí hacía esperar a la red la lista local en cada
+    // búsqueda o cambio de página.
+    const [result, cats] = await Promise.all([
       window.api.invoke("get-products", {
         search: debouncedSearch || undefined,
         category_id: selectedCategory || undefined,
@@ -726,12 +729,10 @@ const Inventory = () => {
         rowsPerPage: pageSize,
       }),
       window.api.invoke("get-categories"),
-      window.api.invoke("get-suppliers"),
     ]);
     setProducts(result?.products || []);
     setTotal(result?.total || 0);
     setCategories(cats || []);
-    setSuppliers(sups || []);
     if (!silent) setLoading(false);
     setHasLoadedOnce(true);
   }, [
@@ -770,14 +771,28 @@ const Inventory = () => {
     fetchStats();
   }, [fetchStats]);
 
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const sups = await window.api.invoke("get-suppliers");
+      if (Array.isArray(sups)) setSuppliers(sups);
+    } catch (e) {
+      // Sin Host se queda la lista anterior: el filtro no bloquea la tabla.
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSuppliers();
+  }, [fetchSuppliers]);
+
   // In vivo: productos, precios y categorías; se re-consulta con los mismos
   // filtros/orden/página y sin tocar modales ni formularios abiertos.
   // (`suppliers` hoy no genera change_log — no se replica —; queda declarado
-  // por semántica y el refresh de productos arrastra su dropdown).
+  // por semántica: un cambio de productos refresca también su dropdown).
   useDbChanges(
     () => {
       fetchProducts(true);
       fetchStats();
+      fetchSuppliers();
     },
     ["products", "product_prices", "categories", "suppliers"],
   );

@@ -1085,6 +1085,7 @@ const Reports = () => {
   const [deviceFilter, setDeviceFilter] = useState("all");
   const [devices, setDevices] = useState([]);
   const [hasHostSales, setHasHostSales] = useState(false);
+  const [hostName, setHostName] = useState("Caja 1");
 
   useEffect(() => {
     let cancelled = false;
@@ -1094,6 +1095,7 @@ const Reports = () => {
         if (cancelled) return;
         setDevices(Array.isArray(res?.devices) ? res.devices : []);
         setHasHostSales(!!res?.hasHost);
+        if (res?.hostName) setHostName(res.hostName);
       })
       .catch(() => {});
     return () => {
@@ -1821,7 +1823,7 @@ const Reports = () => {
                 title="Vista consolidada o por caja"
               >
                 <option value="all">Todas las cajas</option>
-                {hasHostSales && <option value="__host__">Host</option>}
+                {hasHostSales && <option value="__host__">{hostName}</option>}
                 {devices.map((d) => (
                   <option key={d.device_id} value={d.device_id}>
                     {(d.device_code || d.device_name || d.device_id) +

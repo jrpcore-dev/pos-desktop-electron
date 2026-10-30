@@ -179,6 +179,7 @@ export const invoke = [
 export const events = [
   "db-changed",
   "replica-progress",
+  "replica-sync",
   "scale-error",
   "session-expired",
   "task-reminder",

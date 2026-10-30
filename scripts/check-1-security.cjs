@@ -61,6 +61,13 @@ db.prepare(
 
 // Handlers falsos: lo que importa es si /api/rpc los deja pasar.
 const calls = [];
+// Abrir caja lento a propósito: el reintento llega mientras el primero corre.
+let opens = 0;
+ipcRegistry.set("open-cash-register", async () => {
+  opens += 1;
+  await new Promise((r) => setTimeout(r, 150));
+  return { success: true, n: opens };
+});
 for (const ch of ["add-cashier", "save-setting", "get-sales-for-today"]) {
   ipcRegistry.set(ch, (e, ...args) => {
     calls.push([ch, ...args]);
@@ -180,6 +187,22 @@ const rpc = (token, channel, args) =>
   r = await rpc(anaBox, "get-sales-for-today", []);
   check(r.status === 401, "cajero desactivado → su sesión deja de servir (401)", r.status);
   db.prepare("UPDATE cashiers SET is_active = 1 WHERE id = 1").run();
+
+  console.log("=== 1.7 · escrituras de caja idempotentes ===");
+  const keyed = (key, args) =>
+    req("POST", "/api/rpc", {
+      headers: { ...boxHeaders(owner), "idempotency-key": key },
+      body: { channel: "open-cash-register", args },
+    });
+  const [o1, o2] = await Promise.all([keyed("open-1", [{ openingBalance: 100 }]), keyed("open-1", [{ openingBalance: 100 }])]);
+  const o3 = await keyed("open-1", [{ openingBalance: 100 }]);
+  check(
+    opens === 1 && o1.data.result.n === 1 && o2.data.result.n === 1 && o3.data.result.n === 1,
+    "abrir caja repetido con la misma llave (en paralelo y después) se ejecuta UNA vez",
+    JSON.stringify({ opens, o1: o1.data, o2: o2.data, o3: o3.data }),
+  );
+  const o4 = await keyed("open-1", [{ openingBalance: 999 }]);
+  check(o4.status === 422 && o4.data.code === "IDEMPOTENCY_CONFLICT", "misma llave con otro monto → 422", JSON.stringify(o4));
 
   await apiServer.stopServer();
 

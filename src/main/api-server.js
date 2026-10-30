@@ -203,6 +203,8 @@ const startServer = async (
         "INSERT INTO idempotency_keys (device_id, endpoint, key, request_hash, response_json, status_code) VALUES (?, ?, ?, ?, ?, ?)",
       ),
     });
+  // Peticiones /api/rpc con Idempotency-Key que todavía están corriendo.
+  const rpcInflight = new Map();
   const idempotent = (endpoint, work) => (req, res) => {
     const key = String(req.headers["idempotency-key"] || "").trim();
     if (!key) {
@@ -1110,22 +1112,76 @@ const startServer = async (
       });
     }
 
+    // Escrituras de caja (abrir/cerrar, retiros, cancelaciones) llegan con
+    // Idempotency-Key: si la respuesta se perdió por un timeout y la caja
+    // reintenta, se devuelve la MISMA respuesta en vez de ejecutar otra vez.
+    // Abrir caja cierra la que esté abierta: repetirla dejaba un error en
+    // pantalla con la caja abierta (o un corte automático de más).
+    const idemKey = String(req.headers["idempotency-key"] || "").trim();
+    if (idemKey.length > 200) {
+      return res
+        .status(400)
+        .json({ success: false, code: "IDEMPOTENCY_KEY_INVALID", error: "Idempotency-Key inválida" });
+    }
+    const idemDevice = String(req.deviceId || "");
+    const idemEndpoint = `POST /api/rpc ${channel}`;
+    const idemHash = idemKey ? sha256(canonicalStringify({ channel, args })) : null;
+    if (idemKey) {
+      const existing = idemStatements().get.get(idemDevice, idemEndpoint, idemKey);
+      if (existing) {
+        if (existing.request_hash !== idemHash) {
+          return res.status(422).json({
+            success: false,
+            code: "IDEMPOTENCY_CONFLICT",
+            error: "Idempotency-Key ya usada con un payload diferente",
+          });
+        }
+        res.setHeader("idempotent-replay", "true");
+        return res.status(existing.status_code).json(JSON.parse(existing.response_json));
+      }
+      // El primer envío sigue corriendo (Host lento): el reintento espera a
+      // ése en vez de lanzar un segundo.
+      const inflightKey = `${idemDevice}|${idemEndpoint}|${idemKey}`;
+      const running = rpcInflight.get(inflightKey);
+      if (running) {
+        const out = await running;
+        res.setHeader("idempotent-replay", "true");
+        return res.json(out);
+      }
+    }
+
+    const run = (async () => {
+      try {
+        const result = await rpcContext.runWithCallContext(
+          { deviceId: req.deviceId, cashierId: req.cashierId || null },
+          () => listener(null, ...args),
+        );
+        // El valor del handler tal cual: si devuelve {success:false, ...} eso
+        // es lo que el renderer tenía que ver, igual que por IPC.
+        return { success: true, result: result === undefined ? null : result };
+      } catch (err) {
+        // Misma conducta que el IPC local: una excepción del handler se
+        // devuelve como fallo de la llamada, no como 500 genérico del servidor.
+        return {
+          success: false,
+          code: "RPC_HANDLER_ERROR",
+          error: (err && err.message) || String(err),
+        };
+      }
+    })();
+    if (!idemKey) return res.json(await run);
+    const inflightKey = `${idemDevice}|${idemEndpoint}|${idemKey}`;
+    rpcInflight.set(inflightKey, run);
     try {
-      const result = await rpcContext.runWithCallContext(
-        { deviceId: req.deviceId, cashierId: req.cashierId || null },
-        () => listener(null, ...args),
-      );
-      // El valor del handler tal cual: si devuelve {success:false, ...} eso
-      // es lo que el renderer tenía que ver, igual que por IPC.
-      return res.json({ success: true, result: result === undefined ? null : result });
-    } catch (err) {
-      // Misma conducta que el IPC local: una excepción del handler se
-      // devuelve como fallo de la llamada, no como 500 genérico del servidor.
-      return res.json({
-        success: false,
-        code: "RPC_HANDLER_ERROR",
-        error: (err && err.message) || String(err),
-      });
+      const out = await run;
+      try {
+        idemStatements().set.run(idemDevice, idemEndpoint, idemKey, idemHash, JSON.stringify(out), 200);
+      } catch (err) {
+        // Sin registro la respuesta igual sale; sólo se pierde la repetición.
+      }
+      return res.json(out);
+    } finally {
+      rpcInflight.delete(inflightKey);
     }
   }));
 

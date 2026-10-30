@@ -151,7 +151,7 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
       </TableCell>
       <TableCell className="px-4 py-3">
         <span className="text-sm text-foreground">
-          {sale.device_code || (sale.device_id ? sale.device_id.slice(0, 8) : "Host")}
+          {sale.device_name || sale.device_code || "—"}
         </span>
       </TableCell>
       <TableCell className="px-4 py-3">{methodChip(sale.payment_method)}</TableCell>

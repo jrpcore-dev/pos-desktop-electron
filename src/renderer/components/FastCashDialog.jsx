@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Kbd } from "./ui/kbd";
+import { Spinner } from "./ui/spinner";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,8 @@ const FastCashDialog = ({
   onCashAmountChange,
   change,
   waitingDrawer,
+  // Venta enviándose: spinner en Confirmar y nada se puede volver a enviar.
+  processing = false,
   onConfirm,
   onDrawerDone,
 }) => {
@@ -62,7 +65,7 @@ const FastCashDialog = ({
     if (e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
-      if (confirming) return;
+      if (confirming || processing) return;
       setConfirming(true);
       setTimeout(() => setConfirming(false), 400);
       if (waitingDrawer) {
@@ -98,7 +101,7 @@ const FastCashDialog = ({
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) onClose();
+        if (!v && !processing) onClose();
       }}
     >
       <DialogContent className="max-w-md" onKeyDown={handleKeyDown}>
@@ -159,7 +162,7 @@ const FastCashDialog = ({
                 placeholder="0.00"
                 value={cashAmount}
                 onChange={handleChange}
-                disabled={waitingDrawer}
+                disabled={waitingDrawer || processing}
                 aria-invalid={
                   cashAmount !== "" &&
                   cashAmount !== undefined &&
@@ -206,6 +209,7 @@ const FastCashDialog = ({
             type="button"
             variant="outline"
             className="flex-1 h-11"
+            disabled={processing}
             onClick={() => onClose()}
           >
             Cancelar
@@ -224,11 +228,11 @@ const FastCashDialog = ({
             <Button
               type="button"
               className="flex-1 h-11 bg-success text-white hover:bg-success/90"
-              disabled={!cashAmount || !isPositive || confirming}
+              disabled={!cashAmount || !isPositive || confirming || processing}
               onClick={onConfirm}
             >
-              <CheckCircle2 size={16} />
-              Confirmar
+              {processing ? <Spinner size={16} /> : <CheckCircle2 size={16} />}
+              {processing ? "Registrando..." : "Confirmar"}
             </Button>
           )}
         </div>

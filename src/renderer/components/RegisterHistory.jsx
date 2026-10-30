@@ -216,9 +216,7 @@ const RegisterRow = memo(function RegisterRow({
         <p className="whitespace-nowrap text-sm font-medium text-foreground">
           {cr.device_code ||
             cr.device_name ||
-            (!cr.device_id || String(cr.device_id).startsWith("host-")
-              ? "Host"
-              : String(cr.device_id).slice(0, 8))}
+            "—"}
         </p>
         {cr.device_code && cr.device_name && (
           <p className="truncate text-xs text-muted-foreground">{cr.device_name}</p>

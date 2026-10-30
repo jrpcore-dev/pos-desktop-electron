@@ -169,6 +169,21 @@ runMigrations(db);
 // 3a.i · device_id del Host, generado en el primer arranque (settings).
 const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 
+// Nombre visible de ESTA PC (el Host) en ventas, cortes y reportes. Sin él las
+// pantallas recortaban el device_id y salía "host-8f9". Lo cambia el admin en
+// Configuración → Dispositivos; las cajas lo reciben ya resuelto por RPC.
+const HOST_DEVICE_NAME_KEY = "host_device_name";
+const DEFAULT_HOST_DEVICE_NAME = "Caja 1";
+const hostDeviceName = () =>
+  String(activation.getSetting(db, HOST_DEVICE_NAME_KEY) || "").trim() ||
+  DEFAULT_HOST_DEVICE_NAME;
+// Para el SQL: `device_name` de una fila del Host (device_id NULL = ventas
+// anteriores a la 3g/C, o el propio host_device_id) sale con este nombre.
+db.function("host_device_name", () => hostDeviceName());
+db.function("host_device_id", () => hostDeviceId);
+const deviceNameSql = (alias) =>
+  `COALESCE(pd.device_name, CASE WHEN ${alias}.device_id IS NULL OR ${alias}.device_id = host_device_id() THEN host_device_name() END) AS device_name`;
+
 // 3g/C · el device_id al que pertenece la caja del llamante.
 //
 // Fuera de una llamada RPC no hay contexto y devuelve el del propio Host, con
@@ -2417,7 +2432,7 @@ ipcMain.handle("get-stock-conflicts", async () => {
       .prepare(
         `SELECT s.id, s.folio, s.created_at, s.total, s.device_id,
                 s.conflict_detail, s.cashier_name,
-                pd.device_code, pd.device_name
+                pd.device_code, ${deviceNameSql("s")}
          FROM sales s
          LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
          WHERE s.stock_conflict = 1 AND COALESCE(s.conflict_resolved, 0) = 0
@@ -3157,7 +3172,7 @@ ipcMain.handle(
       if (registerId) {
         sales = db
           .prepare(
-            `SELECT s.*, pd.device_code, pd.device_name,
+            `SELECT s.*, pd.device_code, ${deviceNameSql("s")},
               CASE WHEN cr.status = 'open' THEN 1 
                    WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
                    ELSE 0 END as can_cancel
@@ -3171,7 +3186,7 @@ ipcMain.handle(
       } else {
         sales = db
           .prepare(
-            `SELECT s.*, pd.device_code, pd.device_name,
+            `SELECT s.*, pd.device_code, ${deviceNameSql("s")},
               CASE WHEN cr.status = 'open' THEN 1 
                    WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
                    ELSE 0 END as can_cancel
@@ -3290,7 +3305,7 @@ ipcMain.handle("get-sales-by-range", async (event, { startDate, endDate, deviceI
     const dev = deviceWhere(deviceId, "s");
     const sales = db
       .prepare(
-        `SELECT s.*, pd.device_code, pd.device_name
+        `SELECT s.*, pd.device_code, ${deviceNameSql("s")}
          FROM sales s
          LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
          WHERE s.created_at >= ? AND s.created_at < ?${dev.sql}
@@ -3334,7 +3349,7 @@ ipcMain.handle("list-sale-devices", async () => {
         "SELECT 1 FROM sales WHERE (device_id IS NULL OR device_id = ?) LIMIT 1",
       )
       .get(hostDeviceId);
-    return { success: true, devices, hasHost };
+    return { success: true, devices, hasHost, hostName: hostDeviceName() };
   } catch (error) {
     return { success: false, error: error.message, devices: [], hasHost: false };
   }
@@ -3383,7 +3398,7 @@ ipcMain.handle("get-sales-by-date", async (event, { date, deviceId } = {}) => {
     const dev = deviceWhere(deviceId, "s");
     const sales = db
       .prepare(
-        `SELECT s.*, pd.device_code, pd.device_name,
+        `SELECT s.*, pd.device_code, ${deviceNameSql("s")},
           CASE WHEN cr.status = 'open' THEN 1 
                WHEN cr.status = 'closed' AND date(cr.closed_at, '-6 hours') >= date(?, '-1 day') THEN 1 
                ELSE 0 END as can_cancel
@@ -3584,6 +3599,7 @@ const getActivationStatus = () => {
     graceDaysLeft:
       enabled && graceEndsMs !== null ? Math.max(1, Math.ceil((graceEndsMs - Date.now()) / 86400000)) : 0,
     devices,
+    host: { deviceId: hostDeviceId, deviceName: hostDeviceName() },
   };
 };
 
@@ -3628,6 +3644,11 @@ ipcMain.handle("rename-device", async (event, { deviceId, name } = {}) => {
     if (!nextName) return { success: false, error: "El nombre no puede estar vacío" };
     if (nextName.length > 80)
       return { success: false, error: "El nombre es demasiado largo" };
+    // Esta PC no está en paired_devices: su nombre vive en settings.
+    if (id === hostDeviceId) {
+      activation.setSetting(db, HOST_DEVICE_NAME_KEY, nextName);
+      return { success: true, status: getActivationStatus() };
+    }
     const info = db
       .prepare("UPDATE paired_devices SET device_name = ? WHERE device_id = ?")
       .run(nextName, id);
@@ -3807,6 +3828,12 @@ const startLiveReplica = () => {
     // Tras un resync entero cambiaron TODAS las tablas: se avisa de todas
     // (incluidos los ajustes, que no están en el orden de swap).
     onResync: () => emitDbChanged([...replicaEngine.SWAP_ORDER, "settings"], {}),
+    // Aviso visible de sincronización (inicio, avance y fin) para la caja.
+    onSync: (payload) => {
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send("replica-sync", payload);
+      }
+    },
   });
   return true;
 };
@@ -4232,7 +4259,7 @@ ipcMain.handle(
     try {
       let query = `
       SELECT cr.*,
-        pd.device_code, pd.device_name,
+        pd.device_code, ${deviceNameSql("cr")},
         opener.name AS opener_name,
         closer.name AS closer_name,
         (SELECT COUNT(*) FROM sales WHERE register_id = cr.id AND (status IS NULL OR status != 'cancelado')) as sale_count,
