@@ -174,9 +174,17 @@ const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 // Configuración → Dispositivos; las cajas lo reciben ya resuelto por RPC.
 const HOST_DEVICE_NAME_KEY = "host_device_name";
 const DEFAULT_HOST_DEVICE_NAME = "Caja 1";
-const hostDeviceName = () =>
+// En memoria, no leído en cada llamada: la función SQL de abajo corre DENTRO
+// de otra consulta y better-sqlite3 no deja consultar desde ahí ("This
+// database connection is busy executing a query").
+let hostDeviceNameCache =
   String(activation.getSetting(db, HOST_DEVICE_NAME_KEY) || "").trim() ||
   DEFAULT_HOST_DEVICE_NAME;
+const hostDeviceName = () => hostDeviceNameCache;
+const setHostDeviceName = (name) => {
+  activation.setSetting(db, HOST_DEVICE_NAME_KEY, name);
+  hostDeviceNameCache = name;
+};
 // Para el SQL: `device_name` de una fila del Host (device_id NULL = ventas
 // anteriores a la 3g/C, o el propio host_device_id) sale con este nombre.
 db.function("host_device_name", () => hostDeviceName());
@@ -3646,7 +3654,7 @@ ipcMain.handle("rename-device", async (event, { deviceId, name } = {}) => {
       return { success: false, error: "El nombre es demasiado largo" };
     // Esta PC no está en paired_devices: su nombre vive en settings.
     if (id === hostDeviceId) {
-      activation.setSetting(db, HOST_DEVICE_NAME_KEY, nextName);
+      setHostDeviceName(nextName);
       return { success: true, status: getActivationStatus() };
     }
     const info = db

@@ -40,6 +40,7 @@ const CHECKS = [
   { file: "check-role.cjs" },
   { file: "check-empty-db.cjs" },
   { file: "check-main-load.cjs" },
+  { file: "check-main-handlers.cjs" },
   { file: "harness-2b.cjs" },
   { file: "harness-2c-nucleo.cjs" },
   { file: "harness-2c-api.cjs" },
