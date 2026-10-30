@@ -104,6 +104,10 @@ const CLASSIFICATION_BASE = {
   "pending-sales-summary": SCOPES.SYSTEM,
   // Paso 4 · medición de tiempos caja → Host (sólo lee memoria y el log).
   "rpc-timing-stats": SCOPES.SYSTEM,
+  // Paso 2 · cola de operaciones de la caja (stock): es del propio aparato.
+  "pending-ops-list": SCOPES.SYSTEM,
+  "pending-ops-cancel": SCOPES.SYSTEM,
+  "pending-ops-sync-now": SCOPES.SYSTEM,
   "pending-sales-list": SCOPES.SYSTEM,
   "pending-sales-cancel": SCOPES.SYSTEM,
   "pending-sales-retry": SCOPES.SYSTEM,

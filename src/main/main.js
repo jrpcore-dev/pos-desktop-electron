@@ -3792,6 +3792,12 @@ ipcMain.handle("rpc-timing-stats", async () => ({
   channels: boxRpc.timingSummary(),
 }));
 
+// Paso 2 · la cola de operaciones avisa a las pantallas (stock y movimientos).
+boxRpc.setOpsChangedHook((tables) => emitDbChanged(tables, {}));
+ipcMain.handle("pending-ops-list", async () => boxRpc.opsList(db, ["pending", "syncing", "needs_auth", "conflict"]));
+ipcMain.handle("pending-ops-cancel", async (event, id) => boxRpc.opsCancel(db, Number(id)));
+ipcMain.handle("pending-ops-sync-now", async () => boxRpc.syncOps(db));
+
 // ─── COLA OFFLINE (Bloque 4) ────────────────────────────────────────────────
 // Estos canales son del aparato (SYSTEM): listan/cancelan/sincronizan la cola
 // local. La venta en sí viaja al Host cuando hay red.
@@ -3812,6 +3818,8 @@ function startOfflineQueueSync() {
     try {
       const pending = boxRpc.pendingSummary(db);
       if (pending.count > 0) boxRpc.syncPending(db).catch(() => {});
+      // Paso 2 · y la cola de operaciones (stock), con el mismo ritmo.
+      if (boxRpc.opsSummary(db).count > 0) boxRpc.syncOps(db).catch(() => {});
     } catch (err) {}
   }, 15000);
   offlineQueueTimer.unref?.();
@@ -3874,7 +3882,16 @@ const startLiveReplica = () => {
   if (!replicaEngine.state(db).sync_completed) return false;
   replicaLive.startLiveSync({
     db,
-    onChanged: emitDbChanged,
+    // Paso 2 · la réplica pisa productos con la fila del Host: lo que la cola
+    // aún no subió se vuelve a aplicar encima antes de avisar a las pantallas.
+    onChanged: (tables, ids, meta) => {
+      if (tables.includes("products")) {
+        try {
+          boxRpc.reapplyPendingOps(db, meta && meta.resync ? null : ids && ids.products);
+        } catch (err) {}
+      }
+      emitDbChanged(tables, ids);
+    },
     // Tras un resync entero cambiaron TODAS las tablas: se avisa de todas
     // (incluidos los ajustes, que no están en el orden de swap).
     onResync: () => emitDbChanged([...replicaEngine.SWAP_ORDER, "settings"], {}),
@@ -3883,6 +3900,8 @@ const startLiveReplica = () => {
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send("replica-sync", payload);
       }
+      // Al conectar o reconectar sube lo que quedó en cola.
+      if (payload && payload.phase === "done") boxRpc.syncOps(db).catch(() => {});
     },
   });
   return true;
@@ -3935,6 +3954,12 @@ ipcMain.handle("get-server-status", () => {
       out.pending = boxRpc.pendingSummary(db);
     } catch (err) {
       out.pending = { count: 0 };
+    }
+    // Paso 2 · operaciones de inventario en cola.
+    try {
+      out.pendingOps = boxRpc.opsSummary(db);
+    } catch (err) {
+      out.pendingOps = { count: 0 };
     }
     const st = replicaEngine.state(db);
     const syncedAt = Number(st.synced_at || 0) || null;

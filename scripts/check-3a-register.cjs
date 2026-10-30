@@ -172,17 +172,17 @@ const cashRegisterRow = (db, id) =>
   // varios, p. ej. los 3 triggers de una tabla).
   // Funciones de la tienda (claves feature_* en los triggers de settings) ya
   // está en HEAD. Sin delta pendiente: 0 altas / 0 bajas.
-  // Paso 1 local-first · las tablas de movimientos se replican: 3 triggers
-  // de change_log por cada una de las 8 (24 altas, sin `*_touch`), y los 3 de
-  // settings se reescriben por la clave nueva `host_device_name`.
-  const LEDGER = "(suppliers|paired_devices|cash_register|sales|sale_items|cash_register_expenses|stock_movements|customer_credit_movements)";
+  // Paso 1 local-first (tablas de movimientos replicadas) ya está en HEAD.
+  // Paso 2 local-first · cola de operaciones de la caja: `pending_ops` y sus
+  // dos índices (llave única y estado).
   const DDL_AGREGADO = [
-    new RegExp(`^CREATE TRIGGER trg_change_log_${LEDGER}_(insert|update|delete) `),
-    /^CREATE TRIGGER trg_change_log_settings_(insert|update|delete) [\s\S]*'host_device_name'/,
+    /^CREATE TABLE pending_ops \(/,
+    /^CREATE UNIQUE INDEX idx_pending_ops_key ON pending_ops/,
+    /^CREATE INDEX idx_pending_ops_status ON pending_ops/,
   ];
-  const DDL_AGREGADO_TOTAL = 27;
-  const DDL_BORRADO = [/^CREATE TRIGGER trg_change_log_settings_(insert|update|delete) /];
-  const DDL_BORRADO_TOTAL = 3;
+  const DDL_AGREGADO_TOTAL = 3;
+  const DDL_BORRADO = [];
+  const DDL_BORRADO_TOTAL = 0;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -326,6 +326,10 @@ const cashRegisterRow = (db, id) =>
             .filter((c) => c.split("|")[0] === "unit")
             .map((c) => `+ product_prices.${c}`)),
     ];
+    // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
+    const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)
+      ? []
+      : ["+ tabla nueva pending_ops", ...(after.cols.pending_ops || []).map((c) => `+ pending_ops.${c}`)];
     const ESPERADO_3D = (yaTieneLog
       ? []
       : [
@@ -366,7 +370,7 @@ const cashRegisterRow = (db, id) =>
     // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
     // falta migrar) más el de 3d más el de 3g.
     const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B)
-      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO, ESPERADO_PROMOS)
+      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO, ESPERADO_PROMOS, ESPERADO_OPS)
       .sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),
@@ -392,6 +396,9 @@ const cashRegisterRow = (db, id) =>
       "customer_credit_movements.idx_credit_movements_register",
       // Promociones avanzadas: lugares de cada paquete.
       "bundle_items.idx_bundle_items_bundle",
+      // Paso 2 local-first: cola de operaciones de la caja.
+      "pending_ops.idx_pending_ops_key",
+      "pending_ops.idx_pending_ops_status",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

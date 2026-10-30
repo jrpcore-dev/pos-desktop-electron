@@ -21,6 +21,7 @@ const ipcRegistry = require("./ipc-registry");
 const replicaLive = require("./replica-live");
 const replicaEngine = require("./replica-engine");
 const rpcContext = require("./rpc-context");
+const opQueue = require("./op-queue");
 
 const TIMEOUT_MS = 8000;
 const OFFLINE_PIN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -104,6 +105,131 @@ const noteHostSeq = (headers) => {
 const settleWrite = async (db) => {
   if (!localReady(db)) return;
   await replicaLive.waitForSeq(db, latestHostSeq);
+};
+
+// ── Operaciones en cola (paso 2 local-first) ────────────────────────────────
+// Se aplican al momento en la caja y suben solas al Host (con o sin red). Cada
+// una valida en local con las MISMAS reglas que su handler del Host; el Host
+// vuelve a validar al recibirla y, si la rechaza, la cola deshace el efecto.
+const parseQty = (product, quantity) => {
+  const raw = String(quantity ?? "").trim();
+  if (product.sale_unit === "weight") return parseFloat(raw);
+  return /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
+};
+const QUEUED_OPS = {
+  "add-stock": (db, [payload = {}]) => {
+    const product = db
+      .prepare("SELECT id, name, sale_unit FROM products WHERE id = ?")
+      .get(payload.productId);
+    if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
+    const qty = parseQty(product, payload.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return fail(
+        "INVALID_QUANTITY",
+        product.sale_unit === "weight" ? "Cantidad no válida" : "Cantidad no válida. Solo números enteros.",
+      );
+    }
+    return {
+      effect: { stock: [{ productId: product.id, delta: qty }] },
+      label: `Entrada de ${qty} · ${product.name}`,
+      result: { productName: product.name },
+    };
+  },
+  "remove-stock": (db, [payload = {}]) => {
+    if (payload.role !== "admin") {
+      return fail("FORBIDDEN", "Solo el propietario puede hacer salidas de stock");
+    }
+    const product = db
+      .prepare("SELECT id, name, stock, sale_unit FROM products WHERE id = ?")
+      .get(payload.productId);
+    if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
+    const qty = parseQty(product, payload.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return fail(
+        "INVALID_QUANTITY",
+        product.sale_unit === "weight" ? "Cantidad inválida" : "Cantidad no válida. Solo números enteros.",
+      );
+    }
+    if ((Number(product.stock) || 0) < qty) {
+      return fail("INSUFFICIENT_STOCK", "Stock insuficiente", {
+        stock: { product: product.name, productId: product.id, available: Number(product.stock) || 0, requested: qty },
+      });
+    }
+    return {
+      effect: { stock: [{ productId: product.id, delta: -qty }] },
+      label: `Salida de ${qty} · ${product.name}`,
+      result: {},
+    };
+  },
+};
+
+// Aviso a main para que las pantallas relean (stock y movimientos locales).
+let opsChangedHook = null;
+const setOpsChangedHook = (fn) => {
+  opsChangedHook = typeof fn === "function" ? fn : null;
+};
+const opsChanged = () => {
+  if (opsChangedHook) {
+    try {
+      opsChangedHook(["products", "stock_movements", "pending_ops"]);
+    } catch (err) {}
+  }
+};
+
+// Movimientos: lo que sigue en cola sale arriba, marcado como pendiente (o en
+// revisión), con los mismos filtros de tipo y búsqueda que la consulta local.
+const withPendingMovements = (db, rows, params = {}) => {
+  const ops = opQueue
+    .list(db, ["pending", "syncing", "needs_auth", "conflict"])
+    .filter((o) => o.channel === "add-stock" || o.channel === "remove-stock");
+  if (!ops.length) return rows;
+  const term = String((params && params.search) || "").trim().toLowerCase();
+  const extra = [];
+  for (const o of ops) {
+    const p = (o.args && o.args[0]) || {};
+    const type = o.channel === "add-stock" ? "in" : "out";
+    if (params && params.type && params.type !== type) continue;
+    const product = db.prepare("SELECT name, barcode FROM products WHERE id = ?").get(p.productId) || {};
+    if (term && !String(product.name || "").toLowerCase().includes(term) && !String(product.barcode || "").includes(term)) continue;
+    extra.push({
+      id: `op-${o.id}`,
+      product_id: p.productId,
+      product_name: product.name || "—",
+      barcode: product.barcode || null,
+      type,
+      quantity: Math.abs(Number(((o.effect && o.effect.stock) || [])[0]?.delta) || 0),
+      notes: p.notes || (type === "in" ? "Compra de inventario" : "Salida de stock"),
+      created_at: String(o.createdAt || "").replace("T", " ").slice(0, 19),
+      cashier_name: null,
+      pending: o.status === "conflict" ? "conflict" : "pending",
+      pending_error: o.status === "conflict" ? o.lastError : null,
+    });
+  }
+  return [...extra.reverse(), ...rows];
+};
+
+const enqueueOp = (db, channel, args) => {
+  const prepared = QUEUED_OPS[channel](db, args);
+  if (prepared && prepared.success === false) return prepared;
+  opQueue.enqueue(db, {
+    channel,
+    args,
+    effect: prepared.effect,
+    label: prepared.label,
+    idempotencyKey: crypto.randomUUID(),
+  });
+  opsChanged();
+  // En segundo plano: la pantalla no espera a la red.
+  syncOps(db).catch(() => {});
+  return { success: true, queued: true, ...prepared.result };
+};
+
+const syncOps = async (db) => {
+  const out = await opQueue.sync(db, (row) =>
+    rpcCall(db, row.channel, row.args, null, { idempotencyKey: row.idempotencyKey }),
+  );
+  if (out.synced || out.conflicts) opsChanged();
+  return out;
 };
 
 // Claves de `save-setting` que el negocio comparte entre cajas (van al Host).
@@ -667,6 +793,9 @@ const verifyPin = async (db, id, pin) => {
   if (res.data.pairedToken) clientLink.savePairedToken(db, res.data.pairedToken);
   // Fase 2 · con sesión nueva, las ventas que quedaron esperando login
   // vuelven a la cola y se suben ya (sin esperar al temporizador).
+  if (opQueue.resumeNeedsAuth(db) > 0 || opQueue.countOpen(db) > 0) {
+    syncOps(db).catch(() => {});
+  }
   if (offlineQueue.resumeNeedsAuth(db).resumed > 0) {
     syncPending(db).catch(() => {});
   }
@@ -703,17 +832,31 @@ const forward = (db, channel, args = []) => {
       return r;
     });
   }
+  if (QUEUED_OPS[channel] && localReady(db)) {
+    return Promise.resolve(enqueueOp(db, channel, args));
+  }
   if (LOCAL_READ_CHANNELS.has(channel) && localReady(db)) {
     const local = runLocal(db, channel, args);
     if (local) {
       return Promise.resolve(local).then((r) => {
         if (channel === "get-cash-register-status" && r && r.success) cacheRegister(db, r);
+        if (channel === "get-stock-movements" && Array.isArray(r)) return withPendingMovements(db, r, args[0]);
         return r;
       });
     }
   }
   // Cerrar caja exige que la cola esté vacía (decisión de negocio).
   if (channel === "close-cash-register") {
+    const pendingOps = opQueue.countOpen(db);
+    if (pendingOps > 0) {
+      syncOps(db).catch(() => {});
+      return Promise.resolve(
+        fail(
+          "PENDING_OPS",
+          `Hay ${pendingOps} movimiento(s) de inventario sin subir al Host. Espera a que se sincronicen antes de cerrar caja.`,
+        ),
+      );
+    }
     const pending = offlineQueue.countBlocking(db);
     if (pending > 0) {
       return Promise.resolve(
@@ -762,11 +905,14 @@ const forward = (db, channel, args = []) => {
 };
 
 // POST /api/rpc · los canales de la lista blanca del Host (rpc-channels.js).
-const rpcCall = async (db, channel, args = [], timeoutMs = null) => {
+const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
-  const idempotent = IDEMPOTENT_RPC.has(channel);
-  const headers = idempotent ? { "idempotency-key": crypto.randomUUID() } : {};
+  // La cola de operaciones trae su propia llave (la misma en cada reintento).
+  const idempotent = !!opts.idempotencyKey || IDEMPOTENT_RPC.has(channel);
+  const headers = idempotent
+    ? { "idempotency-key": opts.idempotencyKey || crypto.randomUUID() }
+    : {};
   const attempts = idempotent ? 1 + IDEMPOTENT_RETRIES : 1;
   let res;
   for (let i = 0; i < attempts; i++) {
@@ -797,6 +943,16 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null) => {
 
 module.exports = {
   setTimingSink,
+  setOpsChangedHook,
+  syncOps,
+  opsSummary: (db) => opQueue.summary(db),
+  opsList: (db, statuses) => opQueue.list(db, statuses),
+  opsCancel: (db, id) => {
+    const r = opQueue.cancel(db, id);
+    if (r.success) opsChanged();
+    return r;
+  },
+  reapplyPendingOps: (db, productIds) => opQueue.reapplyPending(db, productIds),
   timingSummary,
   forward,
   rpcCall,

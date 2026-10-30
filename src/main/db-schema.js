@@ -369,6 +369,27 @@ const createTables = (db) => {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_pending_sales_status ON pending_sales(status, id)`,
   );
+  // Local-first · cola de operaciones de la caja (stock; luego clientes,
+  // productos y promociones). Igual que pending_sales: existe en ambos roles.
+  db.exec(`CREATE TABLE IF NOT EXISTS pending_ops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    effect_json TEXT,
+    label TEXT,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at DATETIME NOT NULL,
+    synced_at DATETIME
+  )`);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_ops_key ON pending_ops(idempotency_key)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_pending_ops_status ON pending_ops(status, id)`,
+  );
   // Resolución idempotente de conflictos de stock: una fila por venta.
   db.exec(`CREATE TABLE IF NOT EXISTS stock_conflict_resolutions (
     sale_id INTEGER PRIMARY KEY,

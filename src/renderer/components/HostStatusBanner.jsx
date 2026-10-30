@@ -154,6 +154,9 @@ export default function HostStatusBanner() {
 
   const host = status.host || {};
   const pending = status.pending || { count: 0 };
+  // Paso 2 · entradas/salidas de stock hechas aquí que aún no llegan al Host.
+  const pendingOps = status.pendingOps || { count: 0 };
+  const opsConflicts = Number(pendingOps.conflicts) || 0;
   const stale = status.replica?.stale_ms;
   const hostDown = host.reachable === false;
   const busy = host.busy === true;
@@ -166,10 +169,10 @@ export default function HostStatusBanner() {
   // También por sondeo: si el aviso de inicio llegó antes de montar la pantalla.
   const syncing = !hostDown && (!!sync || status.replica?.state === "downloading");
 
-  if (!hostDown && !busy && !pending.count && !staleWarn && !protocolWarning && !syncing)
+  if (!hostDown && !busy && !pending.count && !pendingOps.count && !staleWarn && !protocolWarning && !syncing)
     return null;
 
-  if (syncing && !busy && !pending.count && !protocolWarning) {
+  if (syncing && !busy && !pending.count && !pendingOps.count && !protocolWarning) {
     return (
       <div className="mb-4 flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-4 py-3 text-primary">
         <RefreshCw size={18} className="mt-0.5 shrink-0 animate-spin" />
@@ -226,7 +229,14 @@ export default function HostStatusBanner() {
               {pending.oldestAgeMs != null ? ` · la más antigua hace ${fmtAge(pending.oldestAgeMs)}` : ""}
             </p>
           )}
-          {!hostDown && !busy && !pending.count && staleWarn && (
+          {!hostDown && !busy && !needsAuth && !pending.count && pendingOps.count > 0 && (
+            <p className="text-sm font-semibold">
+              {opsConflicts > 0
+                ? `${opsConflicts} movimiento(s) de inventario rechazado(s) por el Host · revisa Movimientos`
+                : `${pendingOps.count} movimiento(s) de inventario por subir al Host`}
+            </p>
+          )}
+          {!hostDown && !busy && !pending.count && !pendingOps.count && staleWarn && (
             <p className="text-sm font-semibold">
               Datos de esta caja actualizados hace {fmtAge(stale)}
             </p>

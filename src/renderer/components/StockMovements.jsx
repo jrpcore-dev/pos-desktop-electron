@@ -361,6 +361,32 @@ const StockMovements = () => {
                                 <span className="truncate text-sm font-semibold text-foreground">
                                   {m.product_name}
                                 </span>
+                                {/* Caja · movimiento aplicado aquí y aún en cola hacia el Host. */}
+                                {m.pending && (
+                                  <span
+                                    className={cn(
+                                      "shrink-0 rounded-md border px-1.5 text-[0.62rem] font-semibold",
+                                      m.pending === "conflict"
+                                        ? "border-destructive/40 bg-destructive/10 text-destructive"
+                                        : "border-warning/40 bg-warning/10 text-warning",
+                                    )}
+                                    title={m.pending === "conflict" ? m.pending_error || "El Host lo rechazó" : "Se sube solo al Host"}
+                                  >
+                                    {m.pending === "conflict" ? "Rechazado" : "Pendiente"}
+                                  </span>
+                                )}
+                                {m.pending === "conflict" && (
+                                  <button
+                                    type="button"
+                                    className="shrink-0 text-[0.62rem] font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                                    onClick={async () => {
+                                      await window.api.invoke("pending-ops-cancel", Number(String(m.id).slice(3)));
+                                      load(undefined, { silent: true });
+                                    }}
+                                  >
+                                    Quitar
+                                  </button>
+                                )}
                               </div>
                               <div className="mt-0.5 flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
                                 <span>{formatMXTime(m.created_at)}</span>
