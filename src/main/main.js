@@ -3751,6 +3751,26 @@ ipcMain.handle("box-save-settings", async (event, patch) => {
   return out;
 });
 
+// ─── MEDICIÓN CAJA → HOST (paso 4) ──────────────────────────────────────────
+// Cada petición de la caja al Host queda en logs/rpc-timing.log, una línea
+// JSON con canal, total, tiempo del Host y red. Sirve para saber si lo lento
+// es la red o el Host antes de mover datos a la caja. Rota a los 2 MB.
+const rpcTimingPath = path.join(logDir, "rpc-timing.log");
+boxRpc.setTimingSink((entry) => {
+  try {
+    if (fs.existsSync(rpcTimingPath) && fs.statSync(rpcTimingPath).size > 2 * 1024 * 1024) {
+      const old = path.join(logDir, "rpc-timing.old.log");
+      if (fs.existsSync(old)) fs.unlinkSync(old);
+      fs.renameSync(rpcTimingPath, old);
+    }
+    fs.appendFileSync(rpcTimingPath, `${JSON.stringify(entry)}\n`);
+  } catch (e) {}
+});
+ipcMain.handle("rpc-timing-stats", async () => ({
+  path: rpcTimingPath,
+  channels: boxRpc.timingSummary(),
+}));
+
 // ─── COLA OFFLINE (Bloque 4) ────────────────────────────────────────────────
 // Estos canales son del aparato (SYSTEM): listan/cancelan/sincronizan la cola
 // local. La venta en sí viaja al Host cuando hay red.

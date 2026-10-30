@@ -132,6 +132,7 @@
   "restore-backup": "host_write",
   "revoke-device": "host_write",
   "rotate-activation-code": "host_write",
+  "rpc-timing-stats": "system",
   "run-weekly-pulse": "rpc",
   "save-backup-config": "system",
   "save-bundle": "rpc",

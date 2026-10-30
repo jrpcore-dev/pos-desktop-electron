@@ -134,6 +134,7 @@ export const invoke = [
   "restore-backup",
   "revoke-device",
   "rotate-activation-code",
+  "rpc-timing-stats",
   "run-weekly-pulse",
   "save-backup-config",
   "save-bundle",

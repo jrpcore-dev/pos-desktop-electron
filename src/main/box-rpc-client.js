@@ -58,6 +58,42 @@ const BUSINESS_SETTING_KEYS = new Set(dbSchema.REPLICATED_SETTINGS_KEYS);
 
 const fail = (code, error, extra = {}) => ({ success: false, code, error, ...extra });
 
+// ── Medición (paso 4) ───────────────────────────────────────────────────────
+// Cada petición al Host deja {canal, total, host, red}. `host` sale de la
+// cabecera x-host-ms; red = total - host. Main decide dónde se guarda
+// (setTimingSink) y aquí además se lleva un resumen por canal en memoria.
+let timingSink = null;
+const setTimingSink = (fn) => {
+  timingSink = typeof fn === "function" ? fn : null;
+};
+const TIMING_KEEP = 200; // últimas muestras por canal
+const timingStats = new Map();
+const recordTiming = (entry) => {
+  const list = timingStats.get(entry.channel) || [];
+  list.push(entry.totalMs);
+  if (list.length > TIMING_KEEP) list.shift();
+  timingStats.set(entry.channel, list);
+  if (timingSink) {
+    try {
+      timingSink(entry);
+    } catch (err) {}
+  }
+};
+const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];
+const timingSummary = () =>
+  [...timingStats.entries()]
+    .map(([channel, list]) => {
+      const sorted = [...list].sort((a, b) => a - b);
+      return {
+        channel,
+        count: sorted.length,
+        p50: pct(sorted, 0.5),
+        p95: pct(sorted, 0.95),
+        max: sorted[sorted.length - 1],
+      };
+    })
+    .sort((a, b) => b.p95 - a.p95);
+
 // Lo que la caja sabe del Host: su URL, su propio id y sus dos tokens.
 const credentials = (db) => ({
   hostUrl: String(
@@ -155,16 +191,44 @@ const postJson = async (
     ...(creds.sessionToken ? { authorization: creds.sessionToken } : {}),
     ...extraHeaders,
   };
-  const res = await fetch(`${creds.hostUrl}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const channel = path === "/api/rpc" && body && body.channel ? body.channel : path;
+  const startedAt = performance.now();
+  let res;
+  try {
+    res = await fetch(`${creds.hostUrl}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    recordTiming({
+      at: new Date().toISOString(),
+      channel,
+      totalMs: Math.round(performance.now() - startedAt),
+      hostMs: null,
+      netMs: null,
+      error: (err && (err.name === "TimeoutError" ? "TIMEOUT" : err.message)) || "fetch",
+    });
+    throw err;
+  }
   let data = null;
   try {
     data = await res.json();
   } catch (err) {}
+  {
+    const totalMs = Math.round(performance.now() - startedAt);
+    const hostMs = Number(res.headers.get("x-host-ms"));
+    const known = Number.isFinite(hostMs) && res.headers.get("x-host-ms") !== null;
+    recordTiming({
+      at: new Date().toISOString(),
+      channel,
+      totalMs,
+      hostMs: known ? hostMs : null,
+      netMs: known ? Math.max(0, totalMs - hostMs) : null,
+      status: res.status,
+    });
+  }
   // El Host contestó con JSON: está vivo aunque el flujo de réplica esté
   // reconectando (el encabezado deja de decir "desconectado" en falso).
   if (data) replicaLive.markHostOk();
@@ -662,6 +726,8 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null) => {
 };
 
 module.exports = {
+  setTimingSink,
+  timingSummary,
   forward,
   rpcCall,
   recordSale,

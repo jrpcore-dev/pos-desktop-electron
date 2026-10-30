@@ -102,6 +102,8 @@ const CLASSIFICATION_BASE = {
   "replica-reset": SCOPES.SYSTEM,
   // Bloque 4/C · cola offline: es estado del propio aparato.
   "pending-sales-summary": SCOPES.SYSTEM,
+  // Paso 4 · medición de tiempos caja → Host (sólo lee memoria y el log).
+  "rpc-timing-stats": SCOPES.SYSTEM,
   "pending-sales-list": SCOPES.SYSTEM,
   "pending-sales-cancel": SCOPES.SYSTEM,
   "pending-sales-retry": SCOPES.SYSTEM,

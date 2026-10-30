@@ -131,6 +131,20 @@ const startServer = async (
   if (server) return { success: true, port };
 
   const app = express();
+  // Medición multicaja · cuánto tarda el Host en contestar cada petición
+  // (desde que llega hasta el JSON). La caja lo resta de su tiempo total para
+  // separar red de Host. Va primero para incluir el parseo del cuerpo.
+  app.use((req, res, next) => {
+    const startedAt = performance.now();
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      if (!res.headersSent) {
+        res.setHeader("x-host-ms", String(Math.round(performance.now() - startedAt)));
+      }
+      return json(body);
+    };
+    next();
+  });
   // Fase 1 · cuerpo normal hasta 1 MB; /api/rpc admite el import del catálogo
   // (`import-products-content`, hasta 80 MB en base64 dentro del JSON).
   const jsonSmall = express.json({ limit: "1mb" });
