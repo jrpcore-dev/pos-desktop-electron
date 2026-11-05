@@ -586,7 +586,8 @@ app.on("ready", async () => {
     migrateLegacyBackups();
     migrateRegisterContinuity();
     maybeRunAutoBackup();
-    setInterval(maybeRunAutoBackup, 15 * 60 * 1000);
+    // Revisa seguido para respetar el intervalo; cuál toca lo decide la función.
+    setInterval(maybeRunAutoBackup, 5 * 60 * 1000);
 
     // Alertas inteligentes (caducidad, stock sin movimiento, pedido
     // sugerido): las genera el Host; las cajas las leen por RPC. Primera
@@ -5001,7 +5002,7 @@ const getBackupConfig = () => ({  externalDir: activation.getSetting(db, "backup
 });
 
 // Crea la copia del Host y la replica a la carpeta externa. `kind` puede ser
-// "auto" (cada 15 min), "close" (al cerrar caja) o "manual".
+// "auto" (periódica), "close" (al cerrar caja) o "manual".
 const runHostBackup = async (kind = "auto") => {
   if (deviceRole !== ipcScopes.ROLES.HOST) {
     return {
@@ -5017,6 +5018,8 @@ const runHostBackup = async (kind = "auto") => {
     const base = kind === "close" ? "pos-close" : "pos-auto";
     const name = `${base}-${stamp}.db`;
     const filePath = uniqueFilePath(path.join(dir, name));
+    // Antes de copiar: lo que cambie durante la copia cuenta para la siguiente.
+    const fingerprint = backupService.dataFingerprint(db);
     await db.backup(filePath);
     const external = backupService.copyExternal(filePath, cfg.externalDir);
 
@@ -5032,6 +5035,7 @@ const runHostBackup = async (kind = "auto") => {
     backupService.applyRetention(dir);
     activation.setSetting(db, "backup_last_run", String(Date.now()));
     activation.setSetting(db, "backup_last_day", today);
+    activation.setSetting(db, "backup_fingerprint", fingerprint || "");
     return {
       success: true,
       name: path.basename(filePath),
@@ -5550,11 +5554,22 @@ const isWeeklyBackup = (name) => /^pos-weekly-.*\.db$/.test(name);
 const maybeRunAutoBackup = async () => {
   if (deviceRole !== ipcScopes.ROLES.HOST) return;
   try {
+    // Antes de decidir si se copia: sin ventas no hay copia nueva, y las viejas
+    // deben salir igual.
+    backupService.applyRetention(getBackupDir());
     const last = Number(
       activation.getSetting(db, "backup_last_run") || 0,
     );
-    // Cada 15 min como máximo; la copia diaria la resuelve runHostBackup.
-    if (last && Date.now() - last < 15 * 60 * 1000) return;
+    // La copia diaria la resuelve runHostBackup.
+    if (last && Date.now() - last < backupService.autoBackupIntervalMs(db)) return;
+    // Sin cambios no se copia, salvo que falte la copia diaria de hoy.
+    const fingerprint = backupService.dataFingerprint(db);
+    const unchanged =
+      !!fingerprint &&
+      fingerprint === activation.getSetting(db, "backup_fingerprint");
+    const dailyDone =
+      activation.getSetting(db, "backup_last_day") === mxToday();
+    if (unchanged && dailyDone) return;
     await runHostBackup("auto");
     backupService.applyRetention(getBackupDir());
   } catch (error) {

@@ -4,8 +4,9 @@
 // Bloque 6 · respaldos: creación, recepción en una caja designada y retención.
 //
 // Reglas del plan:
-//   · Host: cada 15 min, al cerrar caja y diario.
-//   · Retención: 24 copias "horarias" (auto) + 8 semanales.
+//   · Host: cada hora (cada 20 min con cajas conectadas) si hubo cambios, al
+//     cerrar caja y diario.
+//   · Retención: 24 automáticas de 2 días como máximo + 8 diarias + 8 semanales.
 //   · Una caja designada recibe la copia (scope backup:receive) y la guarda
 //     VERIFICADA (integrity_check) con checksum SHA-256.
 //   · Copia adicional en una carpeta externa configurable (sin cifrar).
@@ -15,12 +16,17 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const Database = require("better-sqlite3");
+const { CHANGE_LOG_TABLE } = require("./db-schema");
 
 const HOURLY_KEEP = 24;
 const WEEKLY_KEEP = 8;
+const SEMANAL_KEEP = 8;
 // Fase 3 · las copias al cerrar caja no tenían retención y crecían sin fin.
 // 60 cubre unos dos meses de cortes con dos turnos al día.
 const CLOSE_KEEP = 60;
+const AUTO_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+const AUTO_EVERY_MS_SINGLE = 60 * 60 * 1000;
+const AUTO_EVERY_MS_MULTI = 20 * 60 * 1000;
 const IDENTITY_TABLES = Object.freeze([
   "settings",
   "cashiers",
@@ -30,8 +36,27 @@ const IDENTITY_TABLES = Object.freeze([
   "sales",
 ]);
 
+// Datos del negocio que `change_log` no registra: se comparan completos.
+const UNLOGGED_TABLES = Object.freeze([
+  "product_lots",
+  "service_transactions",
+  "stock_conflict_resolutions",
+  "tasks",
+]);
+
+// Cachés que se refrescan solas y llevan su hora: con ellas la huella cambiaría
+// siempre, aunque no se haya vendido nada.
+const VOLATILE_SETTINGS = Object.freeze([
+  "taecel_balance_json",
+  "taecel_catalog_at",
+  "taecel_catalog_json",
+]);
+
 const isAutoBackup = (name) => /^pos-auto-.*\.db$/.test(name);
+// `pos-weekly-` son las copias DIARIAS: el nombre viene de cuando eran semanales
+// y se conserva por los archivos que ya existen.
 const isWeeklyBackup = (name) => /^pos-weekly-.*\.db$/.test(name);
+const isSemanalBackup = (name) => /^pos-semanal-.*\.db$/.test(name);
 const isCloseBackup = (name) => /^pos-close-.*\.db$/.test(name);
 
 const sha256File = (filePath) => {
@@ -46,6 +71,43 @@ const safeBackupName = (name) => {
   const base = path.basename(String(name || ""));
   if (!/^[A-Za-z0-9._-]+\.db$/.test(base)) return null;
   return base;
+};
+
+// Huella de los datos: si no cambió, una copia nueva sería igual a la anterior.
+// `sqlite_sequence` y no MAX(seq): la compactación de change_log no la mueve.
+// Devuelve null si no se pudo calcular, y quien la usa debe respaldar igual.
+const dataFingerprint = (db) => {
+  try {
+    const hash = crypto.createHash("sha256");
+    const log = db
+      .prepare("SELECT seq FROM sqlite_sequence WHERE name = ?")
+      .get(CHANGE_LOG_TABLE);
+    hash.update(`seq:${log ? log.seq : 0}\n`);
+    const settings = db
+      .prepare("SELECT key, value FROM settings WHERE key NOT LIKE 'backup%' ORDER BY key")
+      .all()
+      .filter((row) => !VOLATILE_SETTINGS.includes(row.key));
+    hash.update(JSON.stringify(settings));
+    for (const table of UNLOGGED_TABLES) {
+      hash.update(`\n${table}:`);
+      for (const row of db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).iterate()) {
+        hash.update(JSON.stringify(row));
+      }
+    }
+    return hash.digest("hex");
+  } catch (error) {
+    return null;
+  }
+};
+
+// Con cajas conectadas el Host guarda los datos de todas, y perderlo cuesta más.
+const autoBackupIntervalMs = (db) => {
+  const { boxes } = db
+    .prepare(
+      "SELECT COUNT(*) AS boxes FROM paired_devices WHERE device_type = 'desktop_box' AND COALESCE(revoked, 0) = 0",
+    )
+    .get();
+  return boxes > 0 ? AUTO_EVERY_MS_MULTI : AUTO_EVERY_MS_SINGLE;
 };
 
 // Valida que el archivo sea una BD SQLite sana y que traiga las tablas de
@@ -85,8 +147,11 @@ const verifyDbFile = (filePath, { requireIdentity = true } = {}) => {
   }
 };
 
-const pruneDir = (dir, match, keep) => {
+// La copia más reciente nunca se borra por vieja: tras días sin abrir la app
+// puede ser la única de ese tipo.
+const pruneDir = (dir, match, keep, maxAgeMs = Infinity) => {
   try {
+    const now = Date.now();
     const files = fs
       .readdirSync(dir)
       .filter((f) => match(f))
@@ -95,7 +160,10 @@ const pruneDir = (dir, match, keep) => {
         return { f, mtime: fs.statSync(fp).mtimeMs };
       })
       .sort((a, b) => b.mtime - a.mtime);
-    files.slice(keep).forEach((x) => {
+    const doomed = files.filter(
+      (x, i) => i >= keep || (i > 0 && now - x.mtime > maxAgeMs),
+    );
+    doomed.forEach((x) => {
       try {
         fs.unlinkSync(path.join(dir, x.f));
         const side = path.join(dir, `${x.f}.sha256.json`);
@@ -105,11 +173,42 @@ const pruneDir = (dir, match, keep) => {
   } catch (err) {}
 };
 
-// Retención 24 auto + 8 semanales + 60 de cierre. No toca las copias
-// manuales ni las de seguridad (pre-restore / pre-promotion).
+const mondayOf = (isoDate) => {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+};
+
+// La diaria que ya no cabe pasa a ser la semanal de su semana. Se recorren de
+// la más vieja a la más nueva, así queda la última copia de cada semana.
+const promoteToSemanal = (dir) => {
+  try {
+    fs.readdirSync(dir)
+      .filter((f) => isWeeklyBackup(f))
+      .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(WEEKLY_KEEP)
+      .reverse()
+      .forEach(({ f }) => {
+        const day = /^pos-weekly-(\d{4}-\d{2}-\d{2})/.exec(f);
+        if (!day) return;
+        const target = `pos-semanal-${mondayOf(day[1])}.db`;
+        fs.renameSync(path.join(dir, f), path.join(dir, target));
+        const side = path.join(dir, `${f}.sha256.json`);
+        if (fs.existsSync(side)) {
+          fs.renameSync(side, path.join(dir, `${target}.sha256.json`));
+        }
+      });
+  } catch (err) {}
+};
+
+// Retención: 24 auto (máximo 2 días), 8 diarias, 8 semanales y 60 de cierre. No
+// toca las copias manuales ni las de seguridad (pre-restore / pre-promotion).
 const applyRetention = (dir) => {
-  pruneDir(dir, isAutoBackup, HOURLY_KEEP);
+  pruneDir(dir, isAutoBackup, HOURLY_KEEP, AUTO_MAX_AGE_MS);
+  promoteToSemanal(dir);
   pruneDir(dir, isWeeklyBackup, WEEKLY_KEEP);
+  pruneDir(dir, isSemanalBackup, SEMANAL_KEEP);
   pruneDir(dir, isCloseBackup, CLOSE_KEEP);
 };
 
@@ -287,6 +386,8 @@ module.exports = {
   isWeeklyBackup,
   sha256File,
   sha256Buffer,
+  dataFingerprint,
+  autoBackupIntervalMs,
   verifyDbFile,
   applyRetention,
   copyExternal,

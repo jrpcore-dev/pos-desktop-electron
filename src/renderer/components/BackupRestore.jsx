@@ -35,12 +35,30 @@ import {
   Skeleton,
 } from "./ui";
 import { cn } from "@/lib/utils";
-import { formatMXDate, formatMXTime } from "../utils/dateUtils";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import {
+  formatMXDate,
+  formatMXTime,
+  getMXDateString,
+  mxToday,
+  mxWeekRange,
+} from "../utils/dateUtils";
+
+// Radix Select no admite "" como valor de una opción.
+const NO_RECEIVER = "none";
 
 import PageHeader from "./PageHeader";
 
 const BackupRestore = () => {
   const [backups, setBackups] = useState([]);
+  const [dateFilter, setDateFilter] = useState("all");
   const [restoreConfirm, setRestoreConfirm] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [message, setMessage] = useState(null);
@@ -262,6 +280,16 @@ const BackupRestore = () => {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
+  const week = mxWeekRange();
+  const today = mxToday();
+  const visibleBackups = backups.filter((b) => {
+    if (dateFilter === "all") return true;
+    const day = getMXDateString(b.date);
+    return dateFilter === "today"
+      ? day === today
+      : day >= week.start && day <= week.end;
+  });
+
   const totalSize = backups.reduce((acc, b) => acc + b.size, 0);
   const lastBackup = [...backups].sort((a, b) => new Date(b.date) - new Date(a.date))[0];
 
@@ -395,8 +423,8 @@ const BackupRestore = () => {
           <div>
             <p className="text-sm font-semibold text-foreground">Durabilidad</p>
             <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-              Respaldos cada 15 min, al cerrar caja y diarios. Se conservan 24
-              copias recientes y 8 diarias. Una copia viaja a la caja designada
+              Respaldos cada hora (cada 20 min con varias cajas) si hubo cambios, al cerrar caja y diarios. Se conservan 24
+              copias de los últimos 2 días, 8 diarias y 8 semanales. Una copia viaja a la caja designada
               y, si configuras una carpeta externa, también se guarda ahí.
             </p>
           </div>
@@ -421,26 +449,36 @@ const BackupRestore = () => {
             />
           </label>
           {role === "host" && (
-            <label className="block">
-              <span className="text-xs font-medium text-foreground">
-                Caja designada para recibir respaldos
-              </span>
-              <select
-                value={config.receiverDeviceId}
-                onChange={(e) =>
-                  setConfig((c) => ({ ...c, receiverDeviceId: e.target.value }))
-                }
-                className="mt-1 h-9 w-full rounded-md border border-input bg-field px-2.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            <div>
+              <label
+                htmlFor="backup-receiver"
+                className="block text-xs font-medium text-foreground"
               >
-                <option value="">Ninguna</option>
-                {devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {(d.deviceCode || d.deviceName || d.deviceId) +
-                      (d.deviceName && d.deviceCode ? ` · ${d.deviceName}` : "")}
-                  </option>
-                ))}
-              </select>
-            </label>
+                Caja designada para recibir respaldos
+              </label>
+              <Select
+                value={config.receiverDeviceId || NO_RECEIVER}
+                onValueChange={(v) =>
+                  setConfig((c) => ({
+                    ...c,
+                    receiverDeviceId: v === NO_RECEIVER ? "" : v,
+                  }))
+                }
+              >
+                <SelectTrigger id="backup-receiver" className="mt-1 h-9 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_RECEIVER}>Ninguna</SelectItem>
+                  {devices.map((d) => (
+                    <SelectItem key={d.deviceId} value={d.deviceId}>
+                      {(d.deviceCode || d.deviceName || d.deviceId) +
+                        (d.deviceName && d.deviceCode ? ` · ${d.deviceName}` : "")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           )}
         </div>
 
@@ -543,13 +581,20 @@ const BackupRestore = () => {
 
       {!loading && backups.length > 0 ? (
         <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">
               Respaldos guardados
               <Badge variant="outline" className="ml-2 align-middle">
-                {backups.length}
+                {visibleBackups.length}
               </Badge>
             </h2>
+            <Tabs value={dateFilter} onValueChange={setDateFilter}>
+              <TabsList aria-label="Filtrar respaldos por fecha">
+                <TabsTrigger value="all">Todos</TabsTrigger>
+                <TabsTrigger value="week">Esta semana</TabsTrigger>
+                <TabsTrigger value="today">Hoy</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
           <div className="overflow-x-auto">
             <Table>
@@ -570,7 +615,14 @@ const BackupRestore = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {backups.map((b) => (
+                {visibleBackups.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                      No hay respaldos en este periodo.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {visibleBackups.map((b) => (
                   <TableRow key={b.name} className="border-b border-border">
                     <TableCell className="text-[0.8rem] font-medium text-foreground">
                       <span className="inline-flex items-center gap-2">
