@@ -187,7 +187,7 @@ CatalogMetrics.displayName = "CatalogMetrics";
 /* ─── Filtros (mismos campos que Inventario) ─── */
 
 const Segmented = ({ value, options, onChange, label }) => (
-  <div role="group" aria-label={label} className="flex h-10 gap-1 rounded-lg bg-muted p-1">
+  <div role="group" aria-label={label} className="flex h-10 gap-1 rounded-lg border border-border bg-muted p-1">
     {options.map((o) => (
       <button
         key={o.value}
@@ -305,7 +305,7 @@ const CatalogFilters = memo(function CatalogFilters({
             ))}
           </SelectContent>
         </Select>
-        <div role="group" aria-label="Vista" className="flex gap-1 rounded-lg bg-muted p-1">
+        <div role="group" aria-label="Vista" className="flex gap-1 rounded-lg border border-border bg-muted p-1">
           {[
             { v: "grid", Icon: LayoutGrid, label: "Ver en cuadrícula" },
             { v: "list", Icon: List, label: "Ver en lista" },

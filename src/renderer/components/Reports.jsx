@@ -22,6 +22,13 @@ import { Badge } from "@/components/ui/badge";
 import { fmtMoney } from "@/utils/format";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Tooltip,
   TooltipProvider,
   TooltipTrigger,
@@ -1815,22 +1822,27 @@ const Reports = () => {
               <label className="sr-only" htmlFor="report-device-filter">
                 Filtrar por caja
               </label>
-              <select
-                id="report-device-filter"
-                value={deviceFilter}
-                onChange={(e) => setDeviceFilter(e.target.value)}
-                className="h-9 rounded-md border border-input bg-field px-2.5 text-sm text-foreground shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                title="Vista consolidada o por caja"
-              >
-                <option value="all">Todas las cajas</option>
-                {hasHostSales && <option value="__host__">{hostName}</option>}
-                {devices.map((d) => (
-                  <option key={d.device_id} value={d.device_id}>
-                    {(d.device_code || d.device_name || d.device_id) +
-                      (d.device_name && d.device_code ? ` · ${d.device_name}` : "")}
-                  </option>
-                ))}
-              </select>
+              <Select value={deviceFilter} onValueChange={setDeviceFilter}>
+                <SelectTrigger
+                  id="report-device-filter"
+                  className="h-9 w-auto min-w-40"
+                  title="Vista consolidada o por caja"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las cajas</SelectItem>
+                  {hasHostSales && (
+                    <SelectItem value="__host__">{hostName}</SelectItem>
+                  )}
+                  {devices.map((d) => (
+                    <SelectItem key={d.device_id} value={d.device_id}>
+                      {(d.device_code || d.device_name || d.device_id) +
+                        (d.device_name && d.device_code ? ` · ${d.device_name}` : "")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <DateRangePicker
                 value={dateRangePickerValue}
                 onApply={handleApplyRange}
