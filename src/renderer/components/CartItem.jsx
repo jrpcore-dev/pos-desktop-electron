@@ -106,7 +106,7 @@ const CartItem = React.memo(
       <div
         onClick={() => onSelect(index)}
         className={cn(
-          "cart-item-in relative min-h-[66px] cursor-pointer px-3 py-2.5 transition-colors duration-150",
+          "cart-item-in group relative min-h-[66px] cursor-pointer px-3 py-2.5 transition-colors duration-150",
           isSelected ? "bg-primary/[0.07]" : "hover:bg-muted/40",
           flash && "bg-success/15",
         )}
@@ -121,81 +121,50 @@ const CartItem = React.memo(
             )}
           />
         )}
-        {/* Línea 1: nombre (truncate) + badge unificado + precio unitario discreto + acciones */}
-        <div className="flex items-center gap-1">
-          <div className="flex min-w-0 flex-1 items-center gap-1">
-            <span className="truncate font-semibold text-[15px] leading-5 text-foreground">
+        {/* Línea 1: nombre y precio unitario a la izquierda, total de línea a la derecha */}
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3">
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-[15px] leading-5 text-foreground">
               {item.name}
-            </span>
-            {unitBadge && (
-              <Badge variant={unitBadge.variant} className={BADGE}>
-                {unitBadgeIcon(item)}
-                {unitBadge.label}
-              </Badge>
-            )}
-            {secondaryBadges.length > 0 && (
-              <Badge variant="soft-destructive" className={cn(BADGE, "max-w-[110px]")}>
-                <span className="truncate">{secondaryBadges.join(" · ")}</span>
-              </Badge>
-            )}
-            {bundleBadge && (
-              <Badge variant="soft-primary" className={cn(BADGE, "max-w-[130px]")}>
-                <Package />
-                <span className="truncate">{bundleBadge}</span>
-              </Badge>
-            )}
+            </div>
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <span className="text-xs font-semibold tabular-nums text-muted-foreground">
+                {promoPct > 0 || item.discount > 0 || promo || bundleBadge ? (
+                  <>
+                    <span className="line-through">{fmtMoney(item.price)}</span>{" "}
+                    {fmtMoney(fp)}
+                  </>
+                ) : (
+                  fmtMoney(item.price)
+                )}{" "}
+                {unitSuffix}
+              </span>
+              {unitBadge && (
+                <Badge variant={unitBadge.variant} className={BADGE}>
+                  {unitBadgeIcon(item)}
+                  {unitBadge.label}
+                </Badge>
+              )}
+              {secondaryBadges.length > 0 && (
+                <Badge variant="soft-destructive" className={cn(BADGE, "max-w-[110px]")}>
+                  <span className="truncate">{secondaryBadges.join(" · ")}</span>
+                </Badge>
+              )}
+              {bundleBadge && (
+                <Badge variant="soft-primary" className={cn(BADGE, "max-w-[130px]")}>
+                  <Package />
+                  <span className="truncate">{bundleBadge}</span>
+                </Badge>
+              )}
+            </div>
           </div>
 
-          <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
-            {promoPct > 0 || item.discount > 0 || promo || bundleBadge ? (
-              <>
-                <span className="line-through">{fmtMoney(item.price)}</span>{" "}
-                {fmtMoney(fp)}
-              </>
-            ) : (
-              fmtMoney(item.price)
-            )}{" "}
-            {unitSuffix}
+          <span className="text-lg font-bold leading-6 tabular-nums text-foreground">
+            {fmtMoney(roundValue(lineTotal(item, item.quantity)))}
           </span>
-
-          {canManualDiscount(item) && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title="Descuento del producto"
-              aria-label="Descuento del producto"
-              onClick={() => onDiscount(item)}
-              className={cn(
-                "h-9 w-9 shrink-0 [&_svg]:!size-[16px]",
-                item.discount > 0
-                  ? "bg-destructive/10 text-destructive"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Percent size={16} />
-            </Button>
-          )}
-
-          {/* Trash de fila 1: se oculta en qty<=1 porque el stepper ya muestra
-              su propio botón de eliminar (minus→trash), evitando dos papeletas
-              redundantes a ~30px de distancia. */}
-          {item.quantity > 1 && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Eliminar producto"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(item);
-              }}
-              className="h-9 w-9 shrink-0 text-destructive hover:bg-destructive/10 [&_svg]:!size-[16px]"
-            >
-              <Trash2 size={16} />
-            </Button>
-          )}
         </div>
 
-        {/* Línea 2: stepper de cantidad (h-9 en escala) + total de línea protagonista */}
+        {/* Línea 2: stepper a la izquierda; descuento y eliminar bajo el total */}
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-card shadow-xs">
             {item.quantity <= 1 ? (
@@ -239,9 +208,46 @@ const CartItem = React.memo(
             </button>
           </div>
 
-          <span className="text-lg font-bold tabular-nums text-foreground">
-            {fmtMoney(roundValue(lineTotal(item, item.quantity)))}
-          </span>
+          <div className="flex shrink-0 items-center gap-1">
+            {canManualDiscount(item) && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Descuento del producto"
+                aria-label="Descuento del producto"
+                onClick={() => onDiscount(item)}
+                className={cn(
+                  "h-9 w-9 shrink-0 [&_svg]:!size-[16px]",
+                  item.discount > 0
+                    ? "bg-destructive/10 text-destructive"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Percent size={16} />
+              </Button>
+            )}
+
+            {/* Con cantidad 1 el stepper ya trae su botón de eliminar. Con más
+                sale al pasar el mouse; en la fila elegida con teclado y en
+                pantallas táctiles (sin hover) queda siempre visible. */}
+            {item.quantity > 1 && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Eliminar producto"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(item);
+                }}
+                className={cn(
+                  "h-9 w-9 shrink-0 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [&_svg]:!size-[16px]",
+                  isSelected ? "opacity-100" : "opacity-0",
+                )}
+              >
+                <Trash2 size={16} />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     );

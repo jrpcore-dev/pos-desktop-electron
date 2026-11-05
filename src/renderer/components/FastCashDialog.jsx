@@ -113,10 +113,10 @@ const FastCashDialog = ({
         </DialogHeader>
 
         <div className="space-y-4 pt-1">
-          <p className="text-center text-base font-semibold text-muted-foreground">
+          <p className="text-center text-lg font-semibold text-muted-foreground">
             Total a pagar
           </p>
-          <p className="text-center text-4xl font-extrabold leading-tight text-foreground tabular-nums">
+          <p className="text-center text-[2.75rem] font-extrabold leading-tight text-foreground tabular-nums">
             {fmtMoney(total)}
           </p>
 
@@ -184,14 +184,14 @@ const FastCashDialog = ({
               role="status"
               aria-live="polite"
               className={cn(
-                "flex items-center justify-between rounded-lg px-4 py-3 text-sm font-semibold transition-colors",
+                "flex items-center justify-between rounded-lg px-4 py-3 text-lg font-semibold transition-colors",
                 isPositive
                   ? "bg-success/10 text-success"
                   : "bg-destructive/10 text-destructive"
               )}
             >
               <span>{isPositive ? "Cambio:" : "Falta:"}</span>
-              <span className="text-2xl font-extrabold leading-none tabular-nums">
+              <span className="text-[2rem] font-extrabold leading-none tabular-nums">
                 {fmtMoney(isPositive ? change : Math.abs(change))}
               </span>
             </div>

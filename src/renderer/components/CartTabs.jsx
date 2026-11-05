@@ -13,8 +13,8 @@ import {
 const cartLine = (it) => it.price * (it.quantity || 1);
 
 /**
- * Barra de tickets (h-16) sobre el panel del carrito.
- * - Rótulo "TICKETS" + separador vertical: la barra se lee como chrome de
+ * Barra de ventas (h-16) sobre el panel del carrito.
+ * - Rótulo "VENTAS" + separador vertical: la barra se lee como chrome de
  *   instrumento en vez de una tira plana.
  * - Pestaña activa despega (-translate-y-0.5) con sombra corta y ring.
  * - Badge de contador + subtotal en TODAS las pestañas (tabular-nums).
@@ -67,7 +67,7 @@ export const CartTabs = React.memo(
             aria-hidden="true"
             className="shrink-0 select-none text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
           >
-            Tickets
+            Ventas
           </span>
 
           {/* py-1 = colchón vertical: sin él, `overflow-x-auto` recorta la
@@ -75,7 +75,7 @@ export const CartTabs = React.memo(
           <div
             ref={stripRef}
             role="tablist"
-            aria-label="Tickets de venta"
+            aria-label="Ventas abiertas"
             onScroll={syncScrollHint}
             onWheel={handleWheel}
             className={cn(
@@ -91,7 +91,7 @@ export const CartTabs = React.memo(
                 0,
               );
               const active = index === activeIndex;
-              const ticketLabel = `Ticket #${cart.folio ?? index + 1}`;
+              const saleLabel = `Venta #${cart.folio ?? index + 1}`;
 
               return (
                 <div
@@ -99,7 +99,7 @@ export const CartTabs = React.memo(
                   role="tab"
                   tabIndex={0}
                   aria-selected={active}
-                  title={`${ticketLabel} · ${fmtMoney(subtotal)}`}
+                  title={`${saleLabel} · ${fmtMoney(subtotal)}`}
                   onClick={() => onSwitch(index)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -123,7 +123,7 @@ export const CartTabs = React.memo(
                       active ? "text-primary" : "text-muted-foreground",
                     )}
                   />
-                  <span className="truncate">{ticketLabel}</span>
+                  <span className="truncate">{saleLabel}</span>
                   {count > 0 && (
                     <>
                       <span
@@ -148,7 +148,7 @@ export const CartTabs = React.memo(
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          aria-label={`Cancelar ${ticketLabel}`}
+                          aria-label={`Cancelar ${saleLabel}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             onCancel(index);

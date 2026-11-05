@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
 import { Hint } from "./ui/hint";
 import { InitialsAvatar } from "./ui/initials-avatar";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { fmtMoney } from "@/utils/format";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { promoInfo } from "../utils/cartMath";
@@ -26,9 +27,39 @@ const GRID_CLS = {
 };
 
 const STORAGE_KEY = "quickAccessIds";
-// Los más vendidos se fijan solos al inicio (sin ✕); después van los que
-// el usuario fijó a mano.
-const TOP_LIMIT = 4;
+const TAB_STORAGE_KEY = "quickAccessTab";
+const TOP_LIMIT = 8;
+
+const TABS = [
+  { id: "top", label: "Más vendidos" },
+  { id: "pinned", label: "Fijados" },
+  { id: "all", label: "Todos" },
+];
+
+const EMPTY_TEXT = {
+  top: "Aquí aparecerán tus productos más vendidos",
+  pinned: "Agrega productos con el botón Agregar para tenerlos a la mano",
+  all: "Agrega productos con el botón Agregar para tenerlos a la mano",
+};
+
+// El grid se desmonta en cada búsqueda: la pestaña se guarda para que
+// siga en la misma después de escanear.
+const readTab = () => {
+  try {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY);
+    return TABS.some((t) => t.id === saved) ? saved : "top";
+  } catch {
+    return "top";
+  }
+};
+
+const writeTab = (tab) => {
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
+  } catch {
+    /* ignore */
+  }
+};
 
 const readFavorites = () => {
   try {
@@ -50,14 +81,15 @@ const writeFavorites = (ids) => {
 };
 
 /**
- * Grid de productos rápidos: primero los TOP_LIMIT más vendidos (automáticos,
- * marcados "Top"), luego los que el usuario fija con "+" (localStorage por
- * caja). Un producto que es top y además fijado sale una sola vez.
+ * Grid de productos rápidos con tres pestañas: Más vendidos (automáticos),
+ * Fijados (los que el usuario agrega, en localStorage por caja) y Todos (ambos;
+ * un producto que es top y además fijado sale una sola vez, marcado "Top").
  */
 const QuickProductsGrid = React.memo(
   ({ onAddProduct, onOpenServicios, compact = false }) => {
     const [products, setProducts] = useState(null);
     const [favorites, setFavorites] = useState(readFavorites);
+    const [tab, setTab] = useState(readTab);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [results, setResults] = useState([]);
@@ -79,6 +111,14 @@ const QuickProductsGrid = React.memo(
       const next = favorites.filter((v) => v !== id);
       setFavorites(next);
       writeFavorites(next);
+    };
+
+    // Devuelve el foco al buscador: el lector de códigos escribe como teclado
+    // y no debe caer en la pestaña recién tocada.
+    const changeTab = (next) => {
+      setTab(next);
+      writeTab(next);
+      document.getElementById("barcode-input")?.focus();
     };
 
     // Carga/reaúsela de los accesos rápidos: también la dispara db-changed
@@ -158,14 +198,31 @@ const QuickProductsGrid = React.memo(
       }
     };
 
+    const byId = new Map((products || []).map((p) => [p.id, p]));
+    const groups = {
+      top: (products || []).filter((p) => p.isTop),
+      pinned: favorites.map((id) => byId.get(id)).filter(Boolean),
+      all: products || [],
+    };
+    const visible = groups[tab];
+
     return (
       <div className="flex flex-col items-center px-4 pb-2 pt-1">
-        <div className="mb-3 grid w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <div />
-          <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-            <Flame size={16} className="text-warning" aria-hidden />
-            Productos rápidos
-          </div>
+        <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2">
+          <Tabs value={tab} onValueChange={changeTab}>
+            <TabsList aria-label="Productos rápidos" className="h-10">
+              {TABS.map((t) => (
+                <TabsTrigger key={t.id} value={t.id} className="h-8 gap-1.5 font-semibold">
+                  {t.label}
+                  {products !== null && (
+                    <span className="text-xs tabular-nums opacity-70">
+                      {groups[t.id].length}
+                    </span>
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
           <div className="flex items-center justify-end gap-1.5">
             <Hint label="Fijar producto a accesos rápidos">
             <button type="button" onClick={() => setPickerOpen(true)}
@@ -189,7 +246,7 @@ const QuickProductsGrid = React.memo(
         {products === null ? (
           <div className={cn("grid w-full gap-2.5", GRID_CLS[compact ? "compact" : "default"])}>
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex h-24 items-center gap-3 rounded-xl border border-border bg-card p-2.5">
+              <div key={i} className="flex h-[6.5rem] items-center gap-3 rounded-xl border border-border bg-card p-2.5">
                 <Skeleton className="size-[4.25rem] shrink-0 rounded-lg" />
                 <div className="flex-1 space-y-2">
                   <Skeleton className="h-3 w-4/5" />
@@ -198,13 +255,13 @@ const QuickProductsGrid = React.memo(
               </div>
             ))}
           </div>
-        ) : products.length === 0 ? (
+        ) : visible.length === 0 ? (
           <p className="py-8 text-xs text-muted-foreground">
-            Agrega productos con el botón + para acceso rápido
+            {EMPTY_TEXT[tab]}
           </p>
         ) : (
           <div className={cn("grid w-full gap-2.5", GRID_CLS[compact ? "compact" : "default"])}>
-            {products.map((p) => {
+            {visible.map((p) => {
               const promo = promoInfo(p, 1);
               const finalPrice = promo.unit;
               const hasPromo = promo.applied || (p.discount_percent || 0) > 0;
@@ -212,9 +269,9 @@ const QuickProductsGrid = React.memo(
               const unitLabel = isContainerUnit(p.sale_unit) ? unitLabels(p.sale_unit)?.badge || "c/u" : p.sale_unit === "weight" ? "kg" : "c/u";
               return (
                 <div
-                  key={`${p.isTop ? "top" : "fav"}-${p.id}`}
+                  key={p.id}
                   onClick={() => onAddProduct(p)}
-                  className="group relative flex h-24 w-full cursor-pointer select-none items-center gap-3 overflow-hidden rounded-xl border border-border bg-card p-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lg active:translate-y-0 active:scale-[0.985] active:shadow-sm"
+                  className="group relative flex h-[6.5rem] w-full cursor-pointer select-none items-center gap-3 overflow-hidden rounded-xl border border-border bg-card p-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lg active:translate-y-0 active:scale-[0.985] active:shadow-sm"
                 >
                   {/* Foto del producto; sin foto, iniciales con la paleta de marca. */}
                   <div className="relative shrink-0">
@@ -231,7 +288,7 @@ const QuickProductsGrid = React.memo(
                       className="size-[4.25rem] rounded-lg text-base"
                     />
                   )}
-                  {p.isTop && (
+                  {tab === "all" && p.isTop && (
                     <span className="absolute left-0.5 top-0.5 inline-flex items-center gap-0.5 rounded-md bg-warning px-1 py-px text-[10px] font-bold text-warning-foreground shadow-sm">
                       <Flame size={10} aria-hidden />
                       Top
@@ -239,12 +296,17 @@ const QuickProductsGrid = React.memo(
                   )}
                   </div>
                   <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
-                    <span className="line-clamp-2 pr-5 text-sm font-semibold leading-tight text-foreground">
+                    <span
+                      className={cn(
+                        "line-clamp-2 text-sm font-semibold leading-tight text-foreground",
+                        tab === "pinned" && "pr-5",
+                      )}
+                    >
                       {p.name}
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-baseline gap-1.5">
-                        <span className="text-base font-bold leading-none text-foreground tabular-nums">
+                        <span className="text-lg font-bold leading-none text-foreground tabular-nums">
                           {fmtMoney(finalPrice)}
                         </span>
                         {hasPromo && (
@@ -270,7 +332,7 @@ const QuickProductsGrid = React.memo(
                       ) : null}
                     </div>
                   </div>
-                  {!p.isTop && (
+                  {tab === "pinned" && (
                   <Hint label="Quitar de accesos rápidos">
                     <button
                       type="button"

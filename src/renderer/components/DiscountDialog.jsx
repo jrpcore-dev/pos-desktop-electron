@@ -12,6 +12,23 @@ import {
   DialogTitle,
   DialogFooter,
 } from "./ui/dialog";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+
+const QUICK_PERCENTS = [5, 10, 15];
+
+// Montos redondos según lo que cuesta la línea: $5 pesa en un producto de $40
+// y no significa nada en uno de $2,000.
+const quickAmounts = (subtotal) => {
+  const steps =
+    subtotal < 50
+      ? [1, 2, 5]
+      : subtotal < 200
+        ? [5, 10, 20]
+        : subtotal < 1000
+          ? [10, 20, 50]
+          : [50, 100, 200];
+  return steps.filter((amount) => amount <= subtotal);
+};
 
 const DiscountDialog = ({
   open,
@@ -25,9 +42,14 @@ const DiscountDialog = ({
 }) => {
   const inputRef = useRef(null);
   const [confirming, setConfirming] = useState(false);
+  const [mode, setMode] = useState("money");
+  const [percent, setPercent] = useState("");
+  const byPercent = mode === "percent";
 
   useEffect(() => {
     setConfirming(false);
+    setMode("money");
+    setPercent("");
   }, [open]);
 
   useEffect(() => {
@@ -67,10 +89,41 @@ const DiscountDialog = ({
     }
   };
 
+  const focusInput = () => {
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 0);
+  };
+
+  // El descuento siempre se guarda en pesos: el % solo ayuda a calcularlo.
+  const applyPercent = (text) => {
+    setPercent(text);
+    const pct = parseFloat(text) || 0;
+    onValueChange(pct > 0 ? (Math.round(subtotal * pct) / 100).toFixed(2) : "");
+  };
+
   const handleChange = (e) => {
     const v = e.target.value;
-    if (v === "" || /^\d*\.?\d{0,2}$/.test(v)) onValueChange(v);
+    if (v !== "" && !/^\d*\.?\d{0,2}$/.test(v)) return;
+    if (byPercent) applyPercent(v);
+    else onValueChange(v);
   };
+
+  const changeMode = (next) => {
+    setMode(next);
+    setPercent("");
+    onValueChange("");
+    focusInput();
+  };
+
+  const pickQuick = (quick) => {
+    if (byPercent) applyPercent(String(quick));
+    else onValueChange(quick.toFixed(2));
+    focusInput();
+  };
+
+  const quickOptions = byPercent ? QUICK_PERCENTS : quickAmounts(subtotal);
 
   return (
     <Dialog
@@ -101,25 +154,46 @@ const DiscountDialog = ({
               </div>
             </div>
 
+            <Tabs value={mode} onValueChange={changeMode}>
+              <TabsList className="grid h-10 w-full grid-cols-2">
+                <TabsTrigger value="money" className="h-8 font-semibold">
+                  En pesos
+                </TabsTrigger>
+                <TabsTrigger value="percent" className="h-8 font-semibold">
+                  En porcentaje
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+
             <div className="space-y-1.5">
-              <Label htmlFor="discount-amount">Monto del descuento</Label>
+              <Label htmlFor="discount-amount">
+                {byPercent ? "Porcentaje de descuento" : "Monto del descuento"}
+              </Label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground">
-                  $
+                <span
+                  className={cn(
+                    "absolute top-1/2 -translate-y-1/2 text-xl font-bold text-muted-foreground",
+                    byPercent ? "right-3.5" : "left-3.5",
+                  )}
+                >
+                  {byPercent ? "%" : "$"}
                 </span>
                 <Input
                   id="discount-amount"
                   ref={inputRef}
                   type="text"
                   inputMode="decimal"
-                  placeholder="0.00"
-                  value={value}
+                  placeholder={byPercent ? "0" : "0.00"}
+                  value={byPercent ? percent : value}
                   onChange={handleChange}
                   aria-invalid={!!errorMessage}
                   aria-describedby={
                     errorMessage ? "discount-amount-error" : undefined
                   }
-                  className="h-12 rounded-lg pl-9 text-right text-2xl font-bold tabular-nums"
+                  className={cn(
+                    "h-12 rounded-lg text-right text-2xl font-bold tabular-nums",
+                    byPercent ? "pl-4 pr-10" : "pl-9",
+                  )}
                 />
               </div>
               {errorMessage ? (
@@ -135,6 +209,24 @@ const DiscountDialog = ({
                   Se aplica sobre {fmtMoney(subtotal)} de este producto.
                 </p>
               )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {quickOptions.map((quick) => (
+                <Button
+                  key={quick}
+                  type="button"
+                  variant="outline"
+                  onClick={() => pickQuick(quick)}
+                  className={cn(
+                    "h-11 font-semibold tabular-nums",
+                    parseFloat(byPercent ? percent : value) === quick &&
+                      "border-chart-2 bg-primary/10 text-primary ring-2 ring-chart-2/40",
+                  )}
+                >
+                  {byPercent ? `${quick}%` : `$${quick}`}
+                </Button>
+              ))}
             </div>
 
             <div

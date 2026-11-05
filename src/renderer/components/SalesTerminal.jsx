@@ -11,10 +11,6 @@ import { useDbChanges } from "../lib/useDbChanges";
 import {
   ShoppingCart,
   Trash2,
-  CreditCard,
-  DollarSign,
-  Landmark,
-  HandCoins,
   Banknote,
   UserPlus,
   X,
@@ -314,24 +310,7 @@ const processSaleRef = useRef(null);
     : cartSummary.total;
   const displayDiscountTotal = displaySubtotal - displayTotal;
 
-  const paymentLabel =
-    paymentMethod === "cash"
-      ? "Efectivo"
-      : paymentMethod === "card"
-        ? "Tarjeta"
-        : paymentMethod === "transfer"
-          ? "Transferencia"
-          : paymentMethod === "credit"
-            ? "Fiado"
-            : "Sin método";
   const itemCount = `${cart.length} ${cart.length === 1 ? "producto" : "productos"}`;
-
-  // Acento de la caja TOTAL: wash primary tenue + borde tintado para que el
-  // monto se lea como el "héroe" de la pantalla sin ruido (1px, sin sombra).
-  // El fondo calmado y el borde fino la separan de Subtotal/Descuentos, que
-  // son filas de texto sin caja.
-  const totalAccentClass = "bg-primary/[0.05] border-primary/30";
-  const totalValueClass = "text-foreground";
 
   const [removingKeys, setRemovingKeys] = useState(() => new Set());
 
@@ -1368,7 +1347,29 @@ if (e.key === "Tab" && !isEditable) {
     }
   };
 
-  const handleManualProduct = () => {
+  // La venta no depende de esto: si falla, el producto ya va en el carrito.
+  const saveManualToCatalog = async (name, price) => {
+    try {
+      const barcode = await window.api
+        .invoke("get-next-barcode")
+        .catch(() => `2${Date.now()}`);
+      const res = await window.api.invoke("add-product", {
+        barcode,
+        name,
+        brand: "Sin marca",
+        price,
+        stock: 0,
+        cost_price: 0,
+        sale_unit: "piece",
+      });
+      if (!res?.success) throw new Error(res?.error);
+      showNotification(`${name} guardado en el catálogo`, "success");
+    } catch {
+      showNotification(`No se pudo guardar ${name} en el catálogo`, "warning");
+    }
+  };
+
+  const handleManualProduct = ({ saveToCatalog = false } = {}) => {
     if (manualProduct.name && manualProduct.price) {
       const newProduct = {
         id: `manual-${Date.now()}`,
@@ -1382,6 +1383,12 @@ if (e.key === "Tab" && !isEditable) {
         isManual: true,
       };
       addProductToCart(newProduct);
+      if (saveToCatalog) {
+        saveManualToCatalog(
+          manualProduct.name.trim(),
+          parseFloat(manualProduct.price),
+        );
+      }
       setManualProduct({ name: "", price: "" });
       setManualProductModalOpen(false);
       refocusBarcode();
@@ -1857,54 +1864,42 @@ if (e.key === "Tab" && !isEditable) {
           )}
           {/* Totales tipo ticket */}
           <div className="mb-2.5 flex flex-col gap-0.5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm font-medium text-muted-foreground">
-                Subtotal
-              </span>
-              <span className="text-base font-bold tabular-nums text-foreground">
-                {fmtMoney(displaySubtotal)}
-              </span>
-            </div>
             {displayDiscountTotal > 0 && (
-              <div className="flex items-baseline justify-between">
-                <span className="text-sm font-medium text-destructive">
-                  Descuentos
-                </span>
-                <span className="text-base font-bold tabular-nums text-destructive">
-                  -{fmtMoney(displayDiscountTotal)}
-                </span>
-              </div>
-            )}
-            <div className="my-1.5 border-t border-dashed border-border" />
-            <div
-              className={cn(
-                "flex items-end justify-between gap-3 rounded-xl border border-primary/40 bg-primary/[0.04] px-4 py-2.5",
-              )}
-            >
-              <div className="flex flex-col leading-tight">
-                <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                  Total a cobrar
-                </span>
-                <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
-                  {itemCount} · {paymentLabel}
-                </span>
-              </div>
-              <div className="flex flex-col items-end leading-tight">
-                <span
-                  key={displayTotal}
-                  className={cn(
-                    "cart-total-pop inline-block text-4xl font-bold leading-none tabular-nums",
-                    totalValueClass,
-                  )}
-                >
-                  {fmtMoney(displayTotal)}
-                </span>
-                {isCashPayment && change > 0 && (
-                  <span className="mt-0.5 text-xs text-success font-semibold tabular-nums">
-                    Cambio: {fmtMoney(change)}
+              <>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">
+                    Subtotal
                   </span>
-                )}
+                  <span className="text-base font-bold tabular-nums text-foreground">
+                    {fmtMoney(displaySubtotal)}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-medium text-destructive">
+                    Descuentos
+                  </span>
+                  <span className="text-base font-bold tabular-nums text-destructive">
+                    -{fmtMoney(displayDiscountTotal)}
+                  </span>
+                </div>
+                <div className="my-1.5 border-t border-dashed border-border" />
+              </>
+            )}
+            <div className="flex items-end justify-between gap-3">
+              <div className="flex flex-col">
+                <span className="text-sm font-semibold text-foreground">
+                  Total
+                </span>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {itemCount}
+                </span>
               </div>
+              <span
+                key={displayTotal}
+                className="cart-total-pop inline-block text-[2.75rem] font-bold leading-none tracking-tight text-foreground tabular-nums"
+              >
+                {fmtMoney(displayTotal)}
+              </span>
             </div>
           </div>
 
@@ -1926,20 +1921,12 @@ if (e.key === "Tab" && !isEditable) {
               onClick={() => handlePayClick("cash")}
               title="Efectivo"
               className={cn(
-                "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "cash"
                   ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
               )}
             >
-              <DollarSign
-                size={17}
-                className={cn(
-                  paymentMethod === "cash"
-                    ? "text-primary"
-                    : "text-muted-foreground",
-                )}
-              />
               <span className="text-sm font-bold leading-none">Efectivo</span>
             </button>
 
@@ -1948,20 +1935,12 @@ if (e.key === "Tab" && !isEditable) {
               onClick={() => handlePayClick("card")}
               title="Tarjeta"
               className={cn(
-                "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "card"
                   ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
               )}
             >
-              <CreditCard
-                size={17}
-                className={cn(
-                  paymentMethod === "card"
-                    ? "text-primary"
-                    : "text-muted-foreground",
-                )}
-              />
               <span className="text-sm font-bold leading-none">Tarjeta</span>
             </button>
 
@@ -1970,20 +1949,12 @@ if (e.key === "Tab" && !isEditable) {
               onClick={() => handlePayClick("transfer")}
               title="Transferencia"
               className={cn(
-                "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "transfer"
                   ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
               )}
             >
-              <Landmark
-                size={17}
-                className={cn(
-                  paymentMethod === "transfer"
-                    ? "text-primary"
-                    : "text-muted-foreground",
-                )}
-              />
               <span className="text-sm font-bold leading-none">Transf.</span>
             </button>
 
@@ -1992,20 +1963,12 @@ if (e.key === "Tab" && !isEditable) {
                 type="button"
                 onClick={() => handlePayClick("credit")}
                 className={cn(
-                  "flex h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border transition-colors duration-150 cursor-pointer",
+                  "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                   paymentMethod === "credit"
                     ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
                     : "border-border bg-background text-muted-foreground hover:bg-muted",
                 )}
               >
-                <HandCoins
-                  size={17}
-                  className={cn(
-                    paymentMethod === "credit"
-                      ? "text-primary"
-                      : "text-muted-foreground",
-                  )}
-                />
                 <span className="text-sm font-bold leading-none">Fiado</span>
               </button>
             ) : null}
@@ -2058,6 +2021,11 @@ if (e.key === "Tab" && !isEditable) {
           setWeightAmount(v);
         }}
         scaleStatus={scaleLive}
+        customerPrice={
+          weightDialog.product
+            ? customerPriceForLine(weightDialog.product, pricing)
+            : null
+        }
         onConfirm={confirmWeightProduct}
         isDark={isDark}
       />
@@ -2158,9 +2126,10 @@ if (e.key === "Tab" && !isEditable) {
         }}
         name={manualProduct.name}
         price={manualProduct.price}
-        onNameChange={(v) => setManualProduct({ ...manualProduct, name: v })}
-        onPriceChange={(v) => setManualProduct({ ...manualProduct, price: v })}
+        onNameChange={(v) => setManualProduct((p) => ({ ...p, name: v }))}
+        onPriceChange={(v) => setManualProduct((p) => ({ ...p, price: v }))}
         onConfirm={handleManualProduct}
+        canSaveToCatalog={cashier?.role === "admin"}
       />
 
       <CreditSaleDialog
