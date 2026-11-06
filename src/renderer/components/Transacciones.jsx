@@ -103,6 +103,13 @@ const sortRows = (rows, key, dir) => {
 const expenseType = (e) => (e.reason?.startsWith("Compra") ? "Compra" : "Retiro");
 
 const statusBadge = (s) => {
+  if (s.pending) {
+    return (
+      <Badge variant="outline" className="whitespace-nowrap border-warning/60 bg-warning/10 text-foreground">
+        {s.pending === "conflict" ? "En revisión" : "Por subir"}
+      </Badge>
+    );
+  }
   if (s.status === "cancelado") {
     return (
       <Badge variant="outline" className="whitespace-nowrap border-destructive/50 text-destructive">
@@ -253,7 +260,7 @@ const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => 
       },
       headerNote: headerNote || "",
       footerNote: footerNote || "",
-      ticketNum: saleDetail.id,
+      ticketNum: saleDetail.pending ? saleDetail.folio : saleDetail.id,
       date: new Date(saleDetail.created_at),
       cashierName: saleDetail.cashier_name || "Usuario",
       items,
@@ -1060,7 +1067,7 @@ const Transacciones = () => {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Venta {saleDetail ? `#${saleDetail.id}` : "…"}</DialogTitle>
+            <DialogTitle>Venta {saleDetail ? (saleDetail.pending ? saleDetail.folio : `#${saleDetail.id}`) : "…"}</DialogTitle>
             <DialogDescription>Detalle de la transacción</DialogDescription>
           </DialogHeader>
 

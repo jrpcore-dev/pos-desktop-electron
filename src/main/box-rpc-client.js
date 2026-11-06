@@ -215,6 +215,107 @@ const withPendingMovements = (db, rows, params = {}) => {
   return [...extra.reverse(), ...rows];
 };
 
+// Ventas sin subir: la caja las muestra como si ya estuvieran en su copia local,
+// marcadas `pending`. Son sólo lectura: al llegar por la réplica las reemplaza
+// la venta real (mismo folio).
+const PENDING_SALE_ID = "pending-";
+const SALE_LIST_CHANNELS = new Set(["get-sales-for-today", "get-sales-by-date", "get-sales-by-range"]);
+const mxDate = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+
+const pendingSaleRow = (db, row) => {
+  const payload = row.payload || {};
+  const cart = Array.isArray(payload.cart) ? payload.cart : [];
+  const items = cart.map((item, i) => ({
+    id: `${PENDING_SALE_ID}${row.id}-${i}`,
+    sale_id: `${PENDING_SALE_ID}${row.id}`,
+    product_id: typeof item.id === "number" ? item.id : null,
+    name: item.name,
+    product_name: item.name,
+    quantity: Number(item.quantity) || 0,
+    price_at_sale: Number(item.finalPrice ?? item.price) || 0,
+    discount_percent: Number(item.discount_percent) || 0,
+    returned_qty: 0,
+    status: null,
+    sale_unit: item.sale_unit || "piece",
+  }));
+  return {
+    id: `${PENDING_SALE_ID}${row.id}`,
+    folio: row.folio,
+    total: Number(payload.total) || 0,
+    payment_method: payload.paymentMethod,
+    discount_total: Number(payload.discountTotal) || 0,
+    status: "completado",
+    register_id: row.registerId ?? null,
+    cashier_id: row.cashierId ?? null,
+    cashier_name: row.cashierName || null,
+    device_code: activation.getSetting(db, "box_device_code") || null,
+    created_at: String(row.localCreatedAt || "").replace("T", " ").slice(0, 19),
+    can_cancel: 0,
+    pending: row.status === "conflict" ? "conflict" : "pending",
+    pending_error: row.status === "conflict" ? row.lastError : null,
+    products: items.map((it) => ({ name: it.name, qty: it.quantity })),
+    items,
+  };
+};
+
+const pendingSaleMatches = (db, channel, row, params = {}) => {
+  const ownId = activation.getSetting(db, "box_device_id");
+  if (params.deviceId && params.deviceId !== ownId) return false;
+  const day = mxDate(row.localCreatedAt);
+  if (channel === "get-sales-by-range") {
+    return (!params.startDate || day >= params.startDate) && (!params.endDate || day <= params.endDate);
+  }
+  if (channel === "get-sales-for-today" && params.registerId) {
+    return String(row.registerId) === String(params.registerId);
+  }
+  return !params.date || day === params.date;
+};
+
+const withPendingSales = (db, channel, result, params = {}) => {
+  if (!result || !result.success) return result;
+  const rows = offlineQueue
+    .unsettled(db)
+    .filter((row) => pendingSaleMatches(db, channel, row, params))
+    .map((row) => pendingSaleRow(db, row));
+  if (!rows.length) return result;
+  const merged = { ...result, sales: [...rows, ...(result.sales || [])] };
+  if (result.total !== undefined) {
+    merged.total = Number(result.total || 0) + rows.reduce((sum, r) => sum + r.total, 0);
+  }
+  if (result.count !== undefined) merged.count = Number(result.count || 0) + rows.length;
+  if (Array.isArray(result.byMethod)) {
+    const byMethod = result.byMethod.map((m) => ({ ...m }));
+    for (const r of rows) {
+      const entry = byMethod.find((m) => m.payment_method === r.payment_method);
+      if (entry) {
+        entry.count = Number(entry.count || 0) + 1;
+        entry.total = Number(entry.total || 0) + r.total;
+      } else {
+        byMethod.push({ payment_method: r.payment_method, count: 1, total: r.total });
+      }
+    }
+    merged.byMethod = byMethod;
+  }
+  return merged;
+};
+
+const pendingSaleDetails = (db, saleId) => {
+  const id = Number(String(saleId).slice(PENDING_SALE_ID.length));
+  const row = offlineQueue.get(db, id);
+  if (!row) return fail("SALE_NOT_FOUND", "La venta ya no está en la cola");
+  const sale = pendingSaleRow(db, row);
+  return { success: true, sale, items: sale.items };
+};
+
+// La venta en cola cambia lo que muestran Caja y Transacciones.
+const salesChanged = () => {
+  if (opsChangedHook) {
+    try {
+      opsChangedHook(["sales"]);
+    } catch (err) {}
+  }
+};
+
 const enqueueOp = (db, channel, args) => {
   const prepared = QUEUED_OPS[channel](db, args);
   if (prepared && prepared.success === false) return prepared;
@@ -487,6 +588,7 @@ const enqueueSale = (db, row) => {
     deductLocalStock(db, row.payload && row.payload.cart);
     return out;
   })();
+  salesChanged();
   return {
     success: true,
     offline: true,
@@ -695,6 +797,7 @@ const syncPending = async (db) => {
     return await syncInFlight;
   } finally {
     syncInFlight = null;
+    salesChanged();
   }
 };
 
@@ -836,12 +939,16 @@ const forward = (db, channel, args = []) => {
   if (QUEUED_OPS[channel] && localReady(db)) {
     return Promise.resolve(enqueueOp(db, channel, args));
   }
+  if (channel === "get-sale-details" && String(args[0]).startsWith(PENDING_SALE_ID)) {
+    return Promise.resolve(pendingSaleDetails(db, args[0]));
+  }
   if (LOCAL_READ_CHANNELS.has(channel) && localReady(db)) {
     const local = runLocal(db, channel, args);
     if (local) {
       return Promise.resolve(local).then((r) => {
         if (channel === "get-cash-register-status" && r && r.success) cacheRegister(db, r);
         if (channel === "get-stock-movements" && Array.isArray(r)) return withPendingMovements(db, r, args[0]);
+        if (SALE_LIST_CHANNELS.has(channel)) return withPendingSales(db, channel, r, args[0]);
         return r;
       });
     }
@@ -951,6 +1058,8 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
 module.exports = {
   setTimingSink,
   setOpsChangedHook,
+  withPendingSales,
+  pendingSaleDetails,
   syncOps,
   opsSummary: (db) => opQueue.summary(db),
   opsList: (db, statuses) => opQueue.list(db, statuses),

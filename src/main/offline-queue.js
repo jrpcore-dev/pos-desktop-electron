@@ -81,6 +81,19 @@ const get = (db, id) => {
   return row ? mapRow(row) : null;
 };
 
+// Ventas de esta caja que su copia local todavía no trae: en cola, o ya subidas
+// pero sin llegar por la réplica. El folio evita mostrarlas dos veces.
+const unsettled = (db) =>
+  db
+    .prepare(
+      `SELECT ps.* FROM pending_sales ps
+       LEFT JOIN sales s ON s.folio = ps.folio
+       WHERE ps.status <> ? AND s.id IS NULL
+       ORDER BY ps.id DESC`,
+    )
+    .all(STATUS.CANCELLED)
+    .map(mapRow);
+
 const countBlocking = (db) =>
   db
     .prepare(
@@ -292,6 +305,7 @@ const sync = async (db, send, opts = {}) => {
 };
 
 module.exports = {
+  unsettled,
   STATUS,
   enqueue,
   list,

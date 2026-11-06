@@ -138,6 +138,11 @@ const TurnoRow = memo(function TurnoRow({
           )}
         >
           {item.title}
+          {item.pending && (
+            <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-foreground">
+              {item.pending === "conflict" ? "En revisión" : "Por subir"}
+            </span>
+          )}
         </p>
 
         <p className="max-w-[480px] truncate text-xs text-muted-foreground">
@@ -168,7 +173,7 @@ const TurnoRow = memo(function TurnoRow({
 
       {canManageRegister && (
         <TableCell className="whitespace-nowrap text-center">
-          {isSale && !isCancelled && (
+          {isSale && !isCancelled && !item.pending && (
             <CancelButton
               size="sm"
               onClick={(e) => {
@@ -1110,7 +1115,8 @@ const EndOfDay = () => {
             id: `sale-${sale.id}`,
             saleId: sale.id,
             status: sale.status,
-            title: `Venta #${sale.id}`,
+            title: sale.pending ? `Venta ${sale.folio}` : `Venta #${sale.id}`,
+            pending: sale.pending || null,
             desc: [method, productsText].filter(Boolean).join(" · "),
             time: sale.created_at,
             amount: Number(sale.total || 0),
@@ -1237,7 +1243,7 @@ const EndOfDay = () => {
           selectedTurnoIdx >= 0 ? filteredTurnoItems[selectedTurnoIdx] : null;
         if (!item) return;
         e.preventDefault();
-        if (item.type === "sale" && item.status !== "cancelado") {
+        if (item.type === "sale" && item.status !== "cancelado" && !item.pending) {
           setCancelSaleData({ id: item.saleId });
         } else if (item.type === "expense") {
           setCancelExpenseData({
