@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Check, CircleAlert, Monitor, RefreshCw, Store, Unplug } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import BoxLinkWizard from "./BoxLinkWizard";
+import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 
 /* ────────────────────────────────────────────────────────────
@@ -28,17 +30,161 @@ import { Spinner } from "./ui/spinner";
    app de una pieza.
    ──────────────────────────────────────────────────────────── */
 
-const bar = "h-2 w-full overflow-hidden rounded-full bg-muted";
-const barFill = "h-full rounded-full bg-brand transition-[width] duration-200";
-const btn =
-  "rounded-md border border-border bg-field px-3 py-2 text-sm outline-none disabled:opacity-50";
-const note =
-  "rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground";
-
 const APPROVAL_POLL_MS = 2500;
 // Fase 5 · revocada: no tiene caso preguntar cada 2.5 s; se sigue mirando
 // despacio por si el admin la reactiva desde el Host.
 const REVOKED_POLL_MS = 15000;
+
+const heroGradient =
+  "bg-gradient-to-br from-[hsl(var(--hero-gradient-from))] to-[hsl(var(--hero-gradient-to))]";
+
+const SETUP_STEPS = ["Buscar el Host", "Código de activación", "Aprobación en el Host", "Descargar datos"];
+
+const ASIDE_COPY = [
+  { title: "Conecta esta caja a tu negocio", text: "Catálogo, precios y ventas se mantienen iguales en todas tus cajas." },
+  { title: "Identifica esta caja", text: "El código confirma que esta caja pertenece a tu negocio." },
+  { title: "Falta un último permiso", text: "Por seguridad, el administrador aprueba cada caja nueva." },
+  { title: "Casi lista para vender", text: "Después de esta descarga, la caja se actualiza sola." },
+];
+
+// Nombres para el cajero de lo que llega en `replica-progress`, en el orden de
+// la descarga (replica-engine SWAP_ORDER, y settings al final).
+const DOWNLOAD_GROUPS = [
+  { label: "Categorías", tables: ["categories", "customer_tiers"] },
+  { label: "Productos y precios", tables: ["products", "product_prices"] },
+  {
+    label: "Clientes y promociones",
+    tables: ["customers", "tier_prices", "customer_prices", "cashiers", "group_promos", "bundles", "bundle_items"],
+  },
+  {
+    label: "Ventas y movimientos",
+    tables: [
+      "suppliers",
+      "paired_devices",
+      "cash_register",
+      "sales",
+      "sale_items",
+      "cash_register_expenses",
+      "stock_movements",
+      "customer_credit_movements",
+      "settings",
+    ],
+  },
+];
+
+const TABLE_LABELS = {
+  categories: "Categorías",
+  customer_tiers: "Niveles de cliente",
+  products: "Productos",
+  product_prices: "Precios",
+  customers: "Clientes",
+  tier_prices: "Precios por nivel",
+  customer_prices: "Precios de clientes",
+  cashiers: "Cajeros",
+  group_promos: "Promociones",
+  bundles: "Paquetes",
+  bundle_items: "Paquetes",
+  suppliers: "Proveedores",
+  paired_devices: "Cajas",
+  cash_register: "Cortes",
+  sales: "Ventas",
+  sale_items: "Ventas",
+  cash_register_expenses: "Retiros",
+  stock_movements: "Movimientos",
+  customer_credit_movements: "Fiado",
+  settings: "Ajustes",
+};
+
+const SetupAside = ({ step }) => {
+  const copy = ASIDE_COPY[step];
+  return (
+    <aside
+      className={cn(
+        heroGradient,
+        "hidden w-[380px] shrink-0 flex-col justify-between rounded-2xl p-10 text-primary-foreground shadow-[0_24px_60px_-15px_hsl(222_47%_11%_/_0.45)] md:flex",
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-foreground/15">
+          <Store size={24} />
+        </span>
+        <span className="text-2xl font-bold">Vendia</span>
+      </div>
+
+      <div className="flex flex-col gap-3.5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground/70">Caja adicional</p>
+        <h1 className="text-4xl font-bold leading-tight">{copy.title}</h1>
+        <p className="text-base leading-relaxed text-primary-foreground/80">{copy.text}</p>
+      </div>
+
+      <ol className="flex flex-col gap-1.5">
+        {SETUP_STEPS.map((label, i) => {
+          const done = i < step;
+          const active = i === step;
+          return (
+            <li
+              key={label}
+              aria-current={active ? "step" : undefined}
+              className={cn(
+                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm",
+                active ? "bg-primary-foreground/15 font-semibold" : "text-primary-foreground/75",
+              )}
+            >
+              <span
+                className={cn(
+                  "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-xs font-bold",
+                  done && "bg-success text-success-foreground",
+                  active && "bg-primary-foreground text-primary",
+                  !done && !active && "bg-primary-foreground/15",
+                )}
+              >
+                {done ? <Check size={14} strokeWidth={3} /> : i + 1}
+              </span>
+              {label}
+            </li>
+          );
+        })}
+      </ol>
+    </aside>
+  );
+};
+
+// Caja → Host: quién espera a quién y en qué estado va el vínculo.
+const LinkDiagram = ({ code, chip, chipClass }) => (
+  <div className="flex items-center rounded-2xl bg-muted p-5">
+    <div className="flex w-32 shrink-0 flex-col items-center gap-2 text-center">
+      <span className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card text-foreground shadow-md">
+        <Monitor size={30} />
+      </span>
+      <span className="text-sm font-bold text-foreground">Esta caja</span>
+      <span className="text-xs text-muted-foreground">{code ? `Serie ${code}` : "Sin serie aún"}</span>
+    </div>
+    <div className="h-0.5 flex-1 border-t-2 border-dashed border-chart-2/70" />
+    <span className={cn("shrink-0 rounded-full border px-3 py-1 text-xs font-bold text-foreground", chipClass)}>
+      {chip}
+    </span>
+    <div className="h-0.5 flex-1 border-t-2 border-dashed border-chart-2/70" />
+    <div className="flex w-32 shrink-0 flex-col items-center gap-2 text-center">
+      <span className={cn(heroGradient, "flex h-16 w-16 items-center justify-center rounded-2xl text-primary-foreground shadow-lg")}>
+        <Store size={30} />
+      </span>
+      <span className="text-sm font-bold text-foreground">Host</span>
+      <span className="text-xs text-muted-foreground">PC principal</span>
+    </div>
+  </div>
+);
+
+const SetupAlert = ({ title, children }) => (
+  <div role="alert" className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/[0.08] p-3.5">
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-destructive text-destructive-foreground">
+      <CircleAlert size={18} />
+    </span>
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="text-sm font-bold text-foreground">{title}</span>
+      {children && <span className="text-xs leading-snug text-muted-foreground">{children}</span>}
+    </span>
+  </div>
+);
 
 const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [progress, setProgress] = useState(null);
@@ -48,6 +194,8 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [link, setLink] = useState(null);
   // Fase 5 · caja revocada: se ofrece volver a vincular con el código.
   const [relink, setRelink] = useState(false);
+  // Paso del asistente, para que el panel de marca lo acompañe.
+  const [wizardStep, setWizardStep] = useState(0);
   const startedRef = useRef(false);
 
   // Si una respuesta vieja llega tarde, la caja no vuelve al asistente.
@@ -167,100 +315,165 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   // Sin avance conocido la barra no puede decir 100 % mientras prepara.
   const filling = pct != null ? `${pct}%` : "0%";
   const waiting = paired && !canSell && !link?.approved;
+  const linking = !paired || relink;
+  const blocked = waiting && (link?.revoked || link?.notPaired);
+  const step = linking ? wizardStep : waiting ? 2 : 3;
+
+  const currentGroup = progress?.table
+    ? DOWNLOAD_GROUPS.findIndex((g) => g.tables.includes(progress.table))
+    : -1;
 
   return (
     <div
       className={cn(
-        "fixed inset-0 z-[9999] flex items-center justify-center bg-background px-6",
+        "fixed inset-0 z-[9999] flex gap-4 overflow-y-auto bg-muted p-4",
         className,
       )}
     >
-      <div className="flex w-full max-w-md flex-col gap-5">
-        <header className="flex flex-col gap-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Caja
-          </p>
-          <h1 className="text-xl font-semibold text-foreground">
-            {paired
-              ? waiting
-                ? "Esperando aprobación en el Host"
-                : "Descargando la información"
-              : "Vincular con el Host"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {paired
-              ? waiting
-                ? "Aprueba esta caja en Configuración → Dispositivos; la descarga empieza sola."
-                : "La caja no vende hasta terminar la primera sincronización."
-              : "Busca el escritorio del negocio y pídele el código de activación."}
-          </p>
-        </header>
+      <SetupAside step={Math.min(step, SETUP_STEPS.length - 1)} />
 
-        {!paired || relink ? (
-          <div className="flex flex-col gap-2">
-            <BoxLinkWizard className="rounded-lg border border-border p-4" />
-            {relink && (
-              <button className={btn} onClick={() => setRelink(false)}>
-                Volver
-              </button>
-            )}
-          </div>
-        ) : (
-          <section className="flex flex-col gap-3 rounded-lg border border-border p-4">
-            {waiting && (link?.revoked || link?.notPaired) && (
-              <button className={btn} onClick={() => setRelink(true)}>
-                Volver a vincular con el código de activación
-              </button>
-            )}
-            {waiting && (
-              <p className={note}>
-                {link?.revoked
-                  ? "El Host revocó esta caja. Vuelve a vincularla con el código de activación; después el administrador la aprueba en Configuración → Dispositivos."
-                  : link?.error
-                    ? `No se pudo consultar el Host: ${link.error}`
-                    : link?.deviceCode
-                      ? `Caja ${link.deviceCode} esperando aprobación en el Host…`
-                      : "Esperando aprobación en el Host…"}
-              </p>
-            )}
+      <main className="flex min-w-0 flex-1 items-center justify-center">
+        <section className="flex w-full max-w-[600px] flex-col gap-5 rounded-2xl border border-border bg-card p-9 shadow-[0_1px_2px_hsl(222_47%_11%_/_0.06),0_12px_24px_-8px_hsl(222_47%_11%_/_0.1),0_32px_64px_-24px_hsl(222_47%_11%_/_0.22)]">
+          {linking ? (
+            <>
+              <BoxLinkWizard onStepChange={setWizardStep} />
+              {relink && (
+                <Button type="button" variant="ghost" onClick={() => setRelink(false)}>
+                  Volver
+                </Button>
+              )}
+            </>
+          ) : waiting ? (
+            <>
+              <header className="flex flex-col gap-1.5">
+                <h2 className="text-2xl font-bold text-foreground">
+                  {link?.revoked
+                    ? "El Host revocó esta caja"
+                    : link?.notPaired
+                      ? "El Host no reconoce esta caja"
+                      : "Esperando aprobación"}
+                </h2>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {blocked
+                    ? "Vuelve a vincularla con el código de activación; después el administrador la aprueba."
+                    : "El Host ya recibió el aviso. La descarga empieza sola al aprobarla."}
+                </p>
+              </header>
 
-            {error && (
-              <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </p>
-            )}
+              <LinkDiagram
+                code={link?.deviceCode}
+                chip={blocked ? "Sin vínculo" : link?.error ? "Sin conexión" : "Pendiente"}
+                chipClass={
+                  blocked || link?.error
+                    ? "border-destructive/40 bg-destructive/10"
+                    : "border-warning/50 bg-warning/15"
+                }
+              />
 
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-medium text-foreground">
-                {progress?.table
-                  ? `Tabla: ${progress.table}`
-                  : busy
-                    ? "Preparando…"
-                    : "En espera"}
-              </span>
-              <span className="tabular-nums text-muted-foreground">
-                {progress?.done != null ? `${progress.done} filas` : "—"}
-              </span>
-            </div>
+              {link?.error && !blocked && (
+                <SetupAlert title="No se pudo consultar el Host">{link.error}</SetupAlert>
+              )}
+              {error && <SetupAlert title="No se pudo descargar">{error}</SetupAlert>}
 
-            <div className={bar} role="progressbar" aria-valuenow={pct ?? 0}>
-              <div className={barFill} style={{ width: filling }} />
-            </div>
+              {blocked ? (
+                <Button type="button" size="lg" onClick={() => setRelink(true)}>
+                  <Unplug size={18} />
+                  Volver a vincular con el código
+                </Button>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-sm font-bold text-foreground">En el Host:</p>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    Toca <strong className="text-foreground">Revisar</strong> en el aviso, o entra a
+                    Configuración → App Móvil y presiona{" "}
+                    <strong className="text-foreground">Aprobar</strong>.
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <header className="flex flex-col gap-1.5">
+                <h2 className="text-2xl font-bold text-foreground">Descargando la información</h2>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Puede tardar unos minutos. No apagues esta caja.
+                </p>
+              </header>
 
-            <button
-              className={btn}
-              disabled={busy || (waiting && !error)}
-              onClick={sync}
-            >
-              {busy
-                ? "Descargando…"
-                : error
-                  ? "Reintentar descarga"
-                  : "Descargar de nuevo"}
-            </button>
-          </section>
-        )}
-      </div>
+              {error && <SetupAlert title="No se pudo descargar">{error}</SetupAlert>}
+
+              <div className={cn(heroGradient, "flex flex-col gap-4 rounded-2xl p-6 text-primary-foreground shadow-lg")}>
+                <div className="flex items-end justify-between gap-4">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="truncate text-sm font-semibold text-primary-foreground/80">
+                      {progress?.table
+                        ? `Ahora: ${TABLE_LABELS[progress.table] || progress.table}`
+                        : busy
+                          ? "Preparando…"
+                          : "En espera"}
+                    </span>
+                    <span className="text-5xl font-bold leading-none tabular-nums">
+                      {pct != null ? `${pct}%` : "—"}
+                    </span>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-primary-foreground/80">
+                    {progress?.done != null
+                      ? `${progress.done.toLocaleString("es-MX")} registros`
+                      : ""}
+                  </span>
+                </div>
+                <div
+                  className="h-2.5 w-full overflow-hidden rounded-full bg-primary-foreground/20"
+                  role="progressbar"
+                  aria-label="Avance de la descarga"
+                  aria-valuenow={pct ?? 0}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className="h-full rounded-full bg-primary-foreground transition-[width] duration-200"
+                    style={{ width: filling }}
+                  />
+                </div>
+              </div>
+
+              <ul className="grid grid-cols-2 gap-2.5">
+                {DOWNLOAD_GROUPS.map((g, i) => {
+                  const done = currentGroup > i;
+                  const active = currentGroup === i;
+                  return (
+                    <li
+                      key={g.label}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-xl px-3.5 py-3 text-sm",
+                        done && "bg-success/[0.08] font-semibold text-foreground",
+                        active && "bg-chart-2/[0.12] font-semibold text-foreground",
+                        !done && !active && "bg-muted text-muted-foreground",
+                      )}
+                    >
+                      {done ? (
+                        <Check size={18} strokeWidth={3} className="shrink-0 text-success" />
+                      ) : active ? (
+                        <Spinner size={18} className="shrink-0 text-chart-2" />
+                      ) : (
+                        <span className="m-1 h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                      )}
+                      {g.label}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {!busy && (
+                <Button type="button" variant={error ? "default" : "outline"} onClick={sync}>
+                  <RefreshCw size={16} />
+                  {error ? "Reintentar descarga" : "Descargar de nuevo"}
+                </Button>
+              )}
+            </>
+          )}
+        </section>
+      </main>
     </div>
   );
 };

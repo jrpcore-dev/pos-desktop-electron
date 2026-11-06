@@ -8,6 +8,7 @@ import {
   CloudUpload,
   FlaskConical,
   Loader2,
+  Monitor,
   Pencil,
   Printer,
   ReceiptText,
@@ -983,12 +984,19 @@ function ConfigurationScreen() {
     }
   };
 
+  const [approvingId, setApprovingId] = useState(null);
   const handleApproveDevice = async (deviceId) => {
-    const res = await window.api.invoke("approve-device", deviceId);    if (res.success) {
-      setActivation(res.status);
-      notify("Dispositivo aprobado.", "success");
-    } else {
-      notify(res.error || "No se pudo aprobar el dispositivo.", "error");
+    setApprovingId(deviceId);
+    try {
+      const res = await window.api.invoke("approve-device", deviceId);
+      if (res.success) {
+        setActivation(res.status);
+        notify("Dispositivo aprobado.", "success");
+      } else {
+        notify(res.error || "No se pudo aprobar el dispositivo.", "error");
+      }
+    } finally {
+      setApprovingId(null);
     }
   };
 
@@ -1436,6 +1444,16 @@ function ConfigurationScreen() {
     </>
   );
 
+  // Lo que espera aprobación va primero: es lo único que pide una decisión.
+  const orderedDevices = [...(activation?.devices || [])].sort(
+    (a, b) =>
+      Number(b.approved === false && b.state !== "revoked") -
+      Number(a.approved === false && a.state !== "revoked"),
+  );
+  const pendingDevicesCount = orderedDevices.filter(
+    (d) => d.approved === false && d.state !== "revoked",
+  ).length;
+
   const renderMobileTab = () => (
     <>
       <section className="divide-y divide-border/40">
@@ -1498,7 +1516,7 @@ function ConfigurationScreen() {
           <Separator className="my-2" />
 
           <section>
-            <div className="flex items-center justify-between py-2">
+            <div className="flex items-center justify-between gap-3 py-2">
               <div>
                 <p className="text-sm font-medium text-foreground">
                   Dispositivos emparejados ({activation?.devices?.length || 0})
@@ -1507,21 +1525,26 @@ function ConfigurationScreen() {
                   Teléfonos y cajas con acceso a este negocio.
                 </p>
               </div>
+              {pendingDevicesCount > 0 && (
+                <span className="shrink-0 rounded-full border border-warning/50 bg-warning/15 px-3 py-1 text-xs font-bold text-foreground">
+                  {pendingDevicesCount} por aprobar
+                </span>
+              )}
             </div>
             {!loadingActivation && activation?.host && (
-              <div className="mt-1 mb-2 flex items-center gap-3 rounded-xl border border-border/40 px-3.5 py-3">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="Esta PC" />
+              <div className="mt-1 mb-3 flex items-center gap-3.5 rounded-2xl bg-gradient-to-br from-[hsl(var(--hero-gradient-from))] to-[hsl(var(--hero-gradient-to))] px-4 py-3.5 text-primary-foreground shadow-lg">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-foreground/15">
+                  <Store className="h-[22px] w-[22px]" />
+                </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {activation.host.deviceName}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="truncate text-base font-bold">{activation.host.deviceName}</p>
+                  <p className="truncate text-xs text-primary-foreground/80">
                     Esta PC · Host del negocio · así aparece en ventas, cortes y reportes
                   </p>
                 </div>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() =>
                     handleRenameDevice(activation.host.deviceId, activation.host.deviceName)
@@ -1542,72 +1565,75 @@ function ConfigurationScreen() {
                 Aún no hay dispositivos emparejados.
               </p>
             ) : (
-              <ul className="mt-1 space-y-2">
-                {activation.devices.map((d) => {
+              <ul className="mt-1 space-y-2.5">
+                {orderedDevices.map((d) => {
                   const isPending =
                     d.approved === false && d.state !== "revoked";
-                  const dotClass =
+                  const isBox = d.deviceType === "desktop_box";
+                  const DeviceIcon = isBox ? Monitor : Smartphone;
+                  const stateChip =
                     d.state === "revoked"
-                      ? "bg-muted-foreground/40"
-                      : d.state === "pending"
-                        ? "bg-amber-500"
+                      ? { label: "Revocado", className: "bg-muted text-muted-foreground" }
+                      : isPending
+                        ? { label: "Por aprobar", className: "border border-warning/50 bg-warning/15 text-foreground" }
                         : d.state === "online"
-                          ? "bg-emerald-500"
-                          : "bg-warning";
+                          ? { label: "En línea", className: "bg-success/10 text-success" }
+                          : { label: "Sin conexión", className: "bg-muted text-muted-foreground" };
                   return (
                     <li
                       key={d.deviceId}
-                      className="flex items-center gap-3 rounded-xl border border-border/40 px-3.5 py-3"
+                      className={cn(
+                        "flex items-center gap-3.5 rounded-2xl border bg-card px-4 py-3.5 shadow-md",
+                        isPending ? "border-warning/50" : "border-border",
+                        d.state === "revoked" && "opacity-70",
+                      )}
                     >
                       <span
                         className={cn(
-                          "h-2 w-2 shrink-0 rounded-full",
-                          dotClass
+                          "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
+                          isPending
+                            ? "bg-warning text-warning-foreground"
+                            : isBox
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-foreground",
                         )}
-                        title={
-                          d.state === "revoked"
-                            ? "Revocado"
-                            : d.state === "pending"
-                              ? "Pendiente de aprobación"
-                              : d.state === "online"
-                                ? "Visto recientemente"
-                                : "Visto hace más de 24 h"
-                        }
-                      />
+                      >
+                        <DeviceIcon className="h-[22px] w-[22px]" />
+                      </span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          {d.deviceName}
-                          {d.deviceCode ? ` · ${d.deviceCode}` : ""}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {d.deviceType === "desktop_box"
-                            ? "Caja adicional"
-                            : "App móvil"}
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-bold text-foreground">
+                            {d.deviceName}
+                            {d.deviceCode ? ` · ${d.deviceCode}` : ""}
+                          </p>
+                          <span className={cn("shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold", stateChip.className)}>
+                            {stateChip.label}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {isBox ? "Caja adicional" : "App móvil"}
                           {d.cashierName
                             ? ` · Emparejado por ${d.cashierName}`
                             : ""}
                           {` · Activado el ${fmtDate(d.activatedAt)}`}
                           {d.lastSeenAt && ` · Visto ${fmtDate(d.lastSeenAt)}`}
-                          {d.deviceType === "desktop_box" &&
-                            (d.state === "online"
-                              ? " · En línea"
-                              : d.state === "offline"
-                                ? " · Sin conexión"
-                                : "")}
                           {d.pendingSync > 0 &&
                             ` · ${d.pendingSync} venta(s) sin subir`}
-                          {d.state === "revoked" && " · Revocado"}
-                          {isPending && " · Pendiente de aprobación"}
                         </p>
                       </div>
                       {isPending ? (
-                        <div className="flex shrink-0 gap-1">
+                        <div className="flex shrink-0 gap-1.5">
                           <Button
                             type="button"
-                            variant="outline"
                             size="sm"
+                            disabled={approvingId === d.deviceId}
                             onClick={() => handleApproveDevice(d.deviceId)}
                           >
+                            {approvingId === d.deviceId ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Check className="h-4 w-4" />
+                            )}
                             Aprobar
                           </Button>
                           <Button
@@ -1622,7 +1648,7 @@ function ConfigurationScreen() {
                         </div>
                       ) : d.state !== "revoked" ? (
                         <div className="flex shrink-0 items-center gap-1">
-                          {d.deviceType === "desktop_box" && (
+                          {isBox && (
                             <Button
                               type="button"
                               variant="ghost"

@@ -172,7 +172,7 @@ const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 
 // Nombre visible de ESTA PC (el Host) en ventas, cortes y reportes. Sin él las
 // pantallas recortaban el device_id y salía "host-8f9". Lo cambia el admin en
-// Configuración → Dispositivos; las cajas lo reciben ya resuelto por RPC.
+// Configuración → App Móvil; las cajas lo reciben ya resuelto por RPC.
 const HOST_DEVICE_NAME_KEY = "host_device_name";
 const DEFAULT_HOST_DEVICE_NAME = "Caja 1";
 // En memoria, no leído en cada llamada: la función SQL de abajo corre DENTRO

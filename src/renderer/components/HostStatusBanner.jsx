@@ -28,6 +28,45 @@ const fmtAge = (ms) => {
   return `${h} h ${min % 60} min`;
 };
 
+const heroGradient =
+  "bg-gradient-to-br from-[hsl(var(--hero-gradient-from))] to-[hsl(var(--hero-gradient-to))]";
+
+const TILE = {
+  warning: "bg-warning text-warning-foreground shadow-[0_8px_16px_-6px_hsl(var(--warning)_/_0.6)]",
+  destructive: "bg-destructive text-destructive-foreground shadow-[0_8px_16px_-6px_hsl(var(--destructive)_/_0.6)]",
+  brand: "bg-primary-foreground/15 text-primary-foreground",
+};
+
+// Todas las alertas de arriba de la app son esta tarjeta: mismo cuadro de ícono
+// y mismo sitio para las acciones. El color sólo dice qué tan grave es.
+const AlertCard = ({ tone = "warning", icon: Icon, spin = false, title, extra, children, actions }) => {
+  const brand = tone === "brand";
+  return (
+    <div
+      role="status"
+      className={cn(
+        "mb-4 flex items-center gap-4 rounded-2xl border px-4 py-3.5",
+        brand
+          ? cn(heroGradient, "border-transparent text-primary-foreground shadow-[0_18px_32px_-16px_hsl(222_47%_11%_/_0.6)]")
+          : "bg-card text-foreground shadow-[0_1px_2px_hsl(222_47%_11%_/_0.05),0_14px_28px_-14px_hsl(222_47%_11%_/_0.22)]",
+        !brand && (tone === "destructive" ? "border-destructive/35" : "border-border"),
+      )}
+    >
+      <span className={cn("flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl", TILE[tone])}>
+        <Icon size={24} className={spin ? "animate-spin" : undefined} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-base font-bold leading-snug">{title}</p>
+        {extra}
+        <p className={cn("mt-0.5 text-sm leading-snug", brand ? "text-primary-foreground/80" : "text-muted-foreground")}>
+          {children}
+        </p>
+      </div>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    </div>
+  );
+};
+
 export default function HostStatusBanner() {
   const notify = useToast();
   const navigate = useNavigate();
@@ -165,27 +204,21 @@ export default function HostStatusBanner() {
     if (!pendingDevices.length) return null;
     const first = pendingDevices[0];
     return (
-      <div className="mb-4 flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/[0.08] px-4 py-3 text-warning">
-        <MonitorSmartphone size={18} className="shrink-0" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">
-            {pendingDevices.length === 1
-              ? `${first.deviceName}${first.deviceCode ? ` (${first.deviceCode})` : ""} espera tu aprobación`
-              : `${pendingDevices.length} cajas esperan tu aprobación`}
-          </p>
-          <p className="mt-0.5 text-xs opacity-90">
-            No podrá vender ni descargar datos hasta que la apruebes.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0"
-          onClick={() => navigate("/configuration", { state: { tab: "mobile" } })}
-        >
-          Revisar
-        </Button>
-      </div>
+      <AlertCard
+        icon={MonitorSmartphone}
+        title={
+          pendingDevices.length === 1
+            ? `${first.deviceName}${first.deviceCode ? ` (${first.deviceCode})` : ""} espera tu aprobación`
+            : `${pendingDevices.length} cajas esperan tu aprobación`
+        }
+        actions={
+          <Button size="sm" onClick={() => navigate("/configuration", { state: { tab: "mobile" } })}>
+            Revisar
+          </Button>
+        }
+      >
+        No podrá vender ni descargar datos hasta que la apruebes.
+      </AlertCard>
     );
   }
 
@@ -196,26 +229,21 @@ export default function HostStatusBanner() {
     const pendingApproval = authIssue === "pending";
     return (
       <>
-        <div className="mb-4 flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/[0.08] px-4 py-3 text-warning">
-          <Link2Off size={18} className="mt-0.5 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold">
-              {pendingApproval
-                ? "Esta caja espera aprobación en el Host"
-                : "El Host ya no reconoce esta caja"}
-            </p>
-            <p className="mt-0.5 text-xs opacity-90">
-              {pendingApproval
-                ? "Hasta que el Host la apruebe no podrá registrar ventas ni sincronizar."
-                : "No podrá registrar ventas ni sincronizar hasta volver a vincularla con el código de activación."}
-            </p>
-          </div>
-          {!pendingApproval && (
-            <Button size="sm" variant="outline" className="shrink-0" onClick={() => setRelinkOpen(true)}>
-              Volver a vincular
-            </Button>
-          )}
-        </div>
+        <AlertCard
+          icon={Link2Off}
+          title={pendingApproval ? "Esta caja espera aprobación en el Host" : "El Host ya no reconoce esta caja"}
+          actions={
+            !pendingApproval && (
+              <Button size="sm" onClick={() => setRelinkOpen(true)}>
+                Volver a vincular
+              </Button>
+            )
+          }
+        >
+          {pendingApproval
+            ? "Hasta que el Host la apruebe no podrá registrar ventas ni sincronizar."
+            : "No podrá registrar ventas ni sincronizar hasta volver a vincularla con el código de activación."}
+        </AlertCard>
         <ConfirmDialog
           open={relinkOpen}
           onOpenChange={setRelinkOpen}
@@ -256,24 +284,13 @@ export default function HostStatusBanner() {
 
   if (syncing && !busy && !pending.count && !pendingOps.count && !protocolWarning) {
     return (
-      <div className="mb-4 flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-4 py-3 text-primary">
-        <RefreshCw size={18} className="mt-0.5 shrink-0 animate-spin" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">Sincronizando datos con el Host…</p>
-          <p className="mt-0.5 text-xs opacity-90">
-            Catálogo, precios y clientes se están actualizando
-            {sync?.done ? ` (${sync.done} registros)` : ""}. Puedes seguir vendiendo.
-          </p>
-        </div>
-      </div>
+      <AlertCard tone="brand" icon={RefreshCw} spin title="Sincronizando datos con el Host…">
+        Catálogo, precios y clientes{sync?.done ? ` (${sync.done.toLocaleString("es-MX")} registros)` : ""}. Puedes seguir vendiendo.
+      </AlertCard>
     );
   }
 
-  const tone = hostDown
-    ? "border-destructive/40 bg-destructive/[0.07] text-destructive"
-    : staleStrong || pendingOld
-      ? "border-destructive/40 bg-destructive/[0.06] text-destructive"
-      : "border-warning/40 bg-warning/[0.08] text-warning";
+  const tone = hostDown || staleStrong || pendingOld ? "destructive" : "warning";
 
   const Icon = hostDown
     ? CloudOff
@@ -285,79 +302,65 @@ export default function HostStatusBanner() {
           ? TimerReset
           : AlertTriangle;
 
+  const protocolLine = `Versión distinta del Host: ${protocolWarning}`;
+  const title = hostDown
+    ? "Host desconectado · puedes seguir vendiendo"
+    : busy
+      ? "Host ocupado (importando datos) · no es una caída"
+      : needsAuth > 0
+        ? `${needsAuth} venta(s) esperan que inicies sesión de nuevo para subir`
+        : pending.count > 0
+          ? `${pending.count} venta(s) pendiente(s) de subir${pending.oldestAgeMs != null ? ` · la más antigua hace ${fmtAge(pending.oldestAgeMs)}` : ""}`
+          : pendingOps.count > 0
+            ? opsConflicts > 0
+              ? `${opsConflicts} movimiento(s) de inventario rechazado(s) por el Host · revisa Movimientos`
+              : `${pendingOps.count} movimiento(s) de inventario por subir al Host`
+            : staleWarn
+              ? `Datos de esta caja actualizados hace ${fmtAge(stale)}`
+              : protocolLine;
+  const detail = hostDown
+    ? "Las ventas se guardan en esta caja y suben solas al reconectar. Abrir/cerrar caja y gastos requieren Host."
+    : needsAuth
+      ? "La sesión con el Host venció. Cierra sesión y vuelve a entrar con tu PIN; las ventas suben solas."
+      : pendingOld
+        ? "Llevan más de 1 hora sin subir: avisa al administrador. No cierres la caja."
+        : busy
+          ? "Puedes vender con normalidad; la sincronización se reanuda al terminar."
+          : staleStrong
+            ? "El catálogo y los precios pueden estar muy desactualizados. Se sigue vendiendo; no se bloquea."
+            : staleWarn
+              ? "Catálogo y precios pueden estar desactualizados. Se sigue vendiendo; no se bloquea."
+              : "Están a salvo en esta caja; no cierres la caja hasta que la cola esté vacía.";
+
   return (
     <>
-      <div className={cn("mb-4 flex items-start gap-3 rounded-lg border px-4 py-3", tone)}>
-        <Icon size={18} className="mt-0.5 shrink-0" />
-        <div className="min-w-0 flex-1">
-          {hostDown && (
-            <p className="text-sm font-semibold">
-              Host desconectado · puedes seguir vendiendo
-            </p>
-          )}
-          {busy && !hostDown && (
-            <p className="text-sm font-semibold">
-              Host ocupado (importando datos) · no es una caída
-            </p>
-          )}
-          {!hostDown && !busy && needsAuth > 0 && (
-            <p className="text-sm font-semibold">
-              {needsAuth} venta(s) esperan que inicies sesión de nuevo para subir
-            </p>
-          )}
-          {!hostDown && !busy && !needsAuth && pending.count > 0 && (
-            <p className="text-sm font-semibold">
-              {pending.count} venta(s) pendiente(s) de subir
-              {pending.oldestAgeMs != null ? ` · la más antigua hace ${fmtAge(pending.oldestAgeMs)}` : ""}
-            </p>
-          )}
-          {!hostDown && !busy && !needsAuth && !pending.count && pendingOps.count > 0 && (
-            <p className="text-sm font-semibold">
-              {opsConflicts > 0
-                ? `${opsConflicts} movimiento(s) de inventario rechazado(s) por el Host · revisa Movimientos`
-                : `${pendingOps.count} movimiento(s) de inventario por subir al Host`}
-            </p>
-          )}
-          {!hostDown && !busy && !pending.count && !pendingOps.count && staleWarn && (
-            <p className="text-sm font-semibold">
-              Datos de esta caja actualizados hace {fmtAge(stale)}
-            </p>
-          )}
-          {protocolWarning && (
-            <p className="text-sm font-semibold">
-              Versión distinta del Host: {protocolWarning}
-            </p>
-          )}
-          <p className="mt-0.5 text-xs opacity-90">
-            {hostDown
-              ? "Las ventas se guardan en esta caja y suben solas al reconectar. Abrir/cerrar caja y gastos requieren Host."
-              : needsAuth
-                ? "La sesión con el Host venció. Cierra sesión y vuelve a entrar con tu PIN; las ventas suben solas."
-                : pendingOld
-                ? "Llevan más de 1 hora sin subir: avisa al administrador. No cierres la caja."
-                : busy
-                  ? "Puedes vender con normalidad; la sincronización se reanuda al terminar."
-                  : staleStrong
-                    ? "El catálogo y los precios pueden estar muy desactualizados. Se sigue vendiendo; no se bloquea."
-                    : staleWarn
-                      ? "Catálogo y precios pueden estar desactualizados. Se sigue vendiendo; no se bloquea."
-                      : "Están a salvo en esta caja; no cierres la caja hasta que la cola esté vacía."}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {pending.count > 0 && (
-            <Button size="sm" variant="outline" onClick={openPending}>
-              Ver ventas
-            </Button>
-          )}
-          {pending.count > 0 && !hostDown && (
-            <Button size="sm" variant="secondary" onClick={syncNow} disabled={busyAction}>
-              <RefreshCw size={14} className={busyAction ? "animate-spin" : ""} />
-              Sincronizar
-            </Button>
-          )}
-        </div>
-      </div>
+      <AlertCard
+        tone={tone}
+        icon={Icon}
+        title={title}
+        extra={
+          protocolWarning && title !== protocolLine ? (
+            <p className="text-sm font-semibold">{protocolLine}</p>
+          ) : null
+        }
+        actions={
+          pending.count > 0 ? (
+            <>
+              <Button size="sm" variant="outline" onClick={openPending}>
+                Ver ventas
+              </Button>
+              {!hostDown && (
+                <Button size="sm" onClick={syncNow} disabled={busyAction}>
+                  <RefreshCw size={14} className={busyAction ? "animate-spin" : ""} />
+                  Sincronizar
+                </Button>
+              )}
+            </>
+          ) : null
+        }
+      >
+        {detail}
+      </AlertCard>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">
