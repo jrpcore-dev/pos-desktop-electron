@@ -176,7 +176,7 @@ const StockUnitToggle = ({ product, value, onChange }) => {
   if (!units.length) return null;
   return (
     <div className="flex justify-center">
-      <div className="flex h-9 w-fit items-center rounded-lg bg-muted p-1 text-muted-foreground">
+      <div className="flex h-9 w-fit items-center rounded-lg bg-sidebar p-1 text-foreground/70">
         {units.map((u) => (
           <button
             key={u.value}
@@ -290,7 +290,7 @@ const ProductChip = React.memo(({ icon: Icon, label, tooltip, iconOnly }) => {
   const chip = (
     <span
       className={cn(
-        "inline-flex h-[20px] shrink-0 items-center justify-center gap-1 rounded-[6px] border border-transparent bg-chart-2/12 px-1.5 text-[0.66rem] font-bold text-chart-1",
+        "inline-flex h-[20px] shrink-0 items-center justify-center gap-1 rounded-[6px] border border-transparent bg-chart-2/18 px-1.5 text-[0.66rem] font-bold text-chart-1",
         iconOnly && "w-[20px] px-0",
       )}
     >

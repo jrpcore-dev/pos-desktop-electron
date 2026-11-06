@@ -299,12 +299,12 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
       </div>
 
       {/* Marca del sistema, fuera de la tarjeta. */}
-      <div className="mt-6 flex flex-col items-center gap-0.5">
-        <span className="inline-flex items-center gap-2 text-xl font-bold tracking-tight text-foreground">
-          <img src={vendiaIcon} alt="" className="size-7" />
-          Vendia
-        </span>
-        <span className="text-xs text-muted-foreground">Powered by JRP Core v2.0</span>
+      <div className="mt-6 flex items-center gap-3">
+        <img src={vendiaIcon} alt="" className="size-12 drop-shadow-md" />
+        <div className="flex flex-col gap-1">
+          <span className="text-2xl font-bold leading-none tracking-tight text-foreground">Vendia</span>
+          <span className="text-xs leading-none text-muted-foreground">Powered by JRP Core v2.0</span>
+        </div>
       </div>
 
       {isFirstTime && (

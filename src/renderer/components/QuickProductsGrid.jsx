@@ -210,9 +210,9 @@ const QuickProductsGrid = React.memo(
       <div className="flex flex-col items-center px-4 pb-2 pt-1">
         <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2">
           <Tabs value={tab} onValueChange={changeTab}>
-            <TabsList aria-label="Productos rápidos" className="h-10">
+            <TabsList aria-label="Productos rápidos">
               {TABS.map((t) => (
-                <TabsTrigger key={t.id} value={t.id} className="h-8 gap-1.5 font-semibold">
+                <TabsTrigger key={t.id} value={t.id} className="font-semibold">
                   {t.label}
                   {products !== null && (
                     <span className="text-xs tabular-nums opacity-70">

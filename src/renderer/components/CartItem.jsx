@@ -107,7 +107,7 @@ const CartItem = React.memo(
         onClick={() => onSelect(index)}
         className={cn(
           "cart-item-in group relative min-h-[66px] cursor-pointer px-3 py-2.5 transition-colors duration-150",
-          isSelected ? "bg-primary/[0.07]" : "hover:bg-muted/40",
+          isSelected ? "bg-chart-2/15" : "hover:bg-muted/40",
           flash && "bg-success/15",
         )}
       >

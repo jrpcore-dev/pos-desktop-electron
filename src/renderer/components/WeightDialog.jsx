@@ -191,11 +191,11 @@ const WeightDialog = ({
 
             {effectivePrice > 0 && (
               <Tabs value={mode} onValueChange={changeMode}>
-                <TabsList className="grid h-10 w-full grid-cols-2">
-                  <TabsTrigger value="weight" className="h-8 font-semibold">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="weight" className="font-semibold">
                     Por peso
                   </TabsTrigger>
-                  <TabsTrigger value="amount" className="h-8 font-semibold">
+                  <TabsTrigger value="amount" className="font-semibold">
                     Por importe
                   </TabsTrigger>
                 </TabsList>

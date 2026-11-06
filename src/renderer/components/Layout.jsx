@@ -1058,7 +1058,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                             )}
                             {item.path === "/end-of-day" &&
                               register?.status === "open" && (
-                                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-success ring-2 ring-secondary" />
+                                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-success ring-2 ring-sidebar" />
                               )}
                           </span>
                           {expanded && (
@@ -1222,11 +1222,11 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   return (
     <TooltipProvider>
-      <div className="min-h-screen animate-in fade-in-0 bg-background duration-700 ease-out">
+      <div className="min-h-screen animate-in fade-in-0 bg-page duration-700 ease-out">
         {/* ─── SIDEBAR (fijo, altura completa, se encima al navbar) ─── */}
         <aside
           style={{ width: drawerOpen ? drawerWidth : miniDrawerWidth }}
-          className="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-secondary transition-[width] duration-300 ease-in-out"
+          className="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-sidebar transition-[width] duration-300 ease-in-out"
         >
           {/* Logo / encabezado del sidebar: al pulsarlo colapsa/expande */}
           <button
@@ -1250,7 +1250,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         </aside>
 
         <header
-          className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 bg-background"
+          className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 bg-card shadow-[0_6px_12px_-10px_rgba(15,23,41,0.22)] dark:bg-background dark:shadow-none"
           style={{
             WebkitAppRegion: "drag",
             paddingLeft: (drawerOpen ? drawerWidth : miniDrawerWidth) + 16,

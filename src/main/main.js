@@ -511,7 +511,7 @@ const createTray = () => {
 };
 
 const TITLEBAR_COLORS = {
-  light: { color: "#f8fafc", symbolColor: "#0f1729" },
+  light: { color: "#ffffff", symbolColor: "#0f1729" },
   dark: { color: "#0a0e1a", symbolColor: "#f8fafc" },
   // Modo marca: para Login/SetupWizard (fondo full-bleed con gradiente
   // hsl(222 47% 14%) -> hsl(218 55% 32%)). Este color aproxima la esquina
@@ -520,7 +520,7 @@ const TITLEBAR_COLORS = {
   brand: { color: "#1c3259", symbolColor: "#f8fafc" },
   // Atenuados: mismos tonos bajo el fondo oscurecido de un diálogo o panel
   // abierto (≈ bg-black/55), para que la franja no quede como un parche claro.
-  "light-dim": { color: "#707172", symbolColor: "#070a12" },
+  "light-dim": { color: "#737373", symbolColor: "#070a12" },
   "dark-dim": { color: "#05060c", symbolColor: "#707172" },
   "brand-dim": { color: "#0d1728", symbolColor: "#707172" },
 };

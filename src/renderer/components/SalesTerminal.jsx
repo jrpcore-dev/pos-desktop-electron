@@ -1753,6 +1753,41 @@ if (e.key === "Tab" && !isEditable) {
           </ShadButton>
         </div>
 
+        {/* Cliente de la venta: visible antes de agregar artículos. */}
+          {features.customers && (
+          <div className="border-b border-border p-3">
+            {customer ? (
+              <div className="flex h-11 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
+                <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+                  {customer.name}
+                  {customer.tier_name && (
+                    <span className="ml-2 rounded bg-primary/20 px-1.5 py-0.5 text-[11px] font-bold uppercase text-primary">
+                      {customer.tier_name}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={clearCustomer}
+                  title="Quitar cliente"
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCustomerDialogOpen(true)}
+                className="flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+              >
+                <UserPlus size={18} />
+                Cliente
+              </button>
+            )}
+          </div>
+          )}
+
         {/* Barra de contexto única: concentra los atajos de la zona activa
             (carrito o pago) en un solo lugar, sin apretar el título. */}
         {(focusZone === "cart" || focusZone === "payment") && (
@@ -1829,39 +1864,6 @@ if (e.key === "Tab" && !isEditable) {
         <div
           className="sticky bottom-0 z-20 border-t border-border p-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.10)] bg-gradient-to-t from-transparent via-card/60 to-card"
         >
-          {features.customers && (
-          <div className="mb-2.5">
-            {customer ? (
-              <div className="flex h-11 items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3">
-                <span className="min-w-0 truncate text-sm font-semibold text-foreground">
-                  {customer.name}
-                  {customer.tier_name && (
-                    <span className="ml-2 rounded bg-primary/20 px-1.5 py-0.5 text-[11px] font-bold uppercase text-primary">
-                      {customer.tier_name}
-                    </span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  onClick={clearCustomer}
-                  title="Quitar cliente"
-                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCustomerDialogOpen(true)}
-                className="flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
-              >
-                <UserPlus size={18} />
-                Cliente
-              </button>
-            )}
-          </div>
-          )}
           {/* Totales tipo ticket */}
           <div className="mb-2.5 flex flex-col gap-0.5">
             {displayDiscountTotal > 0 && (
@@ -1887,7 +1889,7 @@ if (e.key === "Tab" && !isEditable) {
             )}
             <div className="flex items-end justify-between gap-3">
               <div className="flex flex-col">
-                <span className="text-sm font-semibold text-foreground">
+                <span className="text-base font-semibold text-foreground">
                   Total
                 </span>
                 <span className="text-xs text-muted-foreground tabular-nums">
@@ -1896,21 +1898,17 @@ if (e.key === "Tab" && !isEditable) {
               </div>
               <span
                 key={displayTotal}
-                className="cart-total-pop inline-block text-[2.75rem] font-bold leading-none tracking-tight text-foreground tabular-nums"
+                className="cart-total-pop inline-block text-5xl font-bold leading-none tracking-tight text-foreground tabular-nums"
               >
                 {fmtMoney(displayTotal)}
               </span>
             </div>
           </div>
 
-          {/* Cajón de cobro: divider deliberado que separa el resumen (recibo)
-              de la zona donde se ejecuta el pago, para que el botón verde sea
-              el punto focal y no uno más en la bandeja. */}
-          <div className="my-2 border-t border-border/70" />
           {/* Métodos de pago */}
           <div
             className={cn(
-              "mb-1.5 flex gap-1 rounded-lg p-1 transition-all duration-150",
+              "mb-2 flex gap-1 rounded-xl bg-sidebar p-1 transition-all duration-150",
               focusZone === "payment"
                 ? "ring-2 ring-ring ring-inset"
                 : "ring-2 ring-transparent ring-inset",
@@ -1923,8 +1921,8 @@ if (e.key === "Tab" && !isEditable) {
               className={cn(
                 "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "cash"
-                  ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
-                  : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  ? "border-chart-2 bg-card text-foreground shadow-sm ring-2 ring-chart-2/40"
+                  : "border-transparent bg-transparent text-foreground/70 hover:bg-card/70 hover:text-foreground",
               )}
             >
               <span className="text-sm font-bold leading-none">Efectivo</span>
@@ -1937,8 +1935,8 @@ if (e.key === "Tab" && !isEditable) {
               className={cn(
                 "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "card"
-                  ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
-                  : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  ? "border-chart-2 bg-card text-foreground shadow-sm ring-2 ring-chart-2/40"
+                  : "border-transparent bg-transparent text-foreground/70 hover:bg-card/70 hover:text-foreground",
               )}
             >
               <span className="text-sm font-bold leading-none">Tarjeta</span>
@@ -1951,8 +1949,8 @@ if (e.key === "Tab" && !isEditable) {
               className={cn(
                 "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                 paymentMethod === "transfer"
-                  ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
-                  : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  ? "border-chart-2 bg-card text-foreground shadow-sm ring-2 ring-chart-2/40"
+                  : "border-transparent bg-transparent text-foreground/70 hover:bg-card/70 hover:text-foreground",
               )}
             >
               <span className="text-sm font-bold leading-none">Transf.</span>
@@ -1965,8 +1963,8 @@ if (e.key === "Tab" && !isEditable) {
                 className={cn(
                   "flex h-11 min-w-0 flex-1 items-center justify-center rounded-lg border transition-colors duration-150 cursor-pointer",
                   paymentMethod === "credit"
-                    ? "border-chart-2 bg-primary/10 text-primary shadow-sm ring-2 ring-chart-2/40"
-                    : "border-border bg-background text-muted-foreground hover:bg-muted",
+                    ? "border-chart-2 bg-card text-foreground shadow-sm ring-2 ring-chart-2/40"
+                    : "border-transparent bg-transparent text-foreground/70 hover:bg-card/70 hover:text-foreground",
                 )}
               >
                 <span className="text-sm font-bold leading-none">Fiado</span>
@@ -1983,7 +1981,7 @@ if (e.key === "Tab" && !isEditable) {
                 if (paymentMethod === "cash") setCashDialogOpen(true);
                 else processSale(paymentMethod);
               }}
-              className="w-full min-h-[58px] px-4 py-4 text-xl font-bold uppercase tracking-wide bg-success text-success-foreground hover:bg-success/90 hover:shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+              className="w-full min-h-[58px] px-4 py-4 text-xl font-bold uppercase tracking-wide rounded-xl bg-success text-success-foreground shadow-[0_10px_18px_-10px_hsl(var(--success)/0.7)] hover:bg-success/90 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
             >
               {/* Slots laterales de ancho igual (w-10) → el "Cobrar" del centro
                   queda ópticamente alineado, no desplazado por un ícono pequeño

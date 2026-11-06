@@ -155,11 +155,11 @@ const DiscountDialog = ({
             </div>
 
             <Tabs value={mode} onValueChange={changeMode}>
-              <TabsList className="grid h-10 w-full grid-cols-2">
-                <TabsTrigger value="money" className="h-8 font-semibold">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="money" className="font-semibold">
                   En pesos
                 </TabsTrigger>
-                <TabsTrigger value="percent" className="h-8 font-semibold">
+                <TabsTrigger value="percent" className="font-semibold">
                   En porcentaje
                 </TabsTrigger>
               </TabsList>

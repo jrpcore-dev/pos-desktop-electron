@@ -39,6 +39,10 @@
   --text-lg: 1.1875rem; /* 19px */
 
   --color-background: hsl(var(--background));
+  --shadow-md: var(--elevation-md);
+
+  --color-page: hsl(var(--page));
+  --color-sidebar: hsl(var(--sidebar));
   --color-foreground: hsl(var(--foreground));
 
   --color-card: hsl(var(--card));
@@ -113,6 +117,17 @@
   --background: 210 40% 98%;
   --foreground: 222 47% 11%;
 
+  /* Capas de la app: la página y el sidebar llevan tono para que las tarjetas
+     blancas se despeguen. `--background` sigue siendo la superficie clara de
+     diálogos, botones y tablas. */
+  --page: 210 40% 98%;
+  --sidebar: 216 37% 92%;
+
+  /* Elevación de tarjetas sobre --page (shadow-md). shadow-sm se deja por
+     defecto: la usan inputs y botones, que deben verse planos. El tema oscuro
+     conserva la sombra por defecto de Tailwind. */
+  --elevation-md: 0 1px 2px rgb(15 23 41 / 0.04), 0 4px 10px -6px rgb(15 23 41 / 0.10);
+
   --card: 0 0% 100%;
   --card-foreground: 222 47% 11%;
 
@@ -185,6 +200,11 @@
 .dark {
   --background: 226 44% 7%;
   --foreground: 210 40% 98%;
+
+  --page: 226 44% 7%;
+  --sidebar: 217 33% 17%;
+
+  --elevation-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
 
   --card: 222 24% 12%;
   --card-foreground: 210 40% 98%;

@@ -1168,7 +1168,7 @@ const RegisterHistory = () => {
               )}
 
               <div className="mt-3 flex justify-center">
-                <TabsList className="h-10">
+                <TabsList>
                   <TabsTrigger value="resumen" className="px-4">
                     Resumen
                   </TabsTrigger>

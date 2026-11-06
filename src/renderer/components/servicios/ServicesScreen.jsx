@@ -186,12 +186,12 @@ const ServicesScreen = () => {
         {/* Una sola barra: pestañas, estado de Taecel con saldos y acciones.
             El navbar ya dice «Servicios», así que no hace falta descripción. */}
         <div className="flex flex-wrap items-center gap-2">
-          <TabsList className="h-9 w-fit">
-            <TabsTrigger value="cobrar" className="h-8 gap-1.5 px-3 text-sm">
+          <TabsList className="w-fit">
+            <TabsTrigger value="cobrar" className="gap-1.5 px-3 text-sm">
               <Zap size={14} aria-hidden />
               Cobrar
             </TabsTrigger>
-            <TabsTrigger value="historial" className="h-8 gap-1.5 px-3 text-sm">
+            <TabsTrigger value="historial" className="gap-1.5 px-3 text-sm">
               <History size={14} aria-hidden />
               Historial
             </TabsTrigger>

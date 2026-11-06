@@ -33,7 +33,7 @@ const badgeVariants = cva(
         "soft-neutral": "border-border bg-muted text-muted-foreground",
         // Unidad o tipo de producto (Pieza, A granel, Caja…): etiqueta
         // informativa en el azul de marca, no un estado.
-        unit: "border-transparent bg-chart-2/12 text-chart-1",
+        unit: "border-transparent bg-chart-2/18 text-chart-1",
       },
     },
     defaultVariants: {
