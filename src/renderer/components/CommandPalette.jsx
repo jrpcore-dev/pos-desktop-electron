@@ -347,7 +347,7 @@ const CommandPalette = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="vt-plain max-w-3xl gap-0 border border-border/80 p-0 shadow-2xl sm:rounded-xl">
+      <DialogContent className="vt-plain max-w-2xl gap-0 border border-border/80 p-0 shadow-2xl sm:rounded-xl">
         <DialogTitle className="sr-only">Buscar o ejecutar una acción</DialogTitle>
 
         <Command
@@ -373,7 +373,7 @@ const CommandPalette = ({
             className="text-[15px]"
           />
 
-          <CommandList className="h-[min(82vh,860px)] max-h-none py-1.5">
+          <CommandList className="max-h-[60vh] py-1.5">
             {/* Los resultados de datos (forceMount) no cuentan para cmdk. */}
             {products.length + customers.length + sales.length === 0 && (
               <CommandEmpty className="px-4 py-8 text-center text-sm text-muted-foreground">

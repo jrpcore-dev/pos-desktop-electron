@@ -1286,11 +1286,11 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
               type="button"
               onClick={() => setPaletteOpen(true)}
               title="Buscar o ejecutar (Ctrl + K)"
-              className="hidden h-10 cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-2.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 md:flex"
+              className="hidden h-10 w-56 cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 xl:w-72 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 md:flex"
             >
               <Search size={15} className="shrink-0" />
-              <span className="text-[14px]">Buscar…</span>
-              <span className="ml-1 flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
+              <span className="min-w-0 truncate text-[14px]">Buscar producto o acción…</span>
+              <span className="ml-auto flex shrink-0 items-center rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground">
                 Ctrl K
               </span>
             </button>
