@@ -398,6 +398,308 @@ body {
   .nav-item-in { animation: none !important; }
 }
 
+/* ─── Bienvenida de la caja: la insignia entra, la palomita se traza y dos ondas
+   salen una sola vez. ─── */
+@keyframes box-welcome-badge {
+  0% { opacity: 0; transform: scale(0.5); }
+  65% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes box-welcome-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes box-welcome-ring {
+  0% { opacity: 0; transform: scale(0.7); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: scale(2.1); }
+}
+.box-welcome-badge {
+  animation: box-welcome-badge 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.box-welcome-check path {
+  stroke-dasharray: 1;
+  animation: box-welcome-draw 340ms ease-out 300ms both;
+}
+.box-welcome-ring {
+  animation: box-welcome-ring 1200ms ease-out 240ms both;
+}
+.box-welcome-ring-late {
+  animation-delay: 520ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .box-welcome-badge,
+  .box-welcome-check path { animation: none; }
+  .box-welcome-check path { stroke-dasharray: none; }
+  .box-welcome-ring { display: none; }
+}
+
+/* ─── Ticket de Vendia: impresora de la primera configuración y de la descarga.
+   El fondo, el papel y la tinta no cambian con el tema: son objetos físicos y
+   el degradado es el mismo del asistente. ─── */
+.vt-stage {
+  background: linear-gradient(135deg, hsl(222 47% 14%), hsl(218 55% 32%));
+}
+.vt-printer {
+  position: relative;
+  width: 268px;
+  max-width: 100%;
+  flex: none;
+}
+.vt-slot {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border-radius: 10px 10px 4px 4px;
+  background: linear-gradient(hsl(222 35% 27%), hsl(222 41% 16%));
+  box-shadow: 0 10px 22px -8px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.14);
+}
+.vt-slot::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(218 55% 55%);
+}
+.vt-slot::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 4px;
+  height: 4px;
+  border-radius: 3px;
+  background: hsl(222 47% 4%);
+}
+.vt-feed {
+  position: relative;
+  height: 336px;
+  margin: -6px 14px 0;
+  overflow: hidden;
+}
+.vt-ticket {
+  position: relative;
+  padding: 16px 16px 104px;
+  color: hsl(222 47% 16%);
+  background: hsl(216 40% 99%);
+  font: 500 12.5px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-align: left;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% 100% / 12px 100%;
+  mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% 100% / 12px 100%;
+}
+.vt-ticket h4 {
+  margin: 0;
+  font: 600 14px/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.vt-ticket hr {
+  border: 0;
+  border-top: 1px dashed hsl(217 20% 72%);
+  margin: 9px 0;
+}
+.vt-sub {
+  text-align: center;
+  color: hsl(218 14% 42%);
+  font-size: 11px;
+}
+.vt-left {
+  margin-top: 6px;
+  text-align: left;
+}
+.vt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.vt-row em {
+  font-style: normal;
+  font-weight: 600;
+  color: hsl(160 84% 30%);
+}
+.vt-total {
+  font-weight: 600;
+  font-size: 15px;
+}
+.vt-seal {
+  position: absolute;
+  left: 12px;
+  bottom: 13px;
+  width: 82px;
+  height: 82px;
+  color: hsl(218 55% 35%);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  transform: rotate(-11deg);
+  opacity: 0.92;
+}
+.vt-stamp {
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  padding: 2px 9px;
+  border: 2.5px solid hsl(160 84% 30%);
+  border-radius: 6px;
+  color: hsl(160 84% 30%);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 1px;
+  transform: rotate(-7deg);
+}
+@keyframes vt-print {
+  0% { transform: translateY(-100%); }
+  22%, 30% { transform: translateY(-72%); }
+  52%, 60% { transform: translateY(-44%); }
+  80%, 86% { transform: translateY(-20%); }
+  100% { transform: none; }
+}
+@keyframes vt-seal-in {
+  from { opacity: 0; transform: rotate(-11deg) scale(2.1); }
+  to { opacity: 0.92; transform: rotate(-11deg) scale(1); }
+}
+@keyframes vt-stamp-in {
+  from { opacity: 0; transform: rotate(-7deg) scale(2.1); }
+  to { opacity: 1; transform: rotate(-7deg) scale(1); }
+}
+@keyframes vt-hit {
+  40% { transform: translateY(2px); }
+}
+@keyframes vt-swap {
+  0% { opacity: 0; transform: translateY(8px); }
+  15%, 85% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes vt-stay {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes vt-packet {
+  from { left: 0; opacity: 0; }
+  12%, 88% { opacity: 1; }
+  to { left: calc(100% - 14px); opacity: 0; }
+}
+/* Primera configuración: el ticket sale solo y caen los dos sellos. */
+.vt-auto {
+  animation: vt-print 2900ms cubic-bezier(0.3, 0.1, 0.3, 1) 250ms both;
+}
+.vt-auto .vt-seal {
+  animation: vt-seal-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) 3000ms both;
+}
+.vt-auto .vt-stamp {
+  animation: vt-stamp-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) 3350ms both;
+}
+.vt-scene-auto {
+  animation: vt-hit 160ms ease-out 3080ms, vt-hit 160ms ease-out 3430ms;
+}
+.vt-status {
+  position: relative;
+  height: 62px;
+  width: 100%;
+  flex: none;
+}
+.vt-status div {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  animation: vt-swap var(--vt-length) ease var(--vt-at) both;
+}
+.vt-status div.vt-last {
+  animation: vt-stay 400ms ease var(--vt-at) both;
+}
+.vt-status b {
+  display: block;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.vt-status span {
+  color: rgb(255 255 255 / 0.72);
+  font-size: 14px;
+}
+/* Descarga: el papel crece con el avance real y los sellos caen al terminar. */
+.vt-live {
+  height: 94px;
+  overflow: hidden;
+  transition: height 420ms cubic-bezier(0.3, 0.1, 0.3, 1);
+}
+.vt-live [data-group] {
+  opacity: 0.3;
+  transition: opacity 250ms ease;
+}
+.vt-live [data-group].vt-on {
+  opacity: 1;
+}
+.vt-live [data-group] em {
+  visibility: hidden;
+}
+.vt-live [data-group].vt-ok em {
+  visibility: visible;
+}
+.vt-live .vt-seal,
+.vt-live .vt-stamp {
+  opacity: 0;
+}
+.vt-live-done .vt-seal {
+  animation: vt-seal-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) 500ms both;
+}
+.vt-live-done .vt-stamp {
+  animation: vt-stamp-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) 850ms both;
+}
+.vt-scene-done {
+  animation: vt-hit 160ms ease-out 580ms, vt-hit 160ms ease-out 930ms;
+}
+.vt-count {
+  font: 500 13px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: rgb(255 255 255 / 0.7);
+}
+.vt-pipe {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.8);
+}
+.vt-line {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, rgb(255 255 255 / 0.35) 0 6px, transparent 6px 12px);
+}
+.vt-line i {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 14px;
+  height: 8px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 10px hsl(218 55% 55%);
+  animation: vt-packet 1500ms linear var(--vt-at) infinite;
+}
+.vt-pipe-idle .vt-line i {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vt-auto,
+  .vt-scene-auto,
+  .vt-scene-done,
+  .vt-auto .vt-seal,
+  .vt-auto .vt-stamp,
+  .vt-live-done .vt-seal,
+  .vt-live-done .vt-stamp,
+  .vt-line i {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+    animation-iteration-count: 1;
+  }
+  .vt-live { transition: none; }
+  .vt-status div:not(.vt-last) { display: none; }
+  .vt-status div.vt-last { animation: none; opacity: 1; }
+}
+
 /* ─── Micro-animaciones del carrito (SÓLO GPU: transform3d + opacity) ─── */
 @keyframes cart-item-in {
   from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.98); }
@@ -555,29 +857,6 @@ body {
 }
 
 /* ─── Setup Wizard: checkmark de éxito (SÓLO transform + opacity = GPU) ─── */
-@keyframes setup-check-scale {
-  0% { transform: scale(0) rotate(-30deg); opacity: 0; }
-  60% { transform: scale(1.2) rotate(3deg); opacity: 1; }
-  100% { transform: scale(1) rotate(0deg); opacity: 1; }
-}
-.setup-check-scale {
-  animation: setup-check-scale 0.5s ease-out both;
-  will-change: transform, opacity;
-}
-
-/* ─── Setup Wizard: engrane "Configurando..." girando con rebote (SÓLO transform = GPU) ─── */
-@keyframes setup-gear {
-  0% { transform: rotate(0deg) scale(1); }
-  25% { transform: rotate(90deg) scale(1.12); }
-  50% { transform: rotate(180deg) scale(1); }
-  75% { transform: rotate(270deg) scale(1.12); }
-  100% { transform: rotate(360deg) scale(1); }
-}
-.animate-setup-gear {
-  animation: setup-gear 1s ease-in-out infinite;
-  will-change: transform;
-}
-
 /* ─── Scrollbar con color primary (claro y oscuro) ─── */
 * {
   scrollbar-width: thin;

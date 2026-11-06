@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, Fragment } from "react";
 import {
-  Store, User, Phone, MapPin, Lock, Settings, CheckCircle2,
+  Store, User, Phone, MapPin, Lock, CheckCircle2,
   ChevronLeft, ChevronRight, Eye, EyeOff, Coins, Zap, Rocket,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
@@ -10,9 +10,10 @@ import { Label } from "./ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Alert, AlertDescription } from "./ui/alert";
-import { Progress } from "./ui/progress";
 import { cn } from "@/lib/utils";
 import CancelButton from "./CancelButton";
+import { SETUP_TICKET_MS, SetupTicketScene } from "./TicketPrinter";
+import vendiaIcon from "../assets/icon-vendia.svg";
 
 const PIN_LENGTH = 6;
 const PIN_MIN = 4;
@@ -183,8 +184,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [loaderPhase, setLoaderPhase] = useState("starting");
-  const [progress, setProgress] = useState(0);
+  const [savedSetup, setSavedSetup] = useState(null);
   const [isExiting, setIsExiting] = useState(false);
   // Conversión a caja: el botón sólo aparece si la red tiene un Host vivo.
   const [serverFound, setServerFound] = useState(false);
@@ -223,8 +223,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
       setErrors({});
       setShowPin(false);
       setLoading(false);
-      setLoaderPhase("starting");
-      setProgress(0);
+      setSavedSetup(null);
       setIsExiting(false);
       clearLoadTimers();
       setConfirmConvert(false);
@@ -258,8 +257,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
     } else {
       clearLoadTimers();
       setLoading(false);
-      setLoaderPhase("starting");
-      setProgress(0);
+      setSavedSetup(null);
       setIsExiting(false);
     }
   }, [open]);
@@ -404,15 +402,11 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
       }
 
       clearLoadTimers();
+      setSavedSetup(setupData);
       setLoading(true);
-      setLoaderPhase("starting");
-      setProgress(0);
       loadTimersRef.current = [
-        window.setTimeout(() => setProgress(100), 50),
-        window.setTimeout(() => setLoaderPhase("configuring"), 800),
-        window.setTimeout(() => setLoaderPhase("done"), 1600),
-        window.setTimeout(() => setIsExiting(true), 2200),
-        window.setTimeout(() => onComplete?.(setupData), 2500),
+        window.setTimeout(() => setIsExiting(true), SETUP_TICKET_MS),
+        window.setTimeout(() => onComplete?.(setupData), SETUP_TICKET_MS + 300),
       ];
     } catch (error) {
       console.error("Error saving setup:", error);
@@ -480,9 +474,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
         <aside className="relative flex w-[360px] shrink-0 flex-col justify-between px-8 py-10 text-white xl:w-[420px] xl:px-10">
 
           <header className="relative flex flex-col items-center text-center">
-            <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-xl bg-white/10 p-2 ring-1 ring-white/20 backdrop-blur">
-              <Store size={30} className="text-white" />
-            </div>
+            <img src={vendiaIcon} alt="" className="mb-4 h-28 w-28 drop-shadow-xl" />
             <p className="text-3xl font-bold uppercase leading-none tracking-[0.2em] text-white text-display">
               VENDIA
             </p>
@@ -520,45 +512,7 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
               </Alert>
             )}
 
-            {loading ? (
-              <div className="m-auto flex w-full max-w-sm animate-in fade-in zoom-in-95 duration-500 ease-out flex-col items-center gap-5 py-6 text-center">
-                <div className="relative">
-                  <div className="pointer-events-none absolute -inset-5 rounded-full bg-primary/15 blur-2xl" />
-                  {loaderPhase !== "done" ? (
-                    <div className="relative flex h-16 w-16 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
-                      <Settings size={28} className="animate-setup-gear" />
-                    </div>
-                  ) : (
-                    <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-success/15">
-                      <CheckCircle2 size={40} className="setup-check-scale text-success" />
-                    </div>
-                  )}
-                </div>
-
-                <div key={loaderPhase} className="animate-in fade-in">
-                  <h3 className="text-xl font-bold tracking-tight text-foreground">
-                    {loaderPhase === "starting" && "Inicializando VENDIA..."}
-                    {loaderPhase === "configuring" && "Configurando Sistema..."}
-                    {loaderPhase === "done" && "¡Todo Listo!"}
-                  </h3>
-                  <p className="mt-1.5 text-sm text-muted-foreground">
-                    {loaderPhase === "starting" && "Preparando tu punto de venta..."}
-                    {loaderPhase === "configuring" && "Guardando datos de la tienda y clave de acceso..."}
-                    {loaderPhase === "done" && "Entrando a tu caja de cobro..."}
-                  </p>
-                </div>
-
-                <Progress
-                  value={progress}
-                  indicatorClassName="bg-primary transition-transform duration-[2200ms] ease-out"
-                  className="h-1.5"
-                />
-
-                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[2px] text-muted-foreground">
-                  POWERED BY JRP CORE
-                </p>
-              </div>
-            ) : (
+            {loading ? null : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   {steps.map((label, i) => {
@@ -868,6 +822,15 @@ const SetupWizardScreen = ({ open, isPreviewMode = false, onComplete, onClose, o
             </footer>
           )}
         </main>
+
+        {loading && savedSetup && (
+          <SetupTicketScene storeName={savedSetup.storeName} currency={savedSetup.currency}>
+            <div className="flex flex-col items-center gap-2">
+              <img src={vendiaIcon} alt="" className="h-20 w-20 drop-shadow-xl" />
+              <span className="text-2xl font-bold">Vendia</span>
+            </div>
+          </SetupTicketScene>
+        )}
       </DialogContent>
     </Dialog>
   );

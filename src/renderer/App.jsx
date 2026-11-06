@@ -5,6 +5,7 @@ import SetupWizardScreen from "./components/SetupWizardScreen";
 import AddProductModal from "./components/AddProductModal";
 import LoginScreen from "./components/LoginScreen";
 import BoxSetupScreen from "./components/BoxSetupScreen";
+import BoxWelcome from "./components/BoxWelcome";
 import Catalog from "./components/Catalog";
 import ToastProvider from "./components/ToastProvider";
 import { Spinner } from "./components/ui/spinner";
@@ -52,6 +53,8 @@ const AppInner = () => {
   const [isFirstTime, setIsFirstTime] = useState(null);
   const [showSetup, setShowSetup] = useState(false);
   const [setupPreview, setSetupPreview] = useState(false);
+  const [boxDownloadShown, setBoxDownloadShown] = useState(false);
+  const [boxWelcomeSeen, setBoxWelcomeSeen] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
 
   // B7 · estado de la caja. `null` = todavía sin preguntar; `{}` = no se pudo
@@ -60,6 +63,9 @@ const AppInner = () => {
   // Una vez que la caja pudo vender, un sondeo viejo en vuelo no la regresa
   // a la pantalla de vinculación (el asistente que "salta otra vez").
   const canSellRef = useRef(false);
+  // La bienvenida sólo cierra una configuración hecha en esta sesión: si la caja
+  // arrancó ya sincronizada, va directo al login.
+  const boxSetupRanRef = useRef(false);
   const loadBox = useCallback(async () => {
     try {
       const s = await window.api.invoke("box-get-settings");
@@ -72,6 +78,12 @@ const AppInner = () => {
   const isBoxDevice = !!box && box.device_role === "client";
   if (isBoxDevice && box.canSell === true) canSellRef.current = true;
   const canSell = (isBoxDevice && box.canSell === true) || canSellRef.current;
+  // Una caja nunca ve el asistente, pero `showSetup` puede venir encendido desde
+  // que la PC arrancó sin datos: el login debe usar esta misma condición o, al
+  // terminar la descarga, ninguno de los dos se pinta y queda la pantalla en blanco.
+  const wizardOpen = showSetup && !isBoxDevice;
+  if (isBoxDevice && !canSell) boxSetupRanRef.current = true;
+  const markBoxDownloadShown = useCallback(() => setBoxDownloadShown(true), []);
 
   useEffect(() => {
     loadBox();
@@ -126,7 +138,7 @@ const AppInner = () => {
   // controles nativos se fundan con la marca en vez de verse un bloque sólido.
   // El login ya no es full-bleed de marca (tarjeta sobre el fondo normal):
   // sólo el SetupWizard conserva el gradiente.
-  const onBrandScreen = showSetup;
+  const onBrandScreen = wizardOpen;
   // Con un diálogo o panel abierto el fondo se oscurece: la franja nativa se
   // atenúa igual (se detecta en el DOM para no tocar cada diálogo).
   const [modalOpen, setModalOpen] = useState(false);
@@ -244,11 +256,25 @@ const AppInner = () => {
     );
   }
 
-  if (isBoxDevice && !canSell) {
+  // Con `canSell` ya en true sigue aquí hasta que terminan de caer los sellos.
+  if (isBoxDevice && (!canSell || (boxSetupRanRef.current && !boxDownloadShown))) {
     return (
       <ThemeModeContext.Provider value={colorMode}>
         <ToastProvider>
-          <BoxSetupScreen settings={box} onRefresh={loadBox} />
+          <BoxSetupScreen settings={box} onRefresh={loadBox} onFinished={markBoxDownloadShown} />
+        </ToastProvider>
+      </ThemeModeContext.Provider>
+    );
+  }
+
+  if (canSell && boxSetupRanRef.current && !boxWelcomeSeen) {
+    return (
+      <ThemeModeContext.Provider value={colorMode}>
+        <ToastProvider>
+          <BoxWelcome
+            deviceCode={box.box_device_code}
+            onContinue={() => setBoxWelcomeSeen(true)}
+          />
         </ToastProvider>
       </ThemeModeContext.Provider>
     );
@@ -269,17 +295,17 @@ const AppInner = () => {
       <ThemeModeContext.Provider value={colorMode}>
         <ToastProvider>
           <SetupWizardScreen
-            open={showSetup && !isBoxDevice}
+            open={wizardOpen}
             isPreviewMode={setupPreview}
             onComplete={handleSetupComplete}
             onClose={handleSetupClose}
             onConvertToBox={loadBox}
           />
 
-          {!showSetup && (
+          {!wizardOpen && (
             <LoginScreen
               onLogin={handleLogin}
-              isFirstTime={isFirstTime}
+              isFirstTime={isFirstTime && !isBoxDevice}
               onConvertToBox={loadBox}
             />
           )}
@@ -292,7 +318,7 @@ const AppInner = () => {
     <ThemeModeContext.Provider value={colorMode}>
       <ToastProvider>
         <SetupWizardScreen
-          open={showSetup && !isBoxDevice}
+          open={wizardOpen}
           isPreviewMode={setupPreview}
           onComplete={handleSetupComplete}
           onClose={handleSetupClose}

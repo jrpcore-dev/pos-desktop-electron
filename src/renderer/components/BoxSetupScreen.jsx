@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Monitor, RefreshCw, Store, Unplug, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import BoxLinkWizard from "./BoxLinkWizard";
+import { TicketPrinter } from "./TicketPrinter";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 import vendiaIcon from "../assets/icon-vendia.svg";
@@ -27,8 +28,8 @@ import vendiaIcon from "../assets/icon-vendia.svg";
    se desmonta. Si la caja llega ya aprobada (reinicio), el primer sondeo
    dispara la descarga igual.
 
-   Al terminar le avisa a App, que vuelve a leer `box-get-settings` y abre la
-   app de una pieza.
+   Al terminar se queda unos segundos para que caigan los sellos del ticket y
+   después le avisa a App con `onFinished`, que sigue con la bienvenida.
    ──────────────────────────────────────────────────────────── */
 
 const APPROVAL_POLL_MS = 2500;
@@ -38,6 +39,9 @@ const REVOKED_POLL_MS = 15000;
 
 const heroGradient =
   "bg-gradient-to-br from-[hsl(var(--hero-gradient-from))] to-[hsl(var(--hero-gradient-to))]";
+
+// Lo que se queda en pantalla el ticket terminado, con los dos sellos.
+const DOWNLOAD_DONE_MS = 2400;
 
 const SETUP_STEPS = ["Buscar el Host", "Código de activación", "Aprobación en el Host", "Descargar datos"];
 
@@ -73,6 +77,16 @@ const DOWNLOAD_GROUPS = [
   },
 ];
 
+const DOWNLOAD_TABLES = DOWNLOAD_GROUPS.flatMap((g) => g.tables);
+
+// El Host sólo informa el total de la tabla en curso, así que el avance general
+// cuenta tablas terminadas más la fracción de la actual.
+const overallPercent = (progress) => {
+  const index = DOWNLOAD_TABLES.indexOf(progress?.table);
+  if (index < 0) return 0;
+  return ((index + (progress.table_pct ?? 0) / 100) / DOWNLOAD_TABLES.length) * 100;
+};
+
 const TABLE_LABELS = {
   categories: "Categorías",
   customer_tiers: "Niveles de cliente",
@@ -105,9 +119,9 @@ const SetupAside = ({ step }) => {
         "hidden w-[380px] shrink-0 flex-col justify-between rounded-2xl p-10 text-primary-foreground shadow-[0_24px_60px_-15px_hsl(222_47%_11%_/_0.45)] md:flex",
       )}
     >
-      <div className="flex items-center gap-3">
-        <img src={vendiaIcon} alt="" className="h-12 w-12 shrink-0" />
-        <span className="text-2xl font-bold">Vendia</span>
+      <div className="flex flex-col items-center gap-3 text-center">
+        <img src={vendiaIcon} alt="" className="h-28 w-28 shrink-0 drop-shadow-xl" />
+        <span className="text-3xl font-bold">Vendia</span>
       </div>
 
       <div className="flex flex-col gap-3.5">
@@ -185,7 +199,7 @@ const SetupAlert = ({ title, children }) => (
   </div>
 );
 
-const BoxSetupScreen = ({ settings, onRefresh, className }) => {
+const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -201,6 +215,10 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState("");
   const startedRef = useRef(false);
+  const [storeName, setStoreName] = useState("");
+  // Mayor avance visto: el porcentaje de la pantalla nunca retrocede.
+  const peakRef = useRef(0);
+  const ticketRef = useRef(null);
 
   // Si una respuesta vieja llega tarde, la caja no vuelve al asistente.
   const pairedRef = useRef(!!settings?.host_url);
@@ -221,6 +239,8 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const sync = useCallback(async () => {
     setBusy(true);
     setError("");
+    setProgress(null);
+    peakRef.current = 0;
     try {
       const res = await window.api.invoke("replica-sync-now", {});
       if (!res?.success) {
@@ -315,6 +335,27 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
     sync();
   }, [paired, canSell, link, sync]);
 
+  // Con la descarga terminada se quedan los sellos un momento antes de seguir.
+  useEffect(() => {
+    if (!canSell) return undefined;
+    const timer = window.setTimeout(() => onFinished?.(), DOWNLOAD_DONE_MS);
+    return () => window.clearTimeout(timer);
+  }, [canSell, onFinished]);
+
+  // El nombre de la tienda llega con la descarga: antes puede no estar.
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve()
+      .then(() => window.api.invoke("get-setting", "store_name"))
+      .then((name) => {
+        if (alive && typeof name === "string") setStoreName(name.trim());
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [canSell]);
+
   const cancelSetup = async () => {
     setCancelling(true);
     setCancelError("");
@@ -330,17 +371,29 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
     setConfirmCancel(false);
   };
 
-  const pct = progress?.table_pct;
-  // Sin avance conocido la barra no puede decir 100 % mientras prepara.
-  const filling = pct != null ? `${pct}%` : "0%";
   const waiting = paired && !canSell && !link?.approved;
   const linking = !paired || relink;
   const blocked = waiting && (link?.revoked || link?.notPaired);
   const step = linking ? wizardStep : waiting ? 2 : 3;
 
-  const currentGroup = progress?.table
+  const downloading = !linking && !waiting;
+  const groupInProgress = progress?.table
     ? DOWNLOAD_GROUPS.findIndex((g) => g.tables.includes(progress.table))
     : -1;
+  const currentGroup = canSell ? DOWNLOAD_GROUPS.length : groupInProgress;
+  peakRef.current = Math.max(peakRef.current, overallPercent(progress));
+  const pct = canSell ? 100 : Math.min(99, Math.round(peakRef.current));
+
+  // El papel sale hasta el renglón del grupo en curso; al terminar, completo.
+  useLayoutEffect(() => {
+    const ticket = ticketRef.current;
+    if (!ticket) return;
+    const rows = ticket.querySelectorAll("[data-group]");
+    const row = rows[Math.max(0, currentGroup)];
+    ticket.style.height = row
+      ? `${row.offsetTop + row.offsetHeight + 8}px`
+      : `${ticket.scrollHeight}px`;
+  }, [currentGroup]);
 
   return (
     <div
@@ -352,7 +405,14 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
       <SetupAside step={Math.min(step, SETUP_STEPS.length - 1)} />
 
       <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3">
-        <section className="flex w-full max-w-[600px] flex-col gap-5 rounded-2xl border border-border bg-card p-9 shadow-[0_1px_2px_hsl(222_47%_11%_/_0.06),0_12px_24px_-8px_hsl(222_47%_11%_/_0.1),0_32px_64px_-24px_hsl(222_47%_11%_/_0.22)]">
+        <section
+          className={cn(
+            "flex w-full flex-col gap-5 rounded-2xl p-9 shadow-[0_1px_2px_hsl(222_47%_11%_/_0.06),0_12px_24px_-8px_hsl(222_47%_11%_/_0.1),0_32px_64px_-24px_hsl(222_47%_11%_/_0.22)]",
+            downloading
+              ? cn("vt-stage max-w-[880px] text-white", canSell && "vt-scene-done")
+              : "max-w-[600px] border border-border bg-card",
+          )}
+        >
           {linking ? (
             <>
               <BoxLinkWizard onStepChange={setWizardStep} />
@@ -411,85 +471,103 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
               )}
             </>
           ) : (
-            <>
-              <header className="flex flex-col gap-1.5">
-                <h2 className="text-2xl font-bold text-foreground">Descargando la información</h2>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Puede tardar unos minutos. No apagues esta caja.
-                </p>
-              </header>
+            <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_268px]">
+              <div className="flex min-w-0 flex-col gap-4">
+                <header className="flex flex-col gap-1">
+                  <h2 className="text-2xl font-bold">
+                    {canSell ? "¡Descarga completa!" : "Descargando tu negocio"}
+                  </h2>
+                  <p className="text-sm leading-relaxed text-white/70">
+                    {canSell
+                      ? "Tu caja ya tiene toda la información."
+                      : "Puede tardar unos minutos. No apagues esta caja."}
+                  </p>
+                </header>
 
-              {error && <SetupAlert title="No se pudo descargar">{error}</SetupAlert>}
+                {error && (
+                  <div className="rounded-xl bg-card">
+                    <SetupAlert title="No se pudo descargar">{error}</SetupAlert>
+                  </div>
+                )}
 
-              <div className={cn(heroGradient, "flex flex-col gap-4 rounded-2xl p-6 text-primary-foreground shadow-lg")}>
-                <div className="flex items-end justify-between gap-4">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="truncate text-sm font-semibold text-primary-foreground/80">
-                      {progress?.table
+                <div>
+                  <p className="text-7xl font-bold leading-none tracking-tight tabular-nums">{pct}%</p>
+                  <p className="mt-2 min-h-5 text-sm font-semibold text-white/85">
+                    {canSell
+                      ? "Abriendo tu caja"
+                      : progress?.table
                         ? `Ahora: ${TABLE_LABELS[progress.table] || progress.table}`
                         : busy
                           ? "Preparando…"
                           : "En espera"}
-                    </span>
-                    <span className="text-5xl font-bold leading-none tabular-nums">
-                      {pct != null ? `${pct}%` : "—"}
-                    </span>
-                  </div>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums text-primary-foreground/80">
-                    {progress?.done != null
-                      ? `${progress.done.toLocaleString("es-MX")} registros`
-                      : ""}
-                  </span>
+                  </p>
                 </div>
+
                 <div
-                  className="h-2.5 w-full overflow-hidden rounded-full bg-primary-foreground/20"
+                  className="h-2.5 w-full overflow-hidden rounded-full bg-white/20"
                   role="progressbar"
                   aria-label="Avance de la descarga"
-                  aria-valuenow={pct ?? 0}
+                  aria-valuenow={pct}
                   aria-valuemin={0}
                   aria-valuemax={100}
                 >
                   <div
-                    className="h-full rounded-full bg-primary-foreground transition-[width] duration-200"
-                    style={{ width: filling }}
+                    className="h-full rounded-full bg-white transition-[width] duration-300"
+                    style={{ width: `${pct}%` }}
                   />
                 </div>
+
+                <p className="vt-count">
+                  {progress?.done != null ? `${progress.done.toLocaleString("es-MX")} registros` : "\u00a0"}
+                </p>
+
+                <div className={cn("vt-pipe", (canSell || !busy) && "vt-pipe-idle")}>
+                  <span>Host</span>
+                  <div className="vt-line">
+                    <i style={{ "--vt-at": "0ms" }} />
+                    <i style={{ "--vt-at": "500ms" }} />
+                    <i style={{ "--vt-at": "1000ms" }} />
+                  </div>
+                  <span>Esta caja</span>
+                </div>
+
+                {!busy && !canSell && (
+                  <Button
+                    type="button"
+                    onClick={sync}
+                    className="self-start bg-primary-foreground text-primary hover:bg-primary-foreground/90"
+                  >
+                    <RefreshCw size={16} />
+                    {error ? "Reintentar descarga" : "Descargar de nuevo"}
+                  </Button>
+                )}
               </div>
 
-              <ul className="grid grid-cols-2 gap-2.5">
-                {DOWNLOAD_GROUPS.map((g, i) => {
-                  const done = currentGroup > i;
-                  const active = currentGroup === i;
-                  return (
-                    <li
+              <div className="justify-self-center">
+                <TicketPrinter ref={ticketRef} ticketClassName={cn("vt-live", canSell && "vt-live-done")}>
+                  <h4>{storeName || "Tu negocio"}</h4>
+                  <div className="vt-sub">
+                    {settings?.box_device_code ? `Caja ${settings.box_device_code}` : "Esta caja"} · Descarga inicial
+                  </div>
+                  <hr />
+                  {DOWNLOAD_GROUPS.map((g, i) => (
+                    <div
                       key={g.label}
-                      className={cn(
-                        "flex items-center gap-2.5 rounded-xl px-3.5 py-3 text-sm",
-                        done && "bg-success/[0.08] font-semibold text-foreground",
-                        active && "bg-chart-2/[0.12] font-semibold text-foreground",
-                        !done && !active && "bg-muted text-muted-foreground",
-                      )}
+                      data-group
+                      className={cn("vt-row", i <= currentGroup && "vt-on", i < currentGroup && "vt-ok")}
                     >
-                      {done ? (
-                        <Check size={18} strokeWidth={3} className="shrink-0 text-success" />
-                      ) : active ? (
-                        <Spinner size={18} className="shrink-0 text-chart-2" />
-                      ) : (
-                        <span className="m-1 h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/40" />
-                      )}
-                      {g.label}
-                    </li>
-                  );
-                })}
-              </ul>
-
-              {!busy && (
-                <Button type="button" variant={error ? "default" : "outline"} onClick={sync}>
-                  <RefreshCw size={16} />
-                  {error ? "Reintentar descarga" : "Descargar de nuevo"}
-                </Button>
-              )}
-            </>
+                      <span>{g.label}</span>
+                      <em>✓</em>
+                    </div>
+                  ))}
+                  <hr />
+                  <div className="vt-row vt-total">
+                    <span>REGISTROS</span>
+                    <span>{(progress?.done ?? 0).toLocaleString("es-MX")}</span>
+                  </div>
+                </TicketPrinter>
+              </div>
+            </div>
           )}
         </section>
 
