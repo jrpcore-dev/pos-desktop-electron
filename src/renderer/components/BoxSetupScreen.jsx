@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, Monitor, RefreshCw, Store, Unplug } from "lucide-react";
+import { Check, CircleAlert, Monitor, RefreshCw, Store, Unplug, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import BoxLinkWizard from "./BoxLinkWizard";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
+import vendiaIcon from "../assets/icon-vendia.svg";
 
 /* ────────────────────────────────────────────────────────────
    BoxSetupScreen — pantalla de arranque de la CAJA (B7).
@@ -105,9 +106,7 @@ const SetupAside = ({ step }) => {
       )}
     >
       <div className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-foreground/15">
-          <Store size={24} />
-        </span>
+        <img src={vendiaIcon} alt="" className="h-12 w-12 shrink-0" />
         <span className="text-2xl font-bold">Vendia</span>
       </div>
 
@@ -196,6 +195,11 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
   const [relink, setRelink] = useState(false);
   // Paso del asistente, para que el panel de marca lo acompañe.
   const [wizardStep, setWizardStep] = useState(0);
+  // Cerrar sin configurar: pide confirmarlo aquí mismo porque esta pantalla va
+  // por encima de los diálogos (z-[9999]).
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState("");
   const startedRef = useRef(false);
 
   // Si una respuesta vieja llega tarde, la caja no vuelve al asistente.
@@ -311,6 +315,21 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
     sync();
   }, [paired, canSell, link, sync]);
 
+  const cancelSetup = async () => {
+    setCancelling(true);
+    setCancelError("");
+    try {
+      const res = await window.api.invoke("box-cancel-setup");
+      // Con éxito la app se reinicia: el spinner queda hasta que cierre.
+      if (res?.success) return;
+      setCancelError(res?.error || "No se pudo cerrar la configuración");
+    } catch (err) {
+      setCancelError(err?.message || String(err));
+    }
+    setCancelling(false);
+    setConfirmCancel(false);
+  };
+
   const pct = progress?.table_pct;
   // Sin avance conocido la barra no puede decir 100 % mientras prepara.
   const filling = pct != null ? `${pct}%` : "0%";
@@ -332,7 +351,7 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
     >
       <SetupAside step={Math.min(step, SETUP_STEPS.length - 1)} />
 
-      <main className="flex min-w-0 flex-1 items-center justify-center">
+      <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3">
         <section className="flex w-full max-w-[600px] flex-col gap-5 rounded-2xl border border-border bg-card p-9 shadow-[0_1px_2px_hsl(222_47%_11%_/_0.06),0_12px_24px_-8px_hsl(222_47%_11%_/_0.1),0_32px_64px_-24px_hsl(222_47%_11%_/_0.22)]">
           {linking ? (
             <>
@@ -473,6 +492,37 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
             </>
           )}
         </section>
+
+        {settings?.canCancelSetup && !busy && (
+          <div className="flex flex-col items-center gap-1.5">
+            {confirmCancel ? (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  ¿Dejar de configurar esta PC como caja?
+                </span>
+                <Button type="button" size="sm" disabled={cancelling} onClick={cancelSetup}>
+                  {cancelling && <Spinner size={14} />}
+                  {cancelling ? "Cerrando…" : "Sí, cerrar"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={cancelling}
+                  onClick={() => setConfirmCancel(false)}
+                >
+                  Seguir aquí
+                </Button>
+              </div>
+            ) : (
+              <Button type="button" variant="ghost" onClick={() => setConfirmCancel(true)}>
+                <X size={16} />
+                Cerrar
+              </Button>
+            )}
+            {cancelError && <p className="text-sm text-destructive">{cancelError}</p>}
+          </div>
+        )}
       </main>
     </div>
   );

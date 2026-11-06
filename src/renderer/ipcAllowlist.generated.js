@@ -12,6 +12,7 @@ export const invoke = [
   "add-tier",
   "adjust-stock",
   "approve-device",
+  "box-cancel-setup",
   "box-discover-hosts",
   "box-get-settings",
   "box-link-status",

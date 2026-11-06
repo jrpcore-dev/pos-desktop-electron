@@ -3772,6 +3772,21 @@ ipcMain.handle("box-link-status", async (event, opts) =>
 
 ipcMain.handle("box-get-settings", async () => clientLink.getSettings(db));
 
+// Esta PC ya no será caja: se reinicia para arrancar como cualquier instalación
+// nueva (servidor, descubrimiento, siembra) y mostrar el asistente inicial.
+ipcMain.handle("box-cancel-setup", async () => {
+  const out = clientLink.cancelBoxSetup(db);
+  if (!out.success) return out;
+  try {
+    replicaEngine.resetSync(db);
+  } catch (err) {}
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 150);
+  return out;
+});
+
 ipcMain.handle("box-save-settings", async (event, patch) => {
   // Bloque 4/A · una instalación Host con operación real NO puede convertirse
   // en caja por accidente al actualizar. Solo una PC nueva (sin ventas ni

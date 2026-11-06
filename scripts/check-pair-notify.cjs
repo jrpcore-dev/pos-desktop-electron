@@ -147,6 +147,32 @@ const waitFor = async (fn, ms = 6000) => {
     );
   }
 
+  console.log("=== D · cerrar sin configurar ===");
+  const fresh = makeBox();
+  const pf = await clientLink.pairAsBox(fresh, { hostUrl: HOST_URL, code, deviceName: "Caja 6" });
+  check(pf.success === true && clientLink.getSettings(fresh).canCancelSetup === true, "una caja sin datos se puede cerrar", JSON.stringify(pf));
+  const keepId = activation.getSetting(fresh, clientLink.SETTINGS.BOX_DEVICE_ID);
+  const closed = clientLink.cancelBoxSetup(fresh);
+  check(closed.success === true, "cerrar la devuelve a PC sin configurar", JSON.stringify(closed));
+  const after = clientLink.getSettings(fresh);
+  check(!after.device_role && !after.host_url && !dbSchema.isClientRole(fresh), "ya no es caja ni tiene Host", JSON.stringify(after));
+  check(!clientLink.readPairedToken(fresh), "se borra el token de emparejamiento");
+  check(
+    fresh.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_change_log%'").get().c > 0,
+    "recupera los triggers de Host",
+  );
+  check(activation.getSetting(fresh, clientLink.SETTINGS.BOX_DEVICE_ID) === keepId, "conserva su identidad por si se vincula después");
+
+  // `box` ya descargó el snapshot: es una copia real del negocio.
+  check(clientLink.getSettings(box).canCancelSetup === false, "una caja con datos no ofrece cerrar");
+  activation.setSetting(box, clientLink.SETTINGS.SYNC_COMPLETED, "0"); // p. ej. re-vinculando
+  const refused = clientLink.cancelBoxSetup(box);
+  check(refused.code === "SETUP_NOT_CANCELLABLE" && dbSchema.isClientRole(box), "…y aunque se pida, sigue siendo caja", JSON.stringify(refused));
+  const queued = makeBox();
+  activation.setSetting(queued, clientLink.SETTINGS.HOST_URL, HOST_URL);
+  queued.prepare("INSERT INTO pending_sales (folio, payload_json, idempotency_key, local_created_at) VALUES ('B-000001', '{}', 'k1', '2026-11-05')").run();
+  check(clientLink.cancelBoxSetup(queued).success === false, "con ventas por subir tampoco se puede cerrar");
+
   stop();
   await apiServer.stopServer();
   console.log(`\n=== emparejar y avisar: ${pass} PASS / ${fail} FAIL ===`);

@@ -164,6 +164,7 @@ const CLASSIFICATION_BASE = {
   "taecel:test-credentials": SCOPES.HOST_WRITE,
   // 3g/D · ajusta el vínculo de ESTA caja con su Host: es del propio aparato.
   "box-save-settings": SCOPES.SYSTEM,
+  "box-cancel-setup": SCOPES.SYSTEM,
   "approve-device": SCOPES.HOST_WRITE,
   "reject-device": SCOPES.HOST_WRITE,
 };

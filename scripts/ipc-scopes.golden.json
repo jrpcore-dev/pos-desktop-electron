@@ -10,6 +10,7 @@
   "add-tier": "rpc",
   "adjust-stock": "rpc",
   "approve-device": "host_write",
+  "box-cancel-setup": "system",
   "box-discover-hosts": "system",
   "box-get-settings": "host_read",
   "box-link-status": "host_read",

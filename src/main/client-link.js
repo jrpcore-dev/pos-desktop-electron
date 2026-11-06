@@ -161,6 +161,7 @@ const getSettings = (db) => {
   // B7 · la caja decide desde AQUÍ si puede vender, con la misma `canSell` que
   // usa main. Si se calculara en el renderer habría dos verdades distintas.
   out.canSell = canSell(db);
+  out.canCancelSetup = canCancelSetup(db);
   return out;
 };
 
@@ -184,6 +185,38 @@ const saveSettings = (db, patch = {}) => {
 };
 
 const canSell = (db) => activation.getSetting(db, SETTINGS.SYNC_COMPLETED) === "1";
+
+// ¿Esta PC puede dejar de ser caja? Sólo si nunca bajó datos del Host y no
+// guarda ventas por subir. Una caja que ya sincronizó tiene una COPIA del
+// negocio: volverla Host dejaría dos Hosts con datos que se separan.
+// `replica_synced_at` es replica-engine KEYS.SYNCED_AT (ese módulo depende de éste).
+const canCancelSetup = (db) =>
+  !canSell(db) && !activation.getSetting(db, "replica_synced_at") && safePending(db) === 0;
+
+// Se arrepintió en el asistente de la caja: vuelve a ser una PC sin configurar.
+// Conserva `box_device_id`: si luego se vincula, el Host la reconoce.
+const cancelBoxSetup = (db) => {
+  if (!canCancelSetup(db)) {
+    return fail("SETUP_NOT_CANCELLABLE", "Esta caja ya tiene datos del Host y no puede dejar de ser caja desde aquí");
+  }
+  const del = db.prepare("DELETE FROM settings WHERE key = ?");
+  db.transaction(() => {
+    for (const key of [
+      SETTINGS.DEVICE_ROLE,
+      SETTINGS.HOST_URL,
+      SETTINGS.HOST_DEVICE_ID,
+      SETTINGS.SYNC_COMPLETED,
+      SETTINGS.BOX_DEVICE_CODE,
+      SETTINGS.BOX_PAIRED_TOKEN,
+      SETTINGS.BOX_SESSION_TOKEN,
+      "box_folio_prefix",
+    ]) {
+      del.run(key);
+    }
+  })();
+  dbSchema.ensureTriggersForRole(db);
+  return { success: true };
+};
 
 const markSyncCompleted = (db, value = true) =>
   activation.setSetting(db, SETTINGS.SYNC_COMPLETED, value ? "1" : "0");
@@ -459,6 +492,7 @@ module.exports = {
   getSettings,
   saveSettings,
   canSell,
+  cancelBoxSetup,
   markSyncCompleted,
   inspectHost,
   discoverHosts,
