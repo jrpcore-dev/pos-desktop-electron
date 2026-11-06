@@ -31,7 +31,7 @@ const ERRORS = {
   HOST_NOT_FOUND: "No encontramos ningún Host en la red. Revisa que el escritorio esté encendido o escribe la IP.",
   HOST_UNREACHABLE: "Perdimos contacto con el Host. Revisa la conexión.",
   PROTOCOL_MISMATCH: "Este Host no es compatible con la versión de la caja. Actualiza una de las dos partes.",
-  PAIR_CODE_INVALID: "El código de activación no coincide. Revísalo en el Host: Configuración → App Móvil.",
+  PAIR_CODE_INVALID: "El código de activación no es válido. Revísalo en el Host: Configuración → App Móvil.",
   PAIR_RATE_LIMITED: "Demasiados intentos. Espera 15 minutos y vuelve a intentarlo.",
   PAIR_PENDING: "El Host aún no aprobó esta caja.",
   PAIR_REVOKED: "El Host revocó esta caja. Pide un nuevo emparejamiento.",
@@ -47,14 +47,14 @@ const ERRORS = {
 // `PAIR_REJECTED` no va en la tabla: es el comodín de cualquier fallo sin código
 // y un texto fijo escondía el motivo real, que aquí llega en `error`.
 const message = (res) => {
-  const base = ERRORS[res?.code] || res?.error || "Error desconocido";
+  // Con `url` el fallo ya dice a qué dirección se intentó llegar y por qué.
+  const base = (res?.url && res?.error) || ERRORS[res?.code] || res?.error || "Error desconocido";
   return res?.code === "PAIR_CODE_INVALID" && Number.isFinite(res?.attempts_left)
     ? `${base} Te quedan ${res.attempts_left} intentos.`
     : base;
 };
 
-// El código son 16 caracteres (los guiones no cuentan). Revisarlo aquí no gasta
-// intentos y dice qué pasa cuando se copió a mano incompleto.
+// Sólo para el contador: el formato lo valida `box-pair` (checkCodeFormat).
 const CODE_LENGTH = 16;
 const codeChars = (value) => String(value || "").replace(/[^A-Za-z0-9]/g, "").length;
 
@@ -120,12 +120,6 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
 
   const pair = () =>
     run(async () => {
-      const typed = codeChars(code);
-      if (typed !== CODE_LENGTH) {
-        return setError(
-          `El código tiene ${CODE_LENGTH} caracteres y escribiste ${typed}. Revísalo en el Host: Configuración → App Móvil.`,
-        );
-      }
       const t0 = Date.now();
       setPairStage(0);
       const timer = window.setInterval(

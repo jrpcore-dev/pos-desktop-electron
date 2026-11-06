@@ -26,6 +26,8 @@ const dbSchema = require(path.join(REPO, "src/main/db-schema.js"));
 const replicaEngine = require(path.join(REPO, "src/main/replica-engine.js"));
 const replicaLive = require(path.join(REPO, "src/main/replica-live.js"));
 const opQueue = require(path.join(REPO, "src/main/op-queue.js"));
+const discovery = require(path.join(REPO, "src/main/discovery.js"));
+const dgram = require("dgram");
 
 const TMP = path.join(os.tmpdir(), "opencode", `check-pair-${process.pid}`);
 fs.mkdirSync(TMP, { recursive: true });
@@ -164,7 +166,53 @@ const waitFor = async (fn, ms = 6000) => {
   const fine = await clientLink.pairAsBox(cutBox, { hostUrl: HOST_URL, code: code.toLowerCase(), deviceName: "Caja 7" });
   check(fine.success === true, "con el código completo entra, sin importar mayúsculas", JSON.stringify(fine));
 
-  console.log("=== E · cerrar sin configurar ===");
+  console.log("=== E · formato del código ===");
+  const fmt = (c) => clientLink.checkCodeFormat(c);
+  check(fmt("ABCD-EFGH-JKMN-PQRS") === null, "código completo: pasa");
+  check(fmt("abcdefghjkmnpqrs") === null, "sin guiones y en minúsculas: pasa");
+  check(fmt("ABCD-EFGH-JK")?.error.includes("escribiste 10"), "incompleto: dice cuántos lleva", JSON.stringify(fmt("ABCD-EFGH-JK")));
+  check(fmt("ABCD-EFGH-JKMN-PQR*")?.code === "PAIR_CODE_FORMAT", "con símbolos: no es válido");
+  check(fmt("")?.code === "PAIR_CODE_FORMAT", "vacío: no es válido");
+
+  console.log("=== F · el Host anuncia una IP alcanzable ===");
+  const nics = {
+    "Ethernet 2": [{ family: "IPv4", address: "169.254.134.118", netmask: "255.255.0.0", internal: false }],
+    "VirtualBox": [{ family: "IPv4", address: "192.168.56.1", netmask: "255.255.255.0", internal: false }],
+    "Wi-Fi": [{ family: "IPv4", address: "192.168.3.108", netmask: "255.255.255.0", internal: false }],
+    Loopback: [{ family: "IPv4", address: "127.0.0.1", netmask: "255.0.0.0", internal: true }],
+  };
+  check(discovery.pickLocalIP(nics, "192.168.3.50") === "192.168.3.108", "elige el adaptador de la subred de la caja");
+  check(discovery.pickLocalIP(nics, "10.0.0.5") === "192.168.56.1", "sin subred común evita 169.254");
+  check(discovery.pickLocalIP({ E: nics["Ethernet 2"] }, "10.0.0.5") === "169.254.134.118", "si es lo único que hay, usa eso");
+  check(discovery.pickLocalIP({}, "10.0.0.5") === "127.0.0.1", "sin adaptadores no truena");
+
+  const targets = clientLink.broadcastTargets(nics);
+  check(
+    targets.includes("192.168.3.255") && targets.includes("169.254.255.255") && targets.includes("192.168.56.255"),
+    "la caja pregunta en cada red, no sólo por el adaptador principal",
+    targets.join(","),
+  );
+  check(!targets.includes("127.255.255.255"), "…sin contar el loopback");
+
+  // Host viejo que anuncia una IP inalcanzable: la caja usa de dónde vino la respuesta.
+  const liar = dgram.createSocket("udp4");
+  await new Promise((r) => liar.bind(3598, "0.0.0.0", r));
+  liar.on("message", (msg, rinfo) => {
+    if (msg.toString().trim() === "POS_DISCOVERY") liar.send(`POS_SERVER:169.254.9.9:${PORT}`, rinfo.port, rinfo.address);
+  });
+  const found = await clientLink.discoverHosts({ timeoutMs: 700, discoveryPort: 3598 });
+  liar.close();
+  check(
+    found.success === true && found.hosts.length === 1 && !found.hosts[0].url.includes("169.254"),
+    "aunque el Host anuncie 169.254, la caja encuentra la dirección real",
+    JSON.stringify(found),
+  );
+
+  // Sin Host en esa dirección el fallo dice cuál y por qué, no un texto genérico.
+  const gone = await clientLink.pairAsBox(makeBox(), { hostUrl: "http://127.0.0.1:3599", code, deviceName: "Caja 8" });
+  check(gone.success === false && gone.url === "http://127.0.0.1:3599" && gone.error.includes("127.0.0.1:3599"), "sin conexión: dice a qué dirección intentó", JSON.stringify(gone));
+
+  console.log("=== G · cerrar sin configurar ===");
   const fresh = makeBox();
   const pf = await clientLink.pairAsBox(fresh, { hostUrl: HOST_URL, code, deviceName: "Caja 6" });
   check(pf.success === true && clientLink.getSettings(fresh).canCancelSetup === true, "una caja sin datos se puede cerrar", JSON.stringify(pf));

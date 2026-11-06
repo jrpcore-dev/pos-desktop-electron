@@ -3777,6 +3777,8 @@ ipcMain.handle("box-discover-hosts", async (event, opts) =>
 );
 
 ipcMain.handle("box-pair", async (event, { hostUrl, code, deviceName } = {}) => {
+  const badFormat = clientLink.checkCodeFormat(code);
+  if (badFormat) return badFormat;
   const out = await clientLink.pairAsBox(db, { hostUrl, code, deviceName });
   refreshHostIdentity();
   return out;

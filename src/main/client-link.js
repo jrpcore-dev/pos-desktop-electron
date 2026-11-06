@@ -6,6 +6,7 @@
 // para poder probarse sin Electron.
 const crypto = require("crypto");
 const dgram = require("dgram");
+const os = require("os");
 const activation = require("./activation");
 const protocol = require("./protocol");
 const offlineQueue = require("./offline-queue");
@@ -27,6 +28,8 @@ const DISCOVERY_MSG = "POS_DISCOVERY";
 const RESPONSE_MSG = "POS_SERVER";
 const DEFAULT_API_PORT = 3456;
 const DEFAULT_TIMEOUT_MS = 2500;
+// Emparejar escribe en el Host: con Wi-Fi o un Host ocupado 2.5 s se quedan cortos.
+const PAIR_TIMEOUT_MS = 8000;
 const DEVICE_TYPE = "desktop_box";
 
 // Settings locales de la caja. `sync_completed` arranca en "0": mientras no
@@ -222,6 +225,20 @@ const markSyncCompleted = (db, value = true) =>
   activation.setSetting(db, SETTINGS.SYNC_COMPLETED, value ? "1" : "0");
 
 // ─── Descubrimiento UDP (reutiliza el protocolo de src/main/discovery.js) ───
+// En Windows 255.255.255.255 sale por un solo adaptador, y si es uno sin red
+// (cable suelto, VPN) el Host del Wi-Fi nunca se entera. Se pregunta además en
+// la dirección de broadcast de cada red de esta PC.
+const broadcastTargets = (interfaces) => {
+  const targets = new Set(["255.255.255.255", "127.0.0.1"]);
+  for (const iface of Object.values(interfaces).flat()) {
+    if (iface.family !== "IPv4" || iface.internal || !iface.netmask) continue;
+    const ip = iface.address.split(".").map(Number);
+    const mask = iface.netmask.split(".").map(Number);
+    targets.add(ip.map((octet, i) => octet | (~mask[i] & 255)).join("."));
+  }
+  return [...targets];
+};
+
 const udpDiscover = ({ timeoutMs, port = DISCOVERY_PORT }) =>
   new Promise((resolve) => {
     const socket = dgram.createSocket("udp4");
@@ -235,16 +252,21 @@ const udpDiscover = ({ timeoutMs, port = DISCOVERY_PORT }) =>
       } catch (err) {}
       resolve([...seen.values()]);
     };
-    socket.on("message", (msg) => {
+    socket.on("message", (msg, rinfo) => {
       const m = new RegExp(`^${RESPONSE_MSG}:([^:\\s]+):(\\d+)$`).exec(msg.toString().trim());
-      if (m) seen.set(`${m[1]}:${m[2]}`, { ip: m[1], port: Number(m[2]) });
+      if (!m) return;
+      // De dónde llegó la respuesta, no lo que dice el texto: esa ruta ya
+      // demostró que funciona, y un Host con varios adaptadores puede anunciar
+      // uno al que esta caja no llega (169.254.x, VPN, VirtualBox).
+      const ip = (rinfo && rinfo.address) || m[1];
+      seen.set(`${ip}:${m[2]}`, { ip, port: Number(m[2]) });
     });
     socket.on("error", done);
     socket.bind(0, () => {
       try {
         socket.setBroadcast(true);
       } catch (err) {}
-      for (const target of ["255.255.255.255", "127.0.0.1"]) {
+      for (const target of broadcastTargets(os.networkInterfaces())) {
         socket.send(DISCOVERY_MSG, port, target, () => {});
       }
       setTimeout(done, timeoutMs);
@@ -294,15 +316,40 @@ const discoverHosts = async (opts = {}) => {
     candidates.set(`${ip}:${port}`, `http://${ip}:${port}`);
   }
 
-  const hosts = [];
+  // Un Host con varias rutas contesta varias veces: se muestra una sola, la que
+  // sirve desde otra PC antes que la de esta misma máquina.
+  const byHost = new Map();
+  const rank = (url) => (/\/\/(127\.|169\.254\.)/.test(url) ? 1 : 0);
   for (const url of candidates.values()) {
     const info = await inspectHost(url, timeoutMs);
-    if (info) hosts.push(info);
+    if (!info) continue;
+    const key = `${info.host_device_id}|${new URL(url).port}`;
+    const prev = byHost.get(key);
+    if (!prev || rank(info.url) < rank(prev.url)) byHost.set(key, info);
   }
+  const hosts = [...byHost.values()];
   if (!hosts.length) {
     return fail("HOST_NOT_FOUND", "No se encontró ningún Host en la red", { hosts: [] });
   }
   return { success: true, hosts };
+};
+
+// El código son 16 letras y números (los guiones son opcionales). Se revisa
+// antes de tocar la red: no gasta intentos y dice exactamente qué le falta.
+const CODE_CHARS = 16;
+const checkCodeFormat = (code) => {
+  const raw = String(code || "").trim();
+  const chars = raw.replace(/[\s-]/g, "");
+  if (!/^[A-Za-z0-9]*$/.test(chars)) {
+    return fail("PAIR_CODE_FORMAT", "El código no es válido: solo lleva letras y números.");
+  }
+  if (chars.length !== CODE_CHARS) {
+    return fail(
+      "PAIR_CODE_FORMAT",
+      `El código no es válido: debe tener ${CODE_CHARS} caracteres y escribiste ${chars.length}.`,
+    );
+  }
+  return null;
 };
 
 // Empareja esta caja contra el Host indicado. Siempre pide el código (aunque el
@@ -313,8 +360,14 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
   if (!url || !code) return fail("INVALID_PAIR_INPUT", "Faltan datos de emparejamiento");
   const deviceId = ensureBoxDeviceId(db);
 
-  const info = await inspectHost(url, DEFAULT_TIMEOUT_MS);
-  if (!info) return fail("HOST_NOT_FOUND", `No responde ningún Host en ${url}`);
+  const info = await inspectHost(url, PAIR_TIMEOUT_MS);
+  if (!info) {
+    return fail(
+      "HOST_NOT_FOUND",
+      `No se pudo conectar con el Host en ${url}. Revisa que siga encendido y en la misma red; el código no llegó a enviarse.`,
+      { url },
+    );
+  }
 
   const proto = protocol.checkProtocol(info.protocol_version);
   if (!proto.ok) {
@@ -340,10 +393,14 @@ const pairAsBox = async (db, { hostUrl, code, deviceName } = {}) => {
         deviceType: DEVICE_TYPE,
         protocol_version: protocol.PROTOCOL_VERSION,
       }),
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(PAIR_TIMEOUT_MS),
     });
   } catch (err) {
-    return fail("HOST_UNREACHABLE", `No se pudo contactar al Host: ${err.message}`);
+    const why =
+      err && err.name === "TimeoutError"
+        ? "tardó demasiado en contestar"
+        : (err && err.cause && err.cause.code) || (err && err.message) || "sin respuesta";
+    return fail("HOST_UNREACHABLE", `No se pudo enviar la solicitud al Host en ${url} (${why}).`, { url });
   }
   let data = null;
   try {
@@ -493,6 +550,8 @@ module.exports = {
   saveSettings,
   canSell,
   cancelBoxSetup,
+  checkCodeFormat,
+  broadcastTargets,
   markSyncCompleted,
   inspectHost,
   discoverHosts,
