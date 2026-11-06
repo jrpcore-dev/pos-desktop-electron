@@ -172,7 +172,7 @@ const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 
 // Nombre visible de ESTA PC (el Host) en ventas, cortes y reportes. Sin él las
 // pantallas recortaban el device_id y salía "host-8f9". Lo cambia el admin en
-// Configuración → App Móvil; las cajas lo reciben ya resuelto por RPC.
+// Configuración → Dispositivos; las cajas lo reciben ya resuelto por RPC.
 const HOST_DEVICE_NAME_KEY = "host_device_name";
 const DEFAULT_HOST_DEVICE_NAME = "Caja 1";
 // En memoria, no leído en cada llamada: la función SQL de abajo corre DENTRO
@@ -3598,7 +3598,9 @@ const getActivationStatus = () => {
   const enabled = activation.isEnabled(db);
   const ends = activation.graceEndsAt(db);
   const graceEndsMs = ends ? new Date(ends).getTime() : null;
-  const devices = activation.listDevices(db).map((d) => ({
+  // Revocado no se borra (sus ventas siguen nombrando al dispositivo), pero sale
+  // de la lista; si vuelve con el código reaparece como pendiente.
+  const devices = activation.listDevices(db).filter((d) => d.revoked !== 1).map((d) => ({
     deviceId: d.device_id,
     deviceName: d.device_name || "Dispositivo móvil",
     deviceType: d.device_type || "mobile",
@@ -3609,17 +3611,14 @@ const getActivationStatus = () => {
     cashierName: d.cashier_name || null,
     activatedAt: d.activated_at,
     lastSeenAt: d.last_seen_at,
-    revoked: d.revoked === 1,
     state:
-      d.revoked === 1
-        ? "revoked"
-        : d.approved !== 1
-          ? "pending"
-          : d.last_seen_at &&
-              Date.now() - new Date(String(d.last_seen_at).replace(" ", "T") + "Z").getTime() <
-                24 * 60 * 60 * 1000
-            ? "online"
-            : "offline",
+      d.approved !== 1
+        ? "pending"
+        : d.last_seen_at &&
+            Date.now() - new Date(String(d.last_seen_at).replace(" ", "T") + "Z").getTime() <
+              24 * 60 * 60 * 1000
+          ? "online"
+          : "offline",
   }));
   return {
     enabled,
@@ -3721,9 +3720,9 @@ function handlePairEvent({ type, deviceName, deviceCode, reason } = {}) {
             : "Falló el emparejamiento de una caja",
       body:
         type === "pending"
-          ? `${name}${deviceCode ? ` · Caja ${deviceCode}` : ""}. Apruébala en Configuración → App Móvil.`
+          ? `${name}${deviceCode ? ` · Caja ${deviceCode}` : ""}. Apruébala en Configuración → Dispositivos.`
           : type === "invalid_code"
-            ? `${name} intentó vincularse. Revisa el código en Configuración → App Móvil.`
+            ? `${name} intentó vincularse. Revisa el código en Configuración → Dispositivos.`
             : `${name} no se pudo registrar. Revisa el log del Host.`,
     });
     note.on("click", () => {
@@ -4133,6 +4132,39 @@ ipcMain.handle("verify-cashier-pin", async (event, id, pin) => {
       success: true,
       cashier: { id: cashier.id, name: cashier.name, role: cashier.role },
     };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Confirmación de un administrador para que otro usuario haga algo puntual. A
+// diferencia de verify-cashier-pin, no inicia sesión: en una caja aquél cambiaría
+// la sesión a la del administrador. Se resuelve local con los NIP replicados.
+const ADMIN_PIN_MAX_FAILS = 5;
+const ADMIN_PIN_LOCK_MS = 60 * 1000;
+let adminPinFails = 0;
+let adminPinLockedUntil = 0;
+ipcMain.handle("verify-admin-pin", async (event, pin) => {
+  try {
+    if (Date.now() < adminPinLockedUntil) {
+      return { success: false, error: "Demasiados intentos. Espera un minuto." };
+    }
+    const admins = db
+      .prepare("SELECT id, name, pin, pin_hash, pin_salt FROM cashiers WHERE role = 'admin' AND COALESCE(is_active, 1) = 1")
+      .all();
+    const admin = admins.find((a) =>
+      a.pin_hash && a.pin_salt ? verifyPin(String(pin), a.pin_salt, a.pin_hash) : a.pin && a.pin === String(pin),
+    );
+    if (!admin) {
+      adminPinFails += 1;
+      if (adminPinFails >= ADMIN_PIN_MAX_FAILS) {
+        adminPinFails = 0;
+        adminPinLockedUntil = Date.now() + ADMIN_PIN_LOCK_MS;
+      }
+      return { success: false, error: "NIP incorrecto" };
+    }
+    adminPinFails = 0;
+    return { success: true, admin: { id: admin.id, name: admin.name } };
   } catch (error) {
     return { success: false, error: error.message };
   }

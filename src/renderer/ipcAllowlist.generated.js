@@ -178,6 +178,7 @@ export const invoke = [
   "update:download",
   "update:get-state",
   "update:install",
+  "verify-admin-pin",
   "verify-cashier-pin"
 ];
 

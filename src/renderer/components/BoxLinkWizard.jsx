@@ -31,7 +31,7 @@ const ERRORS = {
   HOST_NOT_FOUND: "No encontramos ningún Host en la red. Revisa que el escritorio esté encendido o escribe la IP.",
   HOST_UNREACHABLE: "Perdimos contacto con el Host. Revisa la conexión.",
   PROTOCOL_MISMATCH: "Este Host no es compatible con la versión de la caja. Actualiza una de las dos partes.",
-  PAIR_CODE_INVALID: "El código de activación no es válido. Revísalo en el Host: Configuración → App Móvil.",
+  PAIR_CODE_INVALID: "El código de activación no es válido. Revísalo en el Host: Configuración → Dispositivos.",
   PAIR_RATE_LIMITED: "Demasiados intentos. Espera 15 minutos y vuelve a intentarlo.",
   PAIR_PENDING: "El Host aún no aprobó esta caja.",
   PAIR_REVOKED: "El Host revocó esta caja. Pide un nuevo emparejamiento.",
@@ -41,7 +41,7 @@ const ERRORS = {
   NO_HOST_LINKED: "La caja todavía no tiene Host configurado.",
   INVALID_PAIR_INPUT: "Falta el Host o el código de activación.",
   PAIR_HOST_ERROR: "El Host no pudo registrar esta caja. Revisa el aviso en el Host y vuelve a intentar.",
-  PAIR_CODE_UNAVAILABLE: "El Host no tiene código de activación. Genera uno en Configuración → App Móvil.",
+  PAIR_CODE_UNAVAILABLE: "El Host no tiene código de activación. Genera uno en Configuración → Dispositivos.",
 };
 
 // `PAIR_REJECTED` no va en la tabla: es el comodín de cualquier fallo sin código
@@ -166,7 +166,7 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
         : step === 2
           ? {
               title: "Esperando aprobación",
-              text: `Caja ${status?.device_code || ""} pendiente en el Host: Configuración → App Móvil.`,
+              text: `Caja ${status?.device_code || ""} pendiente en el Host: Configuración → Dispositivos.`,
             }
           : { title: "Caja vinculada", text: "Falta completar la primera sincronización." };
 

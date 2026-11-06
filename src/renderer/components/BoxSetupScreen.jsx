@@ -464,7 +464,7 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
                   <p className="text-sm font-bold text-foreground">En el Host:</p>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     Toca <strong className="text-foreground">Revisar</strong> en el aviso, o entra a
-                    Configuración → App Móvil y presiona{" "}
+                    Configuración → Dispositivos y presiona{" "}
                     <strong className="text-foreground">Aprobar</strong>.
                   </p>
                 </div>

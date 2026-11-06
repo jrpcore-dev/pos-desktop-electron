@@ -41,6 +41,8 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm";
+import { useCashier } from "../contexts/CashierContext";
+import AdminUnlock from "./AdminUnlock";
 import {
   Dialog,
   DialogContent,
@@ -71,11 +73,11 @@ const TABS = [
   { id: "ticket", label: "Tickets", icon: ReceiptText, group: "Tienda" },
   { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal, group: "Operación" },
   { id: "features", label: "Funciones", icon: Blocks, group: "Operación" },
-  { id: "printer", label: "Impresora", icon: Printer, group: "Dispositivos" },
-  { id: "scale", label: "Báscula", icon: Scale, group: "Dispositivos" },
-  { id: "mobile", label: "App Móvil", icon: Smartphone, group: "Dispositivos" },
+  { id: "printer", label: "Impresora", icon: Printer, group: "Equipos" },
+  { id: "scale", label: "Báscula", icon: Scale, group: "Equipos" },
+  { id: "mobile", label: "Dispositivos", icon: Smartphone, group: "Equipos" },
 ];
-const TAB_GROUPS = ["Tienda", "Operación", "Dispositivos"];
+const TAB_GROUPS = ["Tienda", "Operación", "Equipos"];
 
 const TABS_META = {
   store: {
@@ -103,9 +105,9 @@ const TABS_META = {
   },
   mobile: {
     icon: Smartphone,
-    title: "App Móvil",
+    title: "Dispositivos",
     description:
-      "Código de activación y dispositivos autorizados para la app móvil.",
+      "Código de activación, cajas y teléfonos conectados a este negocio.",
   },
   printer: {
     icon: Printer,
@@ -390,6 +392,36 @@ function ConfigurationScreen() {
   const fileInputRef = useRef(null);
   // El aviso de "caja esperando aprobación" entra directo a Dispositivos.
   const [activeTab, setActiveTab] = useState(location.state?.tab || "store");
+  const { cashier } = useCashier();
+  const isAdmin = cashier?.role === "admin";
+  // Una caja no administra dispositivos: eso vive en el Host. Mientras se pregunta
+  // se trata como caja para que la pestaña no se asome y desaparezca.
+  const [isBoxDevice, setIsBoxDevice] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve()
+      .then(() => window.api.invoke("box-get-settings"))
+      .then((res) => {
+        if (alive) setIsBoxDevice(res?.device_role === "client");
+      })
+      .catch(() => {
+        if (alive) setIsBoxDevice(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const hiddenTabs = [
+    ...(isAdmin ? [] : ["features", "mobile"]),
+    ...(isBoxDevice === false ? [] : ["mobile"]),
+  ];
+  const visibleTabs = TABS.filter((t) => !hiddenTabs.includes(t.id));
+  const [storeUnlocked, setStoreUnlocked] = useState(false);
+  const tabHidden = hiddenTabs.includes(activeTab);
+  // Espera a saber el rol: el aviso del Host entra directo a Dispositivos.
+  useEffect(() => {
+    if (tabHidden && isBoxDevice !== null) setActiveTab("store");
+  }, [tabHidden, isBoxDevice]);
   const scaleEnabled = useScaleEnabled();
   const cartSide = useCartSide();
 
@@ -898,8 +930,8 @@ function ConfigurationScreen() {
       setActivation(res.status);
       notify(
         enabled
-          ? "Seguridad de App Móvil activada."
-          : "Seguridad de App Móvil desactivada.",
+          ? "Seguridad de dispositivos activada."
+          : "Seguridad de dispositivos desactivada.",
         "success"
       );
     } else {
@@ -933,13 +965,12 @@ function ConfigurationScreen() {
     }
   };
 
-  const handleRevokeDevice = async (deviceId) => {
-    if (
-      !window.confirm(
-        "¿Revocar este dispositivo? Perderá el acceso al momento. Para volver necesitará el código de activación y tu aprobación aquí."
-      )
-    )
-      return;
+  const [revokeTarget, setRevokeTarget] = useState(null);
+  const [revoking, setRevoking] = useState(false);
+  const handleRevokeDevice = async () => {
+    const deviceId = revokeTarget?.deviceId;
+    if (!deviceId) return;
+    setRevoking(true);
     const res = await window.api.invoke("revoke-device", deviceId);
     if (res.success) {
       notify("Dispositivo revocado.", "success");
@@ -948,6 +979,8 @@ function ConfigurationScreen() {
     } else {
       notify(res?.error || "No se pudo revocar el dispositivo.", "error");
     }
+    setRevoking(false);
+    setRevokeTarget(null);
   };
 
   // Bloque 5 · renombrar una caja sin revocar ni re-emparejar. Diálogo propio:
@@ -1445,14 +1478,15 @@ function ConfigurationScreen() {
   );
 
   // Lo que espera aprobación va primero: es lo único que pide una decisión.
-  const orderedDevices = [...(activation?.devices || [])].sort(
-    (a, b) =>
-      Number(b.approved === false && b.state !== "revoked") -
-      Number(a.approved === false && a.state !== "revoked"),
-  );
-  const pendingDevicesCount = orderedDevices.filter(
-    (d) => d.approved === false && d.state !== "revoked",
-  ).length;
+  const allDevices = activation?.devices || [];
+  const pendingDevices = allDevices.filter((d) => d.approved === false);
+  const approvedDevices = allDevices.filter((d) => d.approved !== false);
+  const pendingDevicesCount = pendingDevices.length;
+  const deviceGroups = [
+    { key: "pending", title: "Por aprobar", items: pendingDevices },
+    { key: "boxes", title: "Cajas", items: approvedDevices.filter((d) => d.deviceType === "desktop_box") },
+    { key: "phones", title: "Teléfonos", items: approvedDevices.filter((d) => d.deviceType !== "desktop_box") },
+  ].filter((g) => g.items.length > 0);
 
   const renderMobileTab = () => (
     <>
@@ -1570,118 +1604,117 @@ function ConfigurationScreen() {
                 Aún no hay dispositivos emparejados.
               </p>
             ) : (
-              <ul className="mt-1 space-y-2.5">
-                {orderedDevices.map((d) => {
-                  const isPending =
-                    d.approved === false && d.state !== "revoked";
-                  const isBox = d.deviceType === "desktop_box";
-                  const DeviceIcon = isBox ? Monitor : Smartphone;
-                  const stateChip =
-                    d.state === "revoked"
-                      ? { label: "Revocado", className: "bg-muted text-muted-foreground" }
-                      : isPending
-                        ? { label: "Por aprobar", className: "border border-warning/50 bg-warning/15 text-foreground" }
-                        : d.state === "online"
-                          ? { label: "En línea", className: "bg-success/10 text-success" }
-                          : { label: "Sin conexión", className: "bg-muted text-muted-foreground" };
-                  return (
-                    <li
-                      key={d.deviceId}
-                      className={cn(
-                        "flex items-center gap-3.5 rounded-2xl border bg-card px-4 py-3.5 shadow-md",
-                        isPending ? "border-warning/50" : "border-border",
-                        d.state === "revoked" && "opacity-70",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
-                          isPending
-                            ? "bg-warning text-warning-foreground"
-                            : isBox
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-foreground",
-                        )}
-                      >
-                        <DeviceIcon className="h-[22px] w-[22px]" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="truncate text-sm font-bold text-foreground">
-                            {d.deviceName}
-                            {d.deviceCode ? ` · ${d.deviceCode}` : ""}
-                          </p>
-                          <span className={cn("shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold", stateChip.className)}>
-                            {stateChip.label}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {isBox ? "Caja adicional" : "App móvil"}
-                          {d.cashierName
-                            ? ` · Emparejado por ${d.cashierName}`
-                            : ""}
-                          {` · Activado el ${fmtDate(d.activatedAt)}`}
-                          {d.lastSeenAt && ` · Visto ${fmtDate(d.lastSeenAt)}`}
-                          {d.pendingSync > 0 &&
-                            ` · ${d.pendingSync} venta(s) sin subir`}
-                        </p>
-                      </div>
-                      {isPending ? (
-                        <div className="flex shrink-0 gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={approvingId === d.deviceId}
-                            onClick={() => handleApproveDevice(d.deviceId)}
-                          >
-                            {approvingId === d.deviceId ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Check className="h-4 w-4" />
-                            )}
-                            Aprobar
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => handleRejectDevice(d.deviceId)}
-                          >
-                            Rechazar
-                          </Button>
-                        </div>
-                      ) : d.state !== "revoked" ? (
-                        <div className="flex shrink-0 items-center gap-1">
-                          {isBox && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                handleRenameDevice(d.deviceId, d.deviceName)
-                              }
+              <div className="mt-2 space-y-5">
+                {deviceGroups.map((group) => (
+                  <div key={group.key}>
+                    <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                      {group.title}
+                      <span className="rounded-full bg-muted px-1.5 text-[11px] tabular-nums">{group.items.length}</span>
+                    </p>
+                    <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border bg-card">
+                      {group.items.map((d) => {
+                        const isPending = d.approved === false;
+                        const isBox = d.deviceType === "desktop_box";
+                        const DeviceIcon = isBox ? Monitor : Smartphone;
+                        const online = d.state === "online";
+                        const shortCode = isBox && d.deviceCode && d.deviceCode.length <= 3 ? d.deviceCode : null;
+                        return (
+                          <li key={d.deviceId} className="flex items-center gap-3 px-3.5 py-3">
+                            <span
+                              className={cn(
+                                "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold",
+                                isPending
+                                  ? "bg-warning/15 text-foreground"
+                                  : isBox
+                                    ? "vt-stage text-white shadow-sm"
+                                    : "bg-muted text-foreground",
+                              )}
                             >
-                              <Pencil className="h-4 w-4" />
-                              Renombrar
-                            </Button>
-                          )}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0 text-destructive hover:text-destructive"
-                            onClick={() => handleRevokeDevice(d.deviceId)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Revocar
-                          </Button>
-                        </div>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
+                              {shortCode || <DeviceIcon className="h-5 w-5" />}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <p className="truncate text-sm font-bold text-foreground">{d.deviceName}</p>
+                                {!isPending && (
+                                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                                    <span className={cn("size-1.5 rounded-full", online ? "bg-success" : "bg-muted-foreground/50")} />
+                                    {online ? "En línea" : "Sin conexión"}
+                                  </span>
+                                )}
+                                {d.pendingSync > 0 && (
+                                  <span className="shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-foreground">
+                                    {d.pendingSync} sin subir
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                                {isPending
+                                  ? `Pidió acceso el ${fmtDate(d.activatedAt)}`
+                                  : d.lastSeenAt
+                                    ? `Visto ${fmtDate(d.lastSeenAt)}`
+                                    : `Activado el ${fmtDate(d.activatedAt)}`}
+                                {d.cashierName ? ` · ${d.cashierName}` : ""}
+                              </p>
+                            </div>
+                            {isPending ? (
+                              <div className="flex shrink-0 gap-1.5">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={approvingId === d.deviceId}
+                                  onClick={() => handleApproveDevice(d.deviceId)}
+                                >
+                                  {approvingId === d.deviceId ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Check className="h-4 w-4" />
+                                  )}
+                                  Aprobar
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => handleRejectDevice(d.deviceId)}
+                                >
+                                  Rechazar
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex shrink-0 items-center gap-0.5">
+                                {isBox && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Renombrar ${d.deviceName}`}
+                                    title="Renombrar"
+                                    onClick={() => handleRenameDevice(d.deviceId, d.deviceName)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Revocar ${d.deviceName}`}
+                                  title="Revocar"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => setRevokeTarget(d)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
             )}
           </section>
         </>
@@ -2082,7 +2115,7 @@ function ConfigurationScreen() {
     <div className="mx-auto w-full max-w-7xl">
       <PageHeader
         className="xl:mb-6"
-        description="Ajusta la tienda, el ticket, la impresión y los dispositivos móviles"
+        description="Ajusta la tienda, el ticket, la impresión y los dispositivos"
         actions={
           <Button variant="outline" onClick={() => navigate("/")}>
             <ArrowLeft className="h-4 w-4" />
@@ -2098,7 +2131,7 @@ function ConfigurationScreen() {
               <div key={group}>
                 <p className="px-3 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">{group}</p>
                 <div className="flex flex-col gap-0.5">
-                  {TABS.filter((t) => t.group === group).map(({ id, label, icon: TabIcon }) => {
+                  {visibleTabs.filter((t) => t.group === group).map(({ id, label, icon: TabIcon }) => {
                     const active = activeTab === id;
                     return (
                       <button
@@ -2157,11 +2190,15 @@ function ConfigurationScreen() {
             </div>
 
             <div className="space-y-6 px-6 py-6 lg:px-8 lg:py-8">
-              {activeTab === "store" && renderStoreTab()}
+              {activeTab === "store" && (
+                <AdminUnlock locked={!isAdmin && !storeUnlocked} onUnlock={() => setStoreUnlocked(true)}>
+                  {renderStoreTab()}
+                </AdminUnlock>
+              )}
               {activeTab === "ticket" && renderTicketTab()}
               {activeTab === "pos" && renderPosTab()}
-              {activeTab === "features" && renderFeaturesTab()}
-              {activeTab === "mobile" && renderMobileTab()}
+              {activeTab === "features" && !tabHidden && renderFeaturesTab()}
+              {activeTab === "mobile" && !tabHidden && renderMobileTab()}
               {activeTab === "printer" && renderPrinterTab()}
               {activeTab === "scale" && renderScaleTab()}
             </div>
@@ -2244,6 +2281,18 @@ function ConfigurationScreen() {
             </DialogContent>
           </Dialog>
 
+          <ConfirmDialog
+            open={!!revokeTarget}
+            onOpenChange={(open) => {
+              if (!open && !revoking) setRevokeTarget(null);
+            }}
+            title="Revocar dispositivo"
+            description={`${revokeTarget?.deviceName || "Este dispositivo"} perderá el acceso al momento y saldrá de la lista. Para volver necesitará el código de activación y tu aprobación.`}
+            confirmLabel="Revocar"
+            loading={revoking}
+            onCancel={() => setRevokeTarget(null)}
+            onConfirm={handleRevokeDevice}
+          />
           <ConfirmDialog
             open={!!pendingTab}
             onOpenChange={(o) => !o && setPendingTab(null)}

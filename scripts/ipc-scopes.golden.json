@@ -176,5 +176,6 @@
   "update:download": "system",
   "update:get-state": "system",
   "update:install": "system",
+  "verify-admin-pin": "host_read",
   "verify-cashier-pin": "rpc"
 }
