@@ -794,6 +794,28 @@ body {
   color: hsl(var(--primary));
 }
 
+/* Identidad de todo modal: el azul se desvanece desde arriba, con medida fija, y el
+   rayo completo queda detrás del contenido. `.vt-plain` lo quita donde estorba. */
+.dialog-content:not(.vt-plain) {
+  background-image: linear-gradient(to bottom, hsl(var(--chart-2) / calc(var(--vt-wash) * 1.3)), transparent 96px);
+  background-repeat: no-repeat;
+}
+.vt-dialog-bolt {
+  position: absolute;
+  z-index: -10;
+  top: 14px;
+  right: 48px;
+  width: 40px;
+  height: 44px;
+  color: hsl(var(--chart-2));
+  opacity: 0.16;
+  pointer-events: none;
+}
+.vt-plain > .vt-dialog-bolt,
+.setup-wizard-dialog > .vt-dialog-bolt {
+  display: none;
+}
+
 /* ─── Carga sin saltos. Si los datos llegan rápido, el esqueleto ni se asoma; si
    tardan, aparece suave. Lo que llega entra con un desvanecido corto. ─── */
 @keyframes vt-appear {

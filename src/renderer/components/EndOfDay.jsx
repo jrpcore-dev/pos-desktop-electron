@@ -37,6 +37,8 @@ import {
   Card,
   CardContent,
   Dialog,
+  DialogBrandFooter,
+  DialogBrandHeader,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -1914,30 +1916,19 @@ const EndOfDay = () => {
         }}
       >
         <DialogContent
+          brand
           className="max-w-sm"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) handleOpenRegister();
           }}
         >
-          <DialogHeader className="flex-row items-center gap-3 space-y-0 text-left">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
-              <Store size={20} className="text-primary" />
-            </div>
+          <DialogBrandHeader
+            icon={<Store size={20} />}
+            title="Abrir caja"
+            description="Ingresa el monto inicial en efectivo para abrir la caja del día."
+          />
 
-            <div>
-              <DialogTitle className="text-base font-extrabold">
-                Abrir caja
-              </DialogTitle>
-
-              <DialogDescription className="text-xs leading-relaxed">
-                Ingresa el monto inicial en efectivo para abrir la caja del día.
-              </DialogDescription>
-            </div>
-          </DialogHeader>
-
-          <Separator />
-
-          <div>
+          <div className="px-6 py-5">
             <FieldLabel>Monto de apertura</FieldLabel>
 
             <div className="relative">
@@ -1960,7 +1951,7 @@ const EndOfDay = () => {
             </div>
           </div>
 
-          <DialogFooter className="sm:justify-between">
+          <DialogBrandFooter>
             <Button
               variant="ghost"
               disabled={openLoading}
@@ -1972,12 +1963,11 @@ const EndOfDay = () => {
             <Button
               onClick={handleOpenRegister}
               disabled={openLoading}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
             >
               {openLoading ? <Spinner size={18} /> : <CircleCheck size={18} />}
               {openLoading ? "Abriendo..." : "Abrir caja"}
             </Button>
-          </DialogFooter>
+          </DialogBrandFooter>
         </DialogContent>
       </Dialog>
 
@@ -1989,31 +1979,19 @@ const EndOfDay = () => {
         }}
       >
         <DialogContent
+          brand
           className="max-w-sm"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) handleCloseRegister();
           }}
         >
-          <DialogHeader className="flex-row items-center gap-3 space-y-0 text-left">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
-              <Wallet size={20} className="text-warning" />
-            </div>
+          <DialogBrandHeader
+            icon={<Wallet size={20} />}
+            title="Cerrar caja"
+            description="Ingresa el efectivo final y los gastos del día para realizar el cierre."
+          />
 
-            <div>
-              <DialogTitle className="text-base font-extrabold">
-                Cerrar caja
-              </DialogTitle>
-
-              <DialogDescription className="text-xs leading-relaxed">
-                Ingresa el efectivo final y los gastos del día para realizar el
-                cierre.
-              </DialogDescription>
-            </div>
-          </DialogHeader>
-
-          <Separator />
-
-          <div className="space-y-3">
+          <div className="space-y-3 px-6 py-4">
             <div>
               <FieldLabel>Nombre de la caja</FieldLabel>
 
@@ -2079,7 +2057,7 @@ const EndOfDay = () => {
           </div>
 
           {/* CLOSE SUMMARY */}
-          <div className="rounded-lg border border-amber-300/30 bg-amber-50 p-4 dark:bg-amber-500/10">
+          <div className="mx-6 mb-4 rounded-lg border border-amber-300/30 bg-amber-50 p-4 dark:bg-amber-500/10">
             <p className="mb-3 block text-xs font-extrabold uppercase tracking-[0.06em] text-muted-foreground">
               Resumen del cierre
             </p>
@@ -2148,7 +2126,7 @@ const EndOfDay = () => {
             </div>
           </div>
 
-          <DialogFooter className="sm:justify-between">
+          <DialogBrandFooter>
             <CancelButton
               disabled={closeLoading}
               onClick={() => setCloseRegisterModal(false)}
@@ -2165,7 +2143,7 @@ const EndOfDay = () => {
               {closeLoading ? <Spinner size={18} /> : <CircleCheck size={18} />}
               {closeLoading ? "Cerrando..." : "Cerrar caja"}
             </Button>
-          </DialogFooter>
+          </DialogBrandFooter>
         </DialogContent>
       </Dialog>
 

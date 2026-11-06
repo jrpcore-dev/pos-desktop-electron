@@ -347,7 +347,7 @@ const CommandPalette = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl gap-0 border-border/80 p-0 shadow-2xl sm:rounded-xl">
+      <DialogContent className="vt-plain max-w-2xl gap-0 border border-border/80 p-0 shadow-2xl sm:rounded-xl">
         <DialogTitle className="sr-only">Buscar o ejecutar una acción</DialogTitle>
 
         <Command
