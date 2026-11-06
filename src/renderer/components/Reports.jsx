@@ -404,6 +404,9 @@ const UnitTooltip = ({ active, payload, label }) => {
   );
 };
 
+// Esquinas de las tarjetas de Reportes: sólo esta pantalla, --radius es global.
+const CARD_RADIUS = "rounded-[1.25rem]";
+
 // ═══ BLOQUE DE GRÁFICAS + DETALLE (memorizado) ═══
 // React.memo: los renders de Reports (p. ej. al seleccionar un día del
 // calendario) saltan este bloque completo si los datos no cambian,
@@ -472,9 +475,9 @@ const ChartsSection = React.memo(function ChartsSection({
   })();
 
   return (
-    <section className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+    <section className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
       {/* Tendencia */}
-      <Card className="min-w-0 lg:col-span-2">
+      <Card className={cn(CARD_RADIUS, "min-w-0 lg:col-span-2")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Tendencia de ventas</CardTitle>
           <CardDescription className="text-xs">
@@ -525,7 +528,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
       {/* Ventas por hora del día */}
-      <Card className="min-w-0">
+      <Card className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Ventas por hora del día</CardTitle>
           <CardDescription className="text-xs">
@@ -590,7 +593,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
       {/* Distribución por método */}
-      <Card className="min-w-0">
+      <Card className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Distribución por método de pago</CardTitle>
           <CardDescription className="text-xs">
@@ -670,7 +673,7 @@ const ChartsSection = React.memo(function ChartsSection({
 
 
       {/* Comparativa Ingresos vs Gastos vs Ganancia */}
-      <Card className="min-w-0">
+      <Card className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Ingresos vs gastos vs ganancia</CardTitle>
           <CardDescription className="text-xs">
@@ -740,7 +743,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
       {/* Top productos */}
-      <Card className="min-w-0">
+      <Card className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="flex-row items-start justify-between pb-0">
           <div>
             <div className="flex items-center gap-2">
@@ -848,7 +851,7 @@ const ChartsSection = React.memo(function ChartsSection({
         </CardContent>
       </Card>
       {/* Unidades vendidas por categoría */}
-      <Card className="min-w-0">
+      <Card className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <div className="flex items-center gap-2">
             <CardTitle className="text-sm">Unidades vendidas por categoría</CardTitle>
@@ -909,7 +912,7 @@ const ChartsSection = React.memo(function ChartsSection({
           )}
         </CardContent>
       </Card>
-      <Card className="min-w-0 overflow-hidden">
+      <Card className={cn(CARD_RADIUS, "min-w-0 overflow-hidden")}>
         <CardHeader className="border-b bg-muted/20 pb-3">
           <CardTitle className="text-sm">Gastos por tipo</CardTitle>
         </CardHeader>
@@ -1910,8 +1913,9 @@ const Reports = () => {
 
         {/* ─── KPIs ─────────────────────────────────────────── */}
         <h2 className="sr-only">Indicadores clave</h2>
-        <section className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="mb-5 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
+            className={CARD_RADIUS}
             hero
             gradient
             loading={loading}
@@ -1922,6 +1926,7 @@ const Reports = () => {
             caption={`vs. ${fmtMoney(summary.prevSales)}`}
           />
           <StatCard
+            className={CARD_RADIUS}
             loading={loading}
             icon={<Wallet />}
             tone="success"
@@ -1934,6 +1939,7 @@ const Reports = () => {
             caption={`vs. ${fmtMoney(summary.prevSales - summary.prevExpenses)}`}
           />
           <StatCard
+            className={CARD_RADIUS}
             loading={loading}
             icon={<Receipt />}
             tone="info"
@@ -1946,6 +1952,7 @@ const Reports = () => {
             caption={`vs. ${fmtMoney(summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0)}`}
           />
           <StatCard
+            className={CARD_RADIUS}
             loading={loading}
             icon={<ShoppingCart />}
             tone="primary"
@@ -1956,8 +1963,9 @@ const Reports = () => {
           />
         </section>
 
-        <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="mb-5 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
+            className={CARD_RADIUS}
             size="sm"
             loading={loading}
             icon={<Percent />}
@@ -1967,6 +1975,7 @@ const Reports = () => {
             caption={`Utilidad sobre ${fmtMoney(summary.salesTotal)}`}
           />
           <StatCard
+            className={CARD_RADIUS}
             size="sm"
             loading={loading}
             icon={<ArrowDownToLine />}
@@ -1978,6 +1987,7 @@ const Reports = () => {
             caption={`${summary.expensesCount} movs · antes ${fmtMoney(summary.prevExpenses)}`}
           />
           <StatCard
+            className={CARD_RADIUS}
             size="sm"
             loading={loading}
             icon={<Clock />}
@@ -1995,6 +2005,7 @@ const Reports = () => {
             }
           />
           <StatCard
+            className={CARD_RADIUS}
             size="sm"
             loading={topLoading}
             icon={<Crown />}
