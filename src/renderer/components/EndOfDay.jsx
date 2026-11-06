@@ -12,7 +12,6 @@ import {
   Info,
   Landmark,
   HandCoins,
-  Lock,
   Minus,
   PackageX,
   Plus,
@@ -70,6 +69,7 @@ import {
 import { StatCard } from "./ui/stat-card";
 
 import CancelButton from "./CancelButton";
+import OpenRegisterCard from "./OpenRegisterCard";
 import { CardSkeleton } from "./Skeletons";
 
 import {
@@ -1329,43 +1329,15 @@ const EndOfDay = () => {
     [],
   );
 
-  const statusBanner = !register
-    ? {
-        bg: "rgba(217,119,6,.12)",
-        color: "#d97706",
-        icon: TriangleAlert,
-        title: "Sin apertura de caja",
-        subtitle: prevRegister
-          ? `El corte anterior se cerró con ${fmtMoney(
-              prevRegister.declared_close,
-            )}. Abre una caja para comenzar a vender.`
-          : "Abre una caja para comenzar a vender.",
-      }
-    : isOpen
-      ? {
-          bg: "rgba(16,185,129,.12)",
-          color: "#059669",
-          icon: CircleCheck,
-          title: "Caja abierta",
-          subtitle:
-            String(register.opened_by) === String(cashier?.id) ||
-            String(register.cashier_id) === String(cashier?.id)
-              ? `Abierta a las ${formatMXTime(register.opened_at)}`
-              : `Abierta por: ${register.opener_name || "otro usuario"}`,
-        }
-      : {
-          bg: "rgba(100,116,139,.12)",
-          color: "hsl(var(--muted-foreground))",
-          icon: Lock,
-          title: "Caja cerrada",
-          subtitle: prevRegister
-            ? `El corte anterior se cerró con ${fmtMoney(
-                prevRegister.declared_close,
-              )}. Abre una caja para comenzar a registrar ventas.`
-            : "Abre una caja para comenzar a registrar ventas.",
-        };
+  // Con la caja cerrada, OpenRegisterCard ya dice el estado y lo que sirve del día.
+  const registerClosed = !loading && !isOpen;
 
-  const StatusIcon = statusBanner.icon;
+  const statusSubtitle = !isOpen
+    ? ""
+    : String(register.opened_by) === String(cashier?.id) ||
+        String(register.cashier_id) === String(cashier?.id)
+      ? `Abierta a las ${formatMXTime(register.opened_at)}`
+      : `Abierta por: ${register.opener_name || "otro usuario"}`;
 
   // Comparamos el efectivo declarado contra el efectivo que debería haber:
   // apertura + ventas en efectivo - egresos YA registrados en el sistema
@@ -1531,21 +1503,22 @@ const EndOfDay = () => {
       )}
 
       {/* STATUS */}
+      {isOpen && (
       <Card className="mb-2">
         <CardContent className="flex items-center justify-between gap-4 px-4 py-3.5">
           <div className="flex items-center gap-3">
             <div
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
-              style={{ background: statusBanner.bg }}
+              style={{ background: "rgba(16,185,129,.12)" }}
             >
-              <StatusIcon size={23} style={{ color: statusBanner.color }} />
+              <CircleCheck size={23} style={{ color: "#059669" }} />
             </div>
 
             <div>
-              <p className="font-bold leading-tight">{statusBanner.title}</p>
+              <p className="font-bold leading-tight">Caja abierta</p>
 
               <p className="mt-0.5 block text-xs text-muted-foreground">
-                {statusBanner.subtitle}
+                {statusSubtitle}
               </p>
             </div>
           </div>
@@ -1583,11 +1556,12 @@ const EndOfDay = () => {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* TOP SUMMARY */}
       {loading ? (
         <CardSkeleton count={3} />
-      ) : (
+      ) : registerClosed ? null : (
         <div className="mb-3 grid gap-3 sm:grid-cols-3">
           {summaryCards.map((item) => {
             const Icon = item.icon;
@@ -1627,23 +1601,21 @@ const EndOfDay = () => {
       )}
 
       {/* ACCIÓN: ABRIR CAJA (caja cerrada) */}
-      {!isOpen && (
-        <div className="mb-3 flex flex-wrap justify-end gap-2">
-          <Button
-            onClick={() => {
-              setOpeningBalance(
-                prevRegister?.declared_close
-                  ? String(prevRegister.declared_close)
-                  : "",
-              );
+      {registerClosed && (
+        <OpenRegisterCard
+          lastClose={prevRegister}
+          salesToday={totalSales}
+          salesCount={salesCount}
+          onOpen={() => {
+            setOpeningBalance(
+              prevRegister?.declared_close
+                ? String(prevRegister.declared_close)
+                : "",
+            );
 
-              setOpenRegisterModal(true);
-            }}
-          >
-            <Store size={17} />
-            Abrir caja
-          </Button>
-        </div>
+            setOpenRegisterModal(true);
+          }}
+        />
       )}
 
       {/* TABS (caja abierta) */}

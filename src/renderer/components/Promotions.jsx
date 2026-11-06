@@ -863,6 +863,9 @@ const Promotions = () => {
               icon={<Tag size={26} aria-hidden="true" />}
               title="Ningún producto tiene promoción"
               description="Las promos de un producto (%, precio fijo, mayoreo, combos, 2×1) se configuran al editarlo."
+              action={
+                <Button onClick={() => navigate("/inventory")}>Ir a Inventario</Button>
+              }
             />
           ) : (
             productPromos.map((p) => (

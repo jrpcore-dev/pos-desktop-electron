@@ -12,6 +12,17 @@ const STATUS = [
   { title: "Preparando tu caja", text: "Moneda y ajustes de cobro", at: 2350, length: 1000 },
 ];
 
+// Figura del logo en una sola tinta, para usarla de fondo. Conserva las tres
+// piezas de build/brand/vendia-icon-oscuro.svg con distinta intensidad: sin el
+// doblez del rayo la silueta se lee como otra figura. Va completa, sin recortar.
+export const VendiaBolt = ({ className }) => (
+  <svg className={className} viewBox="20 30 330 360" fill="currentColor" aria-hidden="true">
+    <polygon points="178.8,262 339.4,48 200,380" opacity=".75" />
+    <polygon points="130.7,215 164.3,181.4 200,380" opacity=".5" />
+    <polygon points="32,102 94,40 116.1,163 154.1,125 164.3,181.4 130.7,215 94.6,251.1" />
+  </svg>
+);
+
 // Sello de tinta con la figura del logo, en una sola tinta como un sello real.
 export const VendiaSeal = () => {
   const arc = useId();

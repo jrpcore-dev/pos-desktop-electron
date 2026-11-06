@@ -1391,7 +1391,13 @@ const Inventory = () => {
                           <Store size={32} className="opacity-40" />
                         }
                         title="No hay productos registrados"
-                        description='Agrega tu primer producto usando el botón "Nuevo Producto"'
+                        description="Agrega tu primer producto para empezar a vender."
+                        action={
+                          <SButton size="sm" onClick={() => setIsModalOpen(true)}>
+                            <PlusCircle className="h-4 w-4" />
+                            Nuevo producto
+                          </SButton>
+                        }
                       />
                     </STableCell>
                   </STableRow>

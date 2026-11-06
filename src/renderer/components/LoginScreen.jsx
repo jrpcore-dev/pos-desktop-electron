@@ -7,6 +7,7 @@ import { Skeleton } from "./ui/skeleton";
 import { InitialsAvatar } from "./ui/initials-avatar";
 import { cn } from "@/lib/utils";
 import vendiaIcon from "../assets/icon-vendia.svg";
+import { VendiaBolt } from "./TicketPrinter";
 
 // Hora y fecha del panel de marca (zona de la tienda).
 const fmtTime = (d) =>
@@ -144,6 +145,7 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
               backgroundSize: "22px 22px",
             }}
           />
+          <VendiaBolt className="pointer-events-none absolute left-1/2 top-1/2 h-[440px] w-[404px] -translate-x-1/2 -translate-y-1/2 text-white opacity-[0.09]" />
           <div className="relative flex flex-1 flex-col items-center justify-center text-center">
             <div className="flex size-32 items-center justify-center rounded-3xl bg-white/10 p-4 shadow-lg ring-1 ring-white/20 backdrop-blur">
               {storeLogo ? (
