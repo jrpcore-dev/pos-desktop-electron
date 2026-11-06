@@ -481,11 +481,20 @@ const waitForSeq = async (db, seq, timeoutMs = 3000) => {
   while (replicaEngine.state(db).last_seq < target) {
     if (Date.now() > deadline || !ctx.running) return false;
     if (!ctx.pulling && !ctx.resyncing) {
-      try {
-        await pullDelta(ctx, { quiet: true });
-      } catch (err) {
-        return false;
-      }
+      // El delta puede tardar mucho más que esta espera con la red trabada:
+      // quien aguarda se va al vencer el plazo y el delta sigue por su cuenta.
+      let timer = null;
+      const ok = await Promise.race([
+        pullDelta(ctx, { quiet: true }).then(
+          () => true,
+          () => false,
+        ),
+        new Promise((r) => {
+          timer = setTimeout(() => r(false), Math.max(0, deadline - Date.now()));
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!ok) return false;
       if (replicaEngine.state(db).last_seq >= target) break;
     }
     await new Promise((r) => setTimeout(r, 60));

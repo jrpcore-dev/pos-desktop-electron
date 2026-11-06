@@ -24,6 +24,13 @@ const rpcContext = require("./rpc-context");
 const opQueue = require("./op-queue");
 
 const TIMEOUT_MS = 8000;
+// Cobrar no espera a la red: si el Host no contesta en este tiempo la venta se
+// guarda en la cola. La Idempotency-Key evita el doble registro aunque el Host
+// sí la haya recibido y sólo se perdiera la respuesta.
+const SALE_ONLINE_TIMEOUT_MS = 1500;
+// Tras un fallo de red no se vuelve a intentar durante este rato: la siguiente
+// venta va directo a la cola y sólo una cada tanto paga el intento.
+const HOST_DOWN_WINDOW_MS = 20000;
 const OFFLINE_PIN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 // Taecel puede tardar más que una lectura normal: el catálogo baja 700+
@@ -352,6 +359,14 @@ const clearAttempt = (db) => {
   } catch (err) {}
 };
 
+let lastHostFailAt = 0;
+// Cualquier señal de vida posterior al fallo (una respuesta o un frame de la
+// réplica) lo anula; si no, caduca sola para volver a probar.
+const hostKnownDown = (db) => {
+  if (!lastHostFailAt || Date.now() - lastHostFailAt >= HOST_DOWN_WINDOW_MS) return false;
+  return !(Number(replicaLive.hostOkInfo(db).okAt) > lastHostFailAt);
+};
+
 const postJson = async (
   db,
   creds,
@@ -381,6 +396,7 @@ const postJson = async (
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
+    lastHostFailAt = Date.now();
     recordTiming({
       at: new Date().toISOString(),
       channel,
@@ -410,7 +426,10 @@ const postJson = async (
   }
   // El Host contestó con JSON: está vivo aunque el flujo de réplica esté
   // reconectando (el encabezado deja de decir "desconectado" en falso).
-  if (data) replicaLive.markHostOk();
+  if (data) {
+    replicaLive.markHostOk();
+    lastHostFailAt = 0;
+  }
   try {
     const warning = res.headers.get("x-protocol-warning");
     activation.setSetting(db, "protocol_warning", warning || "");
@@ -530,6 +549,17 @@ const recordSale = async (db, payload = {}) => {
     saveAttempt(db, attempt);
   }
 
+  const queueSale = () =>
+    enqueueSale(db, {
+      folio: attempt.folio,
+      payload,
+      idempotencyKey: attempt.key,
+      registerId: payload.registerId,
+      cashierId: payload.cashierId,
+      cashierName: payload.cashierName,
+      localCreatedAt: new Date().toISOString(),
+    });
+
   let body = saleBody(payload, attempt.folio, false);
   // Fiado sólo en línea: el saldo y el límite viven en el Host. Sin conexión
   // NO se encola: se avisa para cobrar de otra forma. El intento (llave y
@@ -538,6 +568,7 @@ const recordSale = async (db, payload = {}) => {
   if (payload.paymentMethod === "credit") {
     const offlineFail = () =>
       fail("CREDIT_REQUIRES_HOST", "El fiado requiere conexión con el Host. Reintenta o cobra con otro método.");
+    if (hostKnownDown(db)) return offlineFail();
     let cres;
     try {
       cres = await postJson(db, creds, "/api/sales", body, { "idempotency-key": attempt.key });
@@ -570,45 +601,25 @@ const recordSale = async (db, payload = {}) => {
     if (cres.data.success) clearAttempt(db);
     return cres.data;
   }
+  if (hostKnownDown(db)) return queueSale();
   let res;
   try {
-    res = await postJson(db, creds, "/api/sales", body, {
-      "idempotency-key": attempt.key,
-    });
+    res = await postJson(
+      db,
+      creds,
+      "/api/sales",
+      body,
+      { "idempotency-key": attempt.key },
+      SALE_ONLINE_TIMEOUT_MS,
+    );
   } catch (err) {
-    return enqueueSale(db, {
-      folio: attempt.folio,
-      payload,
-      idempotencyKey: attempt.key,
-      registerId: payload.registerId,
-      cashierId: payload.cashierId,
-      cashierName: payload.cashierName,
-      localCreatedAt: new Date().toISOString(),
-    });
+    return queueSale();
   }
-  if (!res.data) {
-    return enqueueSale(db, {
-      folio: attempt.folio,
-      payload,
-      idempotencyKey: attempt.key,
-      registerId: payload.registerId,
-      cashierId: payload.cashierId,
-      cashierName: payload.cashierName,
-      localCreatedAt: new Date().toISOString(),
-    });
-  }
+  if (!res.data) return queueSale();
   if (res.status === 401) {
     // No se pierde: queda en cola y el renderer pedirá el PIN.
     expired(db, res.data);
-    return enqueueSale(db, {
-      folio: attempt.folio,
-      payload,
-      idempotencyKey: attempt.key,
-      registerId: payload.registerId,
-      cashierId: payload.cashierId,
-      cashierName: payload.cashierName,
-      localCreatedAt: new Date().toISOString(),
-    });
+    return queueSale();
   }
   adoptHostFolioSeq(db, res.data);
   // Folio repetido (reinstalación o respaldo restaurado): se reasigna una vez
@@ -619,33 +630,22 @@ const recordSale = async (db, payload = {}) => {
     saveAttempt(db, attempt);
     body = saleBody(payload, attempt.folio, false);
     try {
-      res = await postJson(db, creds, "/api/sales", body, {
-        "idempotency-key": attempt.key,
-      });
+      res = await postJson(
+        db,
+        creds,
+        "/api/sales",
+        body,
+        { "idempotency-key": attempt.key },
+        SALE_ONLINE_TIMEOUT_MS,
+      );
     } catch (err) {
-      return enqueueSale(db, {
-        folio: attempt.folio,
-        payload,
-        idempotencyKey: attempt.key,
-        registerId: payload.registerId,
-        cashierId: payload.cashierId,
-        cashierName: payload.cashierName,
-        localCreatedAt: new Date().toISOString(),
-      });
+      return queueSale();
     }
     // Respuesta sin JSON o sesión vencida en el reintento: igual que en el
     // primer envío, la venta se encola en vez de perderse.
     if (!res.data || res.status === 401) {
       if (res.status === 401) expired(db, res.data);
-      return enqueueSale(db, {
-        folio: attempt.folio,
-        payload,
-        idempotencyKey: attempt.key,
-        registerId: payload.registerId,
-        cashierId: payload.cashierId,
-        cashierName: payload.cashierName,
-        localCreatedAt: new Date().toISOString(),
-      });
+      return queueSale();
     }
     adoptHostFolioSeq(db, res.data);
   }
@@ -826,9 +826,10 @@ const HOST_REQUIRED = (what) =>
 const forward = (db, channel, args = []) => {
   if (channel === "verify-cashier-pin") return verifyPin(db, args[0], args[1]);
   if (channel === "record-sale") {
-    return recordSale(db, args[0]).then(async (r) => {
-      // Venta en línea: que Caja y Transacciones (locales) ya la vean.
-      if (r && r.success && !r.offline) await settleWrite(db);
+    return recordSale(db, args[0]).then((r) => {
+      // Venta en línea: Caja y Transacciones la reciben por la réplica y se
+      // refrescan solas. Va en segundo plano: el cobro no espera a la copia.
+      if (r && r.success && !r.offline) settleWrite(db).catch(() => {});
       return r;
     });
   }
@@ -875,7 +876,9 @@ const forward = (db, channel, args = []) => {
     });
   }
   if (channel === "get-cash-register-status") {
-    return rpcCall(db, channel, args).then((r) => {
+    // Cobrar consulta esto antes de vender: sin copia local tampoco puede
+    // esperar 8 s, y si el Host no contesta queda la última caja conocida.
+    return rpcCall(db, channel, args, SALE_ONLINE_TIMEOUT_MS).then((r) => {
       if (r && r.success) {
         cacheRegister(db, r);
         return r;

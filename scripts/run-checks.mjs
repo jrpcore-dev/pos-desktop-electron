@@ -70,6 +70,7 @@ const CHECKS = [
   { file: "check-local-first-1.cjs" },
   { file: "check-local-first-2.cjs" },
   { file: "check-pair-notify.cjs" },
+  { file: "check-sale-fast.cjs" },
 ];
 
 const tcpFree = (port) =>
