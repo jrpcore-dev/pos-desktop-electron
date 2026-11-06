@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#FBF9F4"/><stop offset="1" stop-color="#EAE4D8"/></linearGradient>
+<linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.16"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="up" gradientUnits="userSpaceOnUse" x1="30" y1="40" x2="160" y2="260"><stop offset="0" stop-color="#5079E6"/><stop offset="1" stop-color="#2F56C4"/></linearGradient>
+<linearGradient id="lo" gradientUnits="userSpaceOnUse" x1="150" y1="190" x2="205" y2="380"><stop offset="0" stop-color="#2F56C4"/><stop offset="1" stop-color="#213F99"/></linearGradient>
+<linearGradient id="fold" gradientUnits="userSpaceOnUse" x1="147.5" y1="198.2" x2="197.0" y2="247.7"><stop offset="0" stop-color="#000" stop-opacity="0.35"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>
+<linearGradient id="blade" gradientUnits="userSpaceOnUse" x1="339" y1="48" x2="200" y2="380"><stop offset="0" stop-color="#25386B"/><stop offset="1" stop-color="#0F1A36"/></linearGradient>
+<linearGradient id="hl" gradientUnits="userSpaceOnUse" x1="30" y1="40" x2="120" y2="200"><stop offset="0" stop-color="#fff" stop-opacity="0.22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000" flood-opacity="0.22"/></filter>
+<filter id="blur"><feGaussianBlur stdDeviation="5"/></filter>
+<clipPath id="sq"><rect width="1024" height="1024" rx="228"/></clipPath>
+<clipPath id="cb"><polygon points="178.8,262.0 339.4,48.0 200.0,380.0"/></clipPath>
+<clipPath id="cl"><polygon points="130.7,215.0 164.3,181.4 164.3,181.4 200.0,380.0"/></clipPath>
+</defs>
+<g clip-path="url(#sq)"><rect width="1024" height="1024" fill="url(#bg)"/><rect width="1024" height="1024" fill="url(#gloss)"/></g>
+<rect x="2" y="2" width="1020" height="1020" rx="226" fill="none" stroke="#00000014" stroke-width="4"/>
+<g transform="translate(512 512) scale(1.75) translate(-185.7 -214.0)"><g filter="url(#sh)"><polygon points="178.8,262.0 339.4,48.0 200.0,380.0" fill="url(#blade)" stroke="url(#blade)" stroke-width="2.5" stroke-linejoin="round"/>
+<polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 200.0,380.0 130.7,215.0 94.6,251.1" fill="#2F56C4" stroke="#2F56C4" stroke-width="2.5" stroke-linejoin="round"/></g>
+<g clip-path="url(#cb)"><polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 200.0,380.0 130.7,215.0 94.6,251.1" transform="translate(8 2)" fill="#000" opacity="0.4" filter="url(#blur)"/></g>
+<polygon points="130.7,215.0 164.3,181.4 164.3,181.4 200.0,380.0" fill="url(#lo)" stroke="url(#lo)" stroke-width="2.5" stroke-linejoin="round"/>
+<g clip-path="url(#cl)"><rect x="80" y="100" width="250" height="300" fill="url(#fold)"/></g>
+<polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 164.3,181.4 130.7,215.0 94.6,251.1" fill="url(#up)" stroke="url(#up)" stroke-width="2.5" stroke-linejoin="round"/>
+<polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 164.3,181.4 130.7,215.0 94.6,251.1" fill="url(#hl)"/></g></svg>

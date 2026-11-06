@@ -30,7 +30,8 @@ module.exports = class NsisMaker extends MakerBase {
           nsis: {
             oneClick: false,
             perMachine: false,
-            allowToChangeInstallationDirectory: true,
+            allowToChangeInstallationDirectory: false,
+            installerLanguages: ["es_ES"],
             runAfterFinish: true,
             createDesktopShortcut: true,
             createStartMenuShortcut: true,

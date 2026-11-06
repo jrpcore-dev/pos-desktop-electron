@@ -1,47 +1,26 @@
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  viewBox="0 0 2400 700"
-  shape-rendering="geometricPrecision"
->
-  <defs>
-    <linearGradient id="vendiaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2f6fed" />
-      <stop offset="55%" stop-color="#4c8dff" />
-      <stop offset="100%" stop-color="#155ee0" />
-    </linearGradient>
-  </defs>
-
-  <!-- Ícono -->
-  <g transform="translate(60, 30)">
-    <rect x="0" y="0" width="640" height="640" rx="160" ry="160" fill="url(#vendiaGrad)" />
-    <path d="M144 330 L232 500 L322 340 L412 500 L500 330 L500 146 L322 396 L144 146 Z" fill="#ffffff" fill-rule="evenodd" />
-    <path d="M290 330 L322 396 L354 330" fill="#ffffff" fill-opacity="0.55" />
-  </g>
-
-  <!-- Palabra Vendia -->
-  <g transform="translate(760, 40)">
-    <text
-      x="0"
-      y="400"
-      font-family="'Sora', 'Inter', sans-serif"
-      font-weight="800"
-      font-size="300"
-      letter-spacing="-14"
-      fill="#0b1526"
-    >
-      Vendia
-    </text>
-    <text
-      x="0"
-      y="400"
-      font-family="'Sora', 'Inter', sans-serif"
-      font-weight="800"
-      font-size="300"
-      letter-spacing="-14"
-      fill="url(#vendiaGrad)"
-    >
-      <tspan x="0" y="400">V</tspan>
-      <tspan x="175" y="400">endia</tspan>
-    </text>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 700">
+  <svg x="60" y="30" width="640" height="640" viewBox="0 0 1024 1024"><defs>
+<linearGradient id="t-bg" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#1F2B47"/><stop offset="1" stop-color="#0A101E"/></linearGradient>
+<linearGradient id="t-gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.16"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="t-up" gradientUnits="userSpaceOnUse" x1="30" y1="40" x2="160" y2="260"><stop offset="0" stop-color="#5E8BF7"/><stop offset="1" stop-color="#3664DE"/></linearGradient>
+<linearGradient id="t-lo" gradientUnits="userSpaceOnUse" x1="150" y1="190" x2="205" y2="380"><stop offset="0" stop-color="#3664DE"/><stop offset="1" stop-color="#2348B0"/></linearGradient>
+<linearGradient id="t-fold" gradientUnits="userSpaceOnUse" x1="147.5" y1="198.2" x2="197.0" y2="247.7"><stop offset="0" stop-color="#000" stop-opacity="0.35"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>
+<linearGradient id="t-blade" gradientUnits="userSpaceOnUse" x1="339" y1="48" x2="200" y2="380"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#C5CFE2"/></linearGradient>
+<linearGradient id="t-hl" gradientUnits="userSpaceOnUse" x1="30" y1="40" x2="120" y2="200"><stop offset="0" stop-color="#fff" stop-opacity="0.18"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<filter id="t-sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000" flood-opacity="0.5"/></filter>
+<filter id="t-blur"><feGaussianBlur stdDeviation="5"/></filter>
+<clipPath id="t-sq"><rect width="1024" height="1024" rx="228"/></clipPath>
+<clipPath id="t-cb"><polygon points="178.8,262.0 339.4,48.0 200.0,380.0"/></clipPath>
+<clipPath id="t-cl"><polygon points="130.7,215.0 164.3,181.4 164.3,181.4 200.0,380.0"/></clipPath>
+</defs>
+<g clip-path="url(#t-sq)"><rect width="1024" height="1024" fill="url(#t-bg)"/><rect width="1024" height="1024" fill="url(#t-gloss)"/></g>
+<rect x="2" y="2" width="1020" height="1020" rx="226" fill="none" stroke="#FFFFFF1A" stroke-width="4"/>
+<g transform="translate(512 512) scale(1.75) translate(-185.7 -214.0)"><g filter="url(#t-sh)"><polygon points="178.8,262.0 339.4,48.0 200.0,380.0" fill="url(#t-blade)" stroke="url(#t-blade)" stroke-width="2.5" stroke-linejoin="round"/>
+<polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 200.0,380.0 130.7,215.0 94.6,251.1" fill="#3664DE" stroke="#3664DE" stroke-width="2.5" stroke-linejoin="round"/></g>
+<g clip-path="url(#t-cb)"><polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 200.0,380.0 130.7,215.0 94.6,251.1" transform="translate(8 2)" fill="#000" opacity="0.45" filter="url(#t-blur)"/></g>
+<polygon points="130.7,215.0 164.3,181.4 164.3,181.4 200.0,380.0" fill="url(#t-lo)" stroke="url(#t-lo)" stroke-width="2.5" stroke-linejoin="round"/>
+<g clip-path="url(#t-cl)"><rect x="80" y="100" width="250" height="300" fill="url(#t-fold)"/></g>
+<polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 164.3,181.4 130.7,215.0 94.6,251.1" fill="url(#t-up)" stroke="url(#t-up)" stroke-width="2.5" stroke-linejoin="round"/>
+<polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 164.3,181.4 130.7,215.0 94.6,251.1" fill="url(#t-hl)"/></g></svg>
+  <path transform="translate(760 470) scale(0.2550335570469799)" fill="#0F172A" d="M404 0L11 -1056L321 -1056L496 -535Q525 -441 552.5 -348Q580 -255 607 -161L537 -161Q563 -255 589.5 -348Q616 -441 645 -535L817 -1056L1123 -1056L730 0Z M1601.7 24Q1441.7 24 1322.7 -46.5Q1203.7 -117 1138.7 -242Q1073.7 -367 1073.7 -527Q1073.7 -689 1139.7 -813.5Q1205.7 -938 1323.2 -1009Q1440.7 -1080 1591.7 -1080Q1708.7 -1080 1803.7 -1040Q1898.7 -1000 1967.7 -927Q2036.7 -854 2074.2 -754Q2111.7 -654 2111.7 -533L2111.7 -454L1178.7 -454L1178.7 -641L1968.7 -641L1836.7 -597Q1836.7 -677 1807.7 -735Q1778.7 -793 1725.2 -824.5Q1671.7 -856 1598.7 -856Q1525.7 -856 1472.2 -824.5Q1418.7 -793 1389.7 -735Q1360.7 -677 1360.7 -597L1360.7 -468Q1360.7 -387 1390.2 -325.5Q1419.7 -264 1475.2 -230.5Q1530.7 -197 1610.7 -197Q1668.7 -197 1713.7 -214Q1758.7 -231 1788.2 -261.5Q1817.7 -292 1831.7 -332L2101.7 -331Q2081.7 -227 2011.7 -146.5Q1941.7 -66 1836.2 -21Q1730.7 24 1601.7 24Z M2482.6 -586L2482.6 0L2188.6 0L2188.6 -1056L2477.6 -1056L2477.6 -781L2427.6 -781Q2478.6 -922 2571.1 -1000Q2663.6 -1078 2807.6 -1078Q2920.6 -1078 3003.6 -1029.5Q3086.6 -981 3132.1 -888Q3177.6 -795 3177.6 -661L3177.6 0L2883.6 0L2883.6 -607Q2883.6 -714 2833.1 -768.5Q2782.6 -823 2689.6 -823Q2628.6 -823 2581.6 -798.5Q2534.6 -774 2508.6 -721.5Q2482.6 -669 2482.6 -586Z M3714.6 23Q3577.6 23 3474.6 -46.5Q3371.6 -116 3315.1 -240Q3258.6 -364 3258.6 -529Q3258.6 -691 3316.1 -815Q3373.6 -939 3476.1 -1008.5Q3578.6 -1078 3713.6 -1078Q3782.6 -1078 3840.1 -1059.5Q3897.6 -1041 3944.6 -1004Q3991.6 -967 4023.6 -910L4025.6 -910L4025.6 -1490L4320.6 -1490L4320.6 0L4029.6 0L4029.6 -162L4027.6 -162Q3998.6 -101 3951.6 -59.5Q3904.6 -18 3844.6 2.5Q3784.6 23 3714.6 23ZM3791.6 -218Q3865.6 -218 3921.6 -256.5Q3977.6 -295 4008.6 -365Q4039.6 -435 4039.6 -529Q4039.6 -624 4009.1 -693.5Q3978.6 -763 3922.6 -801.5Q3866.6 -840 3791.6 -840Q3720.6 -840 3667.1 -803Q3613.6 -766 3584.6 -697Q3555.6 -628 3555.6 -529Q3555.6 -430 3585.1 -360.5Q3614.6 -291 3667.6 -254.5Q3720.6 -218 3791.6 -218Z M4447.5 0L4447.5 -1056L4741.5 -1056L4741.5 0ZM4594.5 -1189Q4521.5 -1189 4474 -1233.5Q4426.5 -1278 4426.5 -1346Q4426.5 -1413 4474 -1458Q4521.5 -1503 4594.5 -1503Q4666.5 -1503 4714.5 -1458.5Q4762.5 -1414 4762.5 -1346Q4762.5 -1278 4714.5 -1233.5Q4666.5 -1189 4594.5 -1189Z M5190.6 18Q5085.6 18 5003.6 -17Q4921.6 -52 4874.1 -122Q4826.6 -192 4826.6 -298Q4826.6 -387 4860.1 -446.5Q4893.6 -506 4951.1 -542Q5008.6 -578 5083.1 -597Q5157.6 -616 5239.6 -624Q5336.6 -634 5394.1 -643Q5451.6 -652 5476.1 -669Q5500.6 -686 5500.6 -720L5500.6 -727Q5500.6 -766 5480.1 -795.5Q5459.6 -825 5420.6 -842Q5381.6 -859 5328.6 -859Q5273.6 -859 5232.1 -841.5Q5190.6 -824 5166.6 -793.5Q5142.6 -763 5137.6 -722L4860.6 -721Q4868.6 -831 4926.1 -910.5Q4983.6 -990 5087.6 -1034Q5191.6 -1078 5337.6 -1078Q5445.6 -1078 5530.1 -1053Q5614.6 -1028 5673.1 -981.5Q5731.6 -935 5761.6 -867.5Q5791.6 -800 5791.6 -716L5791.6 0L5503.6 0L5503.6 -149L5499.6 -149Q5472.6 -97 5431.1 -60Q5389.6 -23 5330.6 -2.5Q5271.6 18 5190.6 18ZM5272.6 -187Q5343.6 -187 5395.6 -213Q5447.6 -239 5475.1 -284Q5502.6 -329 5502.6 -386L5502.6 -492Q5490.6 -485 5469.1 -478.5Q5447.6 -472 5419.6 -466.5Q5391.6 -461 5358.6 -455Q5325.6 -449 5289.6 -444Q5239.6 -436 5198.6 -419.5Q5157.6 -403 5133.6 -376Q5109.6 -349 5109.6 -305Q5109.6 -269 5130.1 -242Q5150.6 -215 5187.1 -201Q5223.6 -187 5272.6 -187Z"/>
 </svg>
