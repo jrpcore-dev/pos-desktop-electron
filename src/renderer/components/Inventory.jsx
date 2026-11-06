@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
+import { useRowsEntering } from "../lib/useRowsEntering";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search,
@@ -392,7 +393,7 @@ const ProductRow = React.memo(
                 <SAvatarImage
                   src={product.image_path}
                   alt={product.name}
-                  className="object-cover"
+                  className="vt-reveal object-cover"
                 />
               ) : (
                 <SAvatarFallback className="rounded-md bg-primary/10 text-primary">
@@ -642,7 +643,8 @@ const Inventory = () => {
   const isAdmin = cashier?.role === "admin";
   const [products, setProducts] = useState([]);
   const [total, setTotal] = useState(0);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  // Las tarjetas esperan a sus propios números: llegan en otra consulta.
+  const [statsReady, setStatsReady] = useState(false);
   const [stats, setStats] = useState({
     totalCount: 0,
     totalValue: 0,
@@ -650,6 +652,7 @@ const Inventory = () => {
     discountedCount: 0,
   });
   const [loading, setLoading] = useState(true);
+  const rowsClass = useRowsEntering(loading);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -734,7 +737,6 @@ const Inventory = () => {
     setTotal(result?.total || 0);
     setCategories(cats || []);
     if (!silent) setLoading(false);
-    setHasLoadedOnce(true);
   }, [
     debouncedSearch,
     selectedCategory,
@@ -761,6 +763,7 @@ const Inventory = () => {
         discountedCount: 0,
       },
     );
+    setStatsReady(true);
   }, [selectedCategory, selectedSupplier]);
 
   useEffect(() => {
@@ -1252,7 +1255,7 @@ const Inventory = () => {
         }
       />
 
-      {loading && !hasLoadedOnce ? (
+      {!statsReady ? (
         <CardSkeleton count={3} />
       ) : (
         <InventoryStatsCards
@@ -1352,7 +1355,7 @@ const Inventory = () => {
                   </STableHead>
                 </STableRow>
               </STableHeader>
-              <STableBody>
+              <STableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
                 {loading ? (
                   Array.from({ length: Math.min(pageSize, 10) }).map((_, i) => (
                     <STableRow key={i}>

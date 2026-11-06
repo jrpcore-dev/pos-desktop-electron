@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
+import { useRowsEntering } from "../lib/useRowsEntering";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -147,6 +148,7 @@ const Suppliers = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+  const rowsClass = useRowsEntering(loading);
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -501,7 +503,7 @@ const Suppliers = () => {
               </TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
             {loading ? (
               Array.from({ length: PAGE_SIZE }).map((_, i) => (
                 <TableRow key={i}>

@@ -2,7 +2,7 @@ import React from "react";
 import { Skeleton } from "../ui/skeleton";
 
 const CardSkeleton = ({ count = 1 }) => (
-  <div className="flex flex-wrap gap-3">
+  <div className="vt-delayed flex flex-wrap gap-3">
     {Array.from({ length: count }).map((_, i) => (
       <div
         key={i}

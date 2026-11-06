@@ -81,12 +81,9 @@ import {
 
 import { useCashier } from "../contexts/CashierContext";
 
-import { jsPDF } from "jspdf";
-import { applyPlugin } from "jspdf-autotable";
-import interFontInline from "../assets/fonts/inter.ttf?inline";
+import { loadPdfToolchain } from "@/utils/pdfToolchain";
 import { printDocument } from "../utils/printPdf";
 
-applyPlugin(jsPDF);
 
 const FieldLabel = ({ children }) => (
   <span className="mb-1.5 block text-xs font-semibold text-muted-foreground">
@@ -733,6 +730,7 @@ const EndOfDay = () => {
 
     const storeName = store || "MI TIENDA POS";
 
+    const { jsPDF, interFontInline } = await loadPdfToolchain();
     const doc = new jsPDF();
 
     const pageW = doc.internal.pageSize.getWidth();

@@ -794,6 +794,58 @@ body {
   color: hsl(var(--primary));
 }
 
+/* ─── Carga sin saltos. Si los datos llegan rápido, el esqueleto ni se asoma; si
+   tardan, aparece suave. Lo que llega entra con un desvanecido corto. ─── */
+@keyframes vt-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes vt-skeleton-pulse {
+  50% { opacity: 0.55; }
+}
+@keyframes vt-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.vt-delayed {
+  animation: vt-appear 160ms ease-out 180ms backwards;
+}
+.vt-skeleton {
+  animation:
+    vt-appear 160ms ease-out 180ms backwards,
+    vt-skeleton-pulse 1.8s ease-in-out 340ms infinite;
+}
+.vt-reveal {
+  animation: vt-reveal 240ms ease-out both;
+}
+/* Solo opacidad: mover las filas agranda el área de desplazamiento de la tabla y
+   hace aparecer su barra de scroll durante la animación. */
+@keyframes vt-row-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.vt-rows > tr {
+  animation: vt-row-in 300ms ease-out backwards;
+}
+.vt-rows > tr:nth-child(2) { animation-delay: 25ms; }
+.vt-rows > tr:nth-child(3) { animation-delay: 50ms; }
+.vt-rows > tr:nth-child(4) { animation-delay: 75ms; }
+.vt-rows > tr:nth-child(5) { animation-delay: 100ms; }
+.vt-rows > tr:nth-child(6) { animation-delay: 125ms; }
+.vt-rows > tr:nth-child(7) { animation-delay: 150ms; }
+.vt-rows > tr:nth-child(8) { animation-delay: 175ms; }
+.vt-rows > tr:nth-child(9) { animation-delay: 200ms; }
+.vt-rows > tr:nth-child(10) { animation-delay: 225ms; }
+.vt-rows > tr:nth-child(11) { animation-delay: 250ms; }
+.vt-rows > tr:nth-child(12) { animation-delay: 275ms; }
+.vt-rows > tr:nth-child(n + 13) { animation-delay: 300ms; }
+@media (prefers-reduced-motion: reduce) {
+  .vt-delayed,
+  .vt-reveal,
+  .vt-rows > tr { animation: none; }
+  .vt-skeleton { animation: vt-appear 1ms 180ms backwards; }
+}
+
 /* ─── Micro-animaciones del carrito (SÓLO GPU: transform3d + opacity) ─── */
 @keyframes cart-item-in {
   from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.98); }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDbChanges } from "../lib/useDbChanges";
+import { useRowsEntering } from "../lib/useRowsEntering";
 import {
   PlusCircle,
   Search,
@@ -295,6 +296,7 @@ const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [tiers, setTiers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const rowsClass = useRowsEntering(loading);
   const [searchTerm, setSearchTerm] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -587,7 +589,7 @@ const Customers = () => {
               </TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
             {loading &&
               Array.from({ length: PAGE_SIZE }).map((_, i) => (
                 <TableRow key={i} className="h-14 hover:bg-transparent">

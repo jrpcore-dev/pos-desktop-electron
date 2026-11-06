@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDbChanges } from "../lib/useDbChanges";
+import { useRowsEntering } from "../lib/useRowsEntering";
 import FreshDataChip from "./FreshDataChip";
 import {
   ArrowDown,
@@ -21,9 +22,7 @@ import {
   SearchX,
   XCircle,
 } from "lucide-react";
-import { jsPDF } from "jspdf";
-import { applyPlugin } from "jspdf-autotable";
-import interFontInline from "../assets/fonts/inter.ttf?inline";
+import { loadPdfToolchain } from "@/utils/pdfToolchain";
 import { printDocument } from "../utils/printPdf";
 import {
   formatMXDate,
@@ -66,7 +65,6 @@ import { Separator } from "./ui/separator";
 import { CardSkeleton } from "./Skeletons";
 import { cn } from "@/lib/utils";
 
-applyPlugin(jsPDF);
 
 import PageHeader from "./PageHeader";
 
@@ -315,6 +313,7 @@ const exportCSV = (sales, expenses, dateRange) => {
 
 const buildTransactionsPDF = async (sales, expenses, total, totalExpenses, count, canceledSales, rangeLabel) => {
   const store = (await window.api.invoke("get-setting", "store_name")) || "MI TIENDA";
+  const { jsPDF, interFontInline } = await loadPdfToolchain();
   const doc = new jsPDF();
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 18;
@@ -504,6 +503,7 @@ const Transacciones = () => {
   const [expenses, setExpenses] = useState([]);
   const [totalExpenses, setTotalExpenses] = useState(0);
   const [loading, setLoading] = useState(true);
+  const rowsClass = useRowsEntering(loading);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState("");
@@ -893,7 +893,7 @@ const Transacciones = () => {
                   <TableHead className="text-center">Detalle</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
                 {loading ? (
                   Array.from({ length: PAGE_SIZE }).map((_, i) => (
                     <TableRow key={i}>
@@ -978,7 +978,7 @@ const Transacciones = () => {
                   <SortHead label="Monto" k="amount" align="right" active={expSortKey === "amount"} dir={expSortDir} onSort={handleExpSort} />
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
                 {loading ? (
                   Array.from({ length: PAGE_SIZE }).map((_, i) => (
                     <TableRow key={i}>

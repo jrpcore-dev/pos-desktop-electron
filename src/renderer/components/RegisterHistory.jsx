@@ -38,9 +38,7 @@ import {
 import { CardSkeleton } from "./Skeletons";
 import CancelButton from "./CancelButton";
 import { formatMXTime, formatMXDate, getMXDateString } from "../utils/dateUtils";
-import { jsPDF } from "jspdf";
-import { applyPlugin } from "jspdf-autotable";
-import interFontInline from "../assets/fonts/inter.ttf?inline";
+import { loadPdfToolchain } from "@/utils/pdfToolchain";
 import { useCashier } from "../contexts/CashierContext";
 import { Badge as ShBadge } from "./ui/badge";
 import { Button as ShButton } from "./ui/button";
@@ -97,7 +95,6 @@ import {
 import { Spinner } from "./ui/spinner";
 import { cn } from "@/lib/utils";
 import { useDbChanges } from "../lib/useDbChanges";
-applyPlugin(jsPDF);
 
 import PageHeader from "./PageHeader";
 import { fmtNumber, fmtMoney } from "../utils/format";
@@ -579,6 +576,7 @@ const RegisterHistory = () => {
     if (!detail) return;
     const store =
       (await window.api.invoke("get-setting", "store_name")) || "MI TIENDA POS";
+    const { jsPDF, interFontInline } = await loadPdfToolchain();
     const doc = new jsPDF();
     const r = detail.register;
     const pageW = doc.internal.pageSize.getWidth();

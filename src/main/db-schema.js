@@ -682,6 +682,11 @@ const runMigrations = (db) => {
       `CREATE INDEX IF NOT EXISTS idx_products_search_name ON products(search_name)`,
     );
   } catch (e) {}
+  // Casi toda la tabla es catálogo de referencia y la app sólo consulta los
+  // activos: sin esto cada búsqueda recorría decenas de miles de filas.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_products_active_name ON products(name) WHERE is_active = 1`,
+  );
 
   // Migration: add cost to stock_movements
   ensureColumn("stock_movements", "cost", "REAL DEFAULT 0");

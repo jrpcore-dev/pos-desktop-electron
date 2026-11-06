@@ -1,3 +1,4 @@
+import { loadPdfToolchain } from "@/utils/pdfToolchain";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
 import FreshDataChip from "./FreshDataChip";
@@ -98,21 +99,6 @@ import {
 import { printDocument } from "../utils/printPdf";
 
 import PageHeader from "./PageHeader";
-
-// ─── TOOLCHAIN PDF BAJO DEMANDA ─────────────────────────────
-// jsPDF, jspdf-autotable y la fuente Inter (TTF inlined en base64, ~1.5 MB)
-// solo se cargan la primera vez que el usuario exporta o imprime. Con imports
-// estáticos, Vite creaba un chunk compartido enganchado al entry: toda la app
-// pagaba ~1.5 MB de JS en el arranque aunque nunca se generara un PDF.
-const loadPdfToolchain = async () => {
-  const [{ jsPDF }, { applyPlugin }, fontModule] = await Promise.all([
-    import("jspdf"),
-    import("jspdf-autotable"),
-    import("../assets/fonts/inter.ttf?inline"),
-  ]);
-  applyPlugin(jsPDF);
-  return { jsPDF, interFontInline: fontModule.default };
-};
 
 const MONTH_NAMES = [
   "Enero",
@@ -484,7 +470,7 @@ const ChartsSection = React.memo(function ChartsSection({
             {chartMode === "semanal" ? "Ventas por día de la semana" : "Ventas por semana del mes"}
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-2">
+        <CardContent key={String(chartLoading)} className="pt-2 vt-reveal">
           {chartLoading ? (
             <div className="flex h-[260px] items-end gap-2 p-3">
               {[0, 1, 2, 3, 4, 5, 6].map((i) => (
@@ -535,7 +521,7 @@ const ChartsSection = React.memo(function ChartsSection({
             Concentración de ventas por hora (hora de México)
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-2">
+        <CardContent key={String(loading)} className="pt-2 vt-reveal">
           {loading || hourly.length === 0 ? (
             <div className="flex h-[220px] items-end gap-1.5 p-2">
               {Array.from({ length: 12 }).map((_, i) => (
@@ -600,7 +586,7 @@ const ChartsSection = React.memo(function ChartsSection({
             Desglose de ingresos del período
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-2">
+        <CardContent key={String(loading)} className="pt-2 vt-reveal">
           {loading ? (
             <div className="flex flex-col items-center gap-4 py-3">
               <Skeleton className="h-[180px] w-[180px] rounded-full" />
@@ -680,7 +666,7 @@ const ChartsSection = React.memo(function ChartsSection({
             Comparativa apilada del período · haz clic en una semana para profundizar
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-2">
+        <CardContent key={String(chartLoading)} className="pt-2 vt-reveal">
           {chartLoading ? (
             <div className="flex h-[220px] items-end gap-2 p-3">
               {[0, 1, 2, 3, 4].map((i) => (
@@ -766,7 +752,7 @@ const ChartsSection = React.memo(function ChartsSection({
             </TabsList>
           </Tabs>
         </CardHeader>
-        <CardContent className="pt-2">
+        <CardContent key={String(topLoading)} className="pt-2 vt-reveal">
           {topLoading ? (
             <div className="space-y-2 p-3">
               {[0, 1, 2, 3, 4, 5].map((i) => (
@@ -866,7 +852,7 @@ const ChartsSection = React.memo(function ChartsSection({
             Suma de unidades de los productos más vendidos
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-2">
+        <CardContent key={String(topLoading)} className="pt-2 vt-reveal">
           {topLoading ? (
             <div className="flex h-[220px] items-end gap-2 p-3">
               {[0, 1, 2, 3, 4].map((i) => (
@@ -916,7 +902,7 @@ const ChartsSection = React.memo(function ChartsSection({
         <CardHeader className="border-b bg-muted/20 pb-3">
           <CardTitle className="text-sm">Gastos por tipo</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent key={String(loading)} className="p-0 vt-reveal">
           {loading ? (
             <div className="space-y-2 p-4">
               {[0, 1].map((i) => (

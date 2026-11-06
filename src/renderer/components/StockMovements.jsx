@@ -6,6 +6,7 @@ import React, {
   memo,
 } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
+import { useRowsEntering } from "../lib/useRowsEntering";
 import {
   Search, TrendingUp, TrendingDown, ArrowLeftRight, ArrowDownUp, CalendarDays,
   Store, Undo2, Search as SearchIcon,
@@ -67,6 +68,7 @@ const StockMovements = () => {
   const [movements, setMovements] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const rowsClass = useRowsEntering(loading);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [type, setType] = useState("");
@@ -481,7 +483,7 @@ const StockMovements = () => {
               )}
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
             {loading ? (
               Array.from({ length: PAGE_SIZE }).map((_, i) => (
                 <TableRow key={i}>

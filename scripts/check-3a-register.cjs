@@ -174,6 +174,7 @@ const cashRegisterRow = (db, id) =>
   // está en HEAD. Sin delta pendiente: 0 altas / 0 bajas.
   // Paso 1 local-first (tablas de movimientos replicadas) ya está en HEAD.
   // Paso 2 local-first (`pending_ops` y sus índices) ya está en HEAD.
+  // Índice parcial de productos activos ya está en HEAD.
   const DDL_AGREGADO = [];
   const DDL_AGREGADO_TOTAL = 0;
   const DDL_BORRADO = [];
@@ -394,6 +395,8 @@ const cashRegisterRow = (db, id) =>
       // Paso 2 local-first: cola de operaciones de la caja.
       "pending_ops.idx_pending_ops_key",
       "pending_ops.idx_pending_ops_status",
+      // Rendimiento: productos activos, sin recorrer el catálogo de referencia.
+      "products.idx_products_active_name",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

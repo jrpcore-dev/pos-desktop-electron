@@ -1004,7 +1004,7 @@ ipcMain.handle("get-products", async (event, params) => {
     : conditions;
   const where =
     listConditions.length > 0
-      ? "WHERE " + listConditions.join(" AND ") + " AND p.is_active = 1"
+      ? "WHERE p.is_active = 1 AND " + listConditions.join(" AND ")
       : "WHERE p.is_active = 1";
   const allowedSort = { name: "p.name", price: "p.price", stock: "p.stock" };
   const col = allowedSort[sortField] || "p.name";
@@ -1041,7 +1041,7 @@ ipcMain.handle("get-products", async (event, params) => {
 
   const statsConditions =
     conditions.length > 0
-      ? conditions.join(" AND ") + " AND p.is_active = 1"
+      ? "p.is_active = 1 AND " + conditions.join(" AND ")
       : "p.is_active = 1";
   const statsParams = conditions.length > 0 ? [...queryParams] : [];
 

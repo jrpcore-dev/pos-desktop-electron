@@ -166,7 +166,7 @@ const StatCard = React.forwardRef(
             <Skeleton className={cn("h-4 w-28", hero && "bg-primary-foreground/20")} />
           </div>
         ) : (
-          <div className={cn("flex min-w-0 flex-col", lg ? "gap-2.5" : prominent ? "gap-1" : "gap-1.5")}>
+          <div className={cn("vt-reveal flex min-w-0 flex-col", lg ? "gap-2.5" : prominent ? "gap-1" : "gap-1.5")}>
             <p
               className={cn(
                 "truncate font-bold leading-none tracking-tight tabular-nums",

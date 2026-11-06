@@ -714,6 +714,8 @@ const Promotions = () => {
   const navigate = useNavigate();
   const notify = useToast();
   const [data, setData] = useState(null);
+  // Hasta tener respuesta no se sabe si está vacío: sin esto asomaba "Sin paquetes".
+  const [ready, setReady] = useState(false);
   const [productPromos, setProductPromos] = useState([]);
   const [categories, setCategories] = useState([]);
   const [tab, setTab] = useState("products");
@@ -734,6 +736,8 @@ const Promotions = () => {
       setCategories(Array.isArray(cats) ? cats : []);
     } catch {
       notify("No se pudieron cargar las promociones", "error");
+    } finally {
+      setReady(true);
     }
   }, [notify]);
   useEffect(() => {
@@ -846,6 +850,7 @@ const Promotions = () => {
             caption={caption}
             onClick={() => setTab(value)}
             active={tab === value}
+            loading={!ready}
           />
         ))}
       </div>
@@ -857,8 +862,8 @@ const Promotions = () => {
           <TabsTrigger value="bundles">Paquetes</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="products" className="mt-4 space-y-2">
-          {productPromos.length === 0 ? (
+        <TabsContent key={`products-${ready}`} value="products" className="vt-reveal mt-4 space-y-2">
+          {!ready ? null : productPromos.length === 0 ? (
             <EmptyState
               icon={<Tag size={26} aria-hidden="true" />}
               title="Ningún producto tiene promoción"
@@ -890,8 +895,8 @@ const Promotions = () => {
           )}
         </TabsContent>
 
-        <TabsContent value="groups" className="mt-4 space-y-2">
-          {groups.length === 0 ? (
+        <TabsContent key={`groups-${ready}`} value="groups" className="vt-reveal mt-4 space-y-2">
+          {!ready ? null : groups.length === 0 ? (
             <EmptyState
               icon={<BadgePercent size={26} aria-hidden="true" />}
               title="Sin promos por categoría o marca"
@@ -933,8 +938,8 @@ const Promotions = () => {
           )}
         </TabsContent>
 
-        <TabsContent value="bundles" className="mt-4 space-y-2">
-          {bundles.length === 0 ? (
+        <TabsContent key={`bundles-${ready}`} value="bundles" className="vt-reveal mt-4 space-y-2">
+          {!ready ? null : bundles.length === 0 ? (
             <EmptyState
               icon={<Package size={26} aria-hidden="true" />}
               title="Sin paquetes"
