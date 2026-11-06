@@ -147,7 +147,24 @@ const waitFor = async (fn, ms = 6000) => {
     );
   }
 
-  console.log("=== D · cerrar sin configurar ===");
+  console.log("=== D · código incompleto ===");
+  events.length = 0;
+  await apiServer.stopServer();
+  await apiServer.startServer(host, PORT, { onPairEvent: (e) => events.push(e) });
+  const cutBox = makeBox();
+  const before = host.prepare("SELECT COUNT(*) c FROM paired_devices").get().c;
+  const cut = await clientLink.pairAsBox(cutBox, { hostUrl: HOST_URL, code: code.slice(0, 17), deviceName: "Caja 7" });
+  check(cut.code === "PAIR_CODE_INVALID" && cut.attempts_left === 4, "código recortado: motivo e intentos restantes", JSON.stringify(cut));
+  check(host.prepare("SELECT COUNT(*) c FROM paired_devices").get().c === before, "no se crea solicitud");
+  check(
+    events.some((e) => e.type === "invalid_code" && e.deviceName === "Caja 7"),
+    "…pero el Host se entera de quién lo intentó",
+    JSON.stringify(events),
+  );
+  const fine = await clientLink.pairAsBox(cutBox, { hostUrl: HOST_URL, code: code.toLowerCase(), deviceName: "Caja 7" });
+  check(fine.success === true, "con el código completo entra, sin importar mayúsculas", JSON.stringify(fine));
+
+  console.log("=== E · cerrar sin configurar ===");
   const fresh = makeBox();
   const pf = await clientLink.pairAsBox(fresh, { hostUrl: HOST_URL, code, deviceName: "Caja 6" });
   check(pf.success === true && clientLink.getSettings(fresh).canCancelSetup === true, "una caja sin datos se puede cerrar", JSON.stringify(pf));

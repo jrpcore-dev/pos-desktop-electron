@@ -1472,22 +1472,27 @@ function ConfigurationScreen() {
           )}
         </ToggleBlock>
 
-        {activation?.enabled && (
+        {/* Siempre visible: una caja lo pide aunque el candado del móvil esté
+            apagado, y sin esto no había de dónde sacarlo. */}
+        {activation?.code && (
           <div className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
-            <div className="min-w-0 sm:w-64 sm:shrink-0">
+            <div className="min-w-0 sm:w-56 sm:shrink-0">
               <p className="text-sm font-medium text-foreground">
                 Código de activación
               </p>
               <p className="mt-1 text-sm leading-snug text-muted-foreground">
-                Compártelo con empleados nuevos, no con dispositivos no
+                Lo pide cada caja o teléfono nuevo. Compártelo solo con los
                 autorizados.
               </p>
             </div>
-            <div className="flex w-full shrink-0 items-center gap-2 sm:w-96">
+            {/* Ancho fijo para los 19 caracteres: recortado se copiaba a mano
+                incompleto y el Host lo rechazaba sin crear la solicitud. */}
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
               <Input
                 value={activation?.code || ""}
                 readOnly
-                className="text-sm tracking-widest"
+                aria-label="Código de activación"
+                className="h-10 w-[22.5rem] max-w-full shrink-0 text-center text-base font-bold tracking-wider tabular-nums"
               />
               <Button
                 type="button"

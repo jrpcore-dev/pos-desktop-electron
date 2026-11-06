@@ -3691,20 +3691,40 @@ ipcMain.handle("rename-device", async (event, { deviceId, name } = {}) => {
 // Una caja pide emparejarse: el Host tiene que enterarse aunque esté en otra
 // pantalla o minimizado. La lista de pendientes sale de get-server-status; esto
 // sólo añade el aviso del sistema y deja rastro de lo que falló.
+// Sin aviso, un código equivocado no dejaba rastro: no se crea solicitud y en el
+// Host parecía que la caja nunca había llegado. Dura lo que tarda en reintentarse.
+const PAIR_FAILURE_TTL_MS = 10 * 60 * 1000;
+const PAIR_FAILURE_NOTICE_MS = 60 * 1000;
+let lastPairFailure = null;
+let lastPairNoticeAt = 0;
 function handlePairEvent({ type, deviceName, deviceCode, reason } = {}) {
   const name = String(deviceName || "Caja nueva").slice(0, 80);
+  const failed = type === "invalid_code" || type === "error";
+  lastPairFailure = failed ? { deviceName: name, type, at: Date.now() } : null;
+  emitDbChanged(["paired_devices"], {});
   appendErrorLog(
     `[${new Date().toISOString()}] pair/${type} ${name}${deviceCode ? ` (${deviceCode})` : ""}${reason ? `: ${reason}` : ""}\n---\n`,
   );
-  if (type !== "pending" && type !== "error") return;
+  // Cualquiera en la red puede probar códigos: los fallos avisan una vez por minuto.
+  if (failed) {
+    if (Date.now() - lastPairNoticeAt < PAIR_FAILURE_NOTICE_MS) return;
+    lastPairNoticeAt = Date.now();
+  }
   try {
     if (!Notification.isSupported()) return;
     const note = new Notification({
-      title: type === "pending" ? "Caja esperando aprobación" : "Falló el emparejamiento de una caja",
+      title:
+        type === "pending"
+          ? "Caja esperando aprobación"
+          : type === "invalid_code"
+            ? "Código de activación incorrecto"
+            : "Falló el emparejamiento de una caja",
       body:
         type === "pending"
           ? `${name}${deviceCode ? ` · Caja ${deviceCode}` : ""}. Apruébala en Configuración → App Móvil.`
-          : `${name} no se pudo registrar. Revisa el log del Host.`,
+          : type === "invalid_code"
+            ? `${name} intentó vincularse. Revisa el código en Configuración → App Móvil.`
+            : `${name} no se pudo registrar. Revisa el log del Host.`,
     });
     note.on("click", () => {
       if (!mainWin || mainWin.isDestroyed()) return;
@@ -4003,6 +4023,9 @@ ipcMain.handle("get-server-status", () => {
         }));
     } catch (err) {
       out.pendingDevices = [];
+    }
+    if (lastPairFailure && Date.now() - lastPairFailure.at < PAIR_FAILURE_TTL_MS) {
+      out.pairFailure = lastPairFailure;
     }
   }
   // 3g/F · en la caja el estado que importa es el Host al que sirve: el

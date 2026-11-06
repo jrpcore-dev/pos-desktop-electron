@@ -88,16 +88,12 @@ export default function HostStatusBanner() {
     try {
       const s = await window.api.invoke("get-server-status");
       setStatus(s);
-      if (s && s.role !== "client" && timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
     } catch (e) {
       // Se reintenta en el siguiente ciclo con el estado anterior en pantalla.
     }
   }, []);
 
-  // En el Host ya no se sondea: una caja que pide emparejarse llega por aquí.
+  // Una caja que pide emparejarse llega al momento; el sondeo la respalda.
   useDbChanges(refresh, ["paired_devices"]);
 
   useEffect(() => {
@@ -201,7 +197,29 @@ export default function HostStatusBanner() {
   // hasta que el administrador decida.
   const pendingDevices = status?.pendingDevices || [];
   if (status && status.role !== "client") {
-    if (!pendingDevices.length) return null;
+    if (!pendingDevices.length) {
+      const failure = status.pairFailure;
+      if (!failure) return null;
+      return (
+        <AlertCard
+          icon={MonitorSmartphone}
+          title={
+            failure.type === "invalid_code"
+              ? `${failure.deviceName} intentó vincularse con un código incorrecto`
+              : `${failure.deviceName} no se pudo registrar`
+          }
+          actions={
+            <Button size="sm" onClick={() => navigate("/configuration", { state: { tab: "mobile" } })}>
+              Ver código
+            </Button>
+          }
+        >
+          {failure.type === "invalid_code"
+            ? "No se creó ninguna solicitud. Compártele el código completo de 16 caracteres."
+            : "No se creó ninguna solicitud. El detalle quedó en el log del Host."}
+        </AlertCard>
+      );
+    }
     const first = pendingDevices[0];
     return (
       <AlertCard

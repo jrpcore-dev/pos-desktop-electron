@@ -46,7 +46,17 @@ const ERRORS = {
 
 // `PAIR_REJECTED` no va en la tabla: es el comodín de cualquier fallo sin código
 // y un texto fijo escondía el motivo real, que aquí llega en `error`.
-const message = (res) => ERRORS[res?.code] || res?.error || "Error desconocido";
+const message = (res) => {
+  const base = ERRORS[res?.code] || res?.error || "Error desconocido";
+  return res?.code === "PAIR_CODE_INVALID" && Number.isFinite(res?.attempts_left)
+    ? `${base} Te quedan ${res.attempts_left} intentos.`
+    : base;
+};
+
+// El código son 16 caracteres (los guiones no cuentan). Revisarlo aquí no gasta
+// intentos y dice qué pasa cuando se copió a mano incompleto.
+const CODE_LENGTH = 16;
+const codeChars = (value) => String(value || "").replace(/[^A-Za-z0-9]/g, "").length;
 
 const hostIp = (url) => String(url || "").replace(/^https?:\/\//, "");
 
@@ -110,6 +120,12 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
 
   const pair = () =>
     run(async () => {
+      const typed = codeChars(code);
+      if (typed !== CODE_LENGTH) {
+        return setError(
+          `El código tiene ${CODE_LENGTH} caracteres y escribiste ${typed}. Revísalo en el Host: Configuración → App Móvil.`,
+        );
+      }
       const t0 = Date.now();
       setPairStage(0);
       const timer = window.setInterval(
@@ -302,6 +318,9 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
                 if (e.key === "Enter" && code && deviceName.trim() && !busy) pair();
               }}
             />
+            <p className="text-right text-xs tabular-nums text-muted-foreground">
+              {codeChars(code)} de {CODE_LENGTH}
+            </p>
           </div>
           <div className="flex gap-2.5">
             <Button type="button" variant="outline" size="lg" onClick={() => setStep(0)}>
