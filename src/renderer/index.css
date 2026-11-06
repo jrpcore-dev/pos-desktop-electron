@@ -759,6 +759,41 @@ body {
   .vt-status div.vt-last { animation: none; opacity: 1; }
 }
 
+/* ─── Identidad de tarjetas e inputs. Van como fondo de la propia tarjeta, sin
+   capas encima: así no cambian el apilado ni cortan los tooltips de las gráficas.
+   `.vt-pilot` limita los inputs a Reportes y Caja mientras se prueban. ─── */
+:root {
+  --vt-wash: 0.14;
+  --vt-field-shadow: inset 0 1px 2px hsl(222 47% 11% / 0.07);
+}
+.dark {
+  --vt-wash: 0.2;
+  --vt-field-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35);
+}
+/* Tarjetas generales: triángulo azul en la esquina, que se desvanece en diagonal.
+   Tiene medida fija para verse igual en tarjetas chicas y grandes. */
+.vt-wash {
+  background-image: linear-gradient(to bottom left, hsl(var(--chart-2) / calc(var(--vt-wash) * 0.9)), transparent 50%);
+  background-position: right top;
+  background-size: 140px 120px;
+  background-repeat: no-repeat;
+}
+[data-stat-tone]:not([aria-pressed="true"]) {
+  background-image: linear-gradient(135deg, transparent 34%, hsl(var(--vt-tone, var(--chart-2)) / var(--vt-wash)));
+}
+[data-stat-tone="success"] { --vt-tone: var(--success); }
+[data-stat-tone="warning"] { --vt-tone: var(--warning); }
+[data-stat-tone="destructive"] { --vt-tone: var(--destructive); }
+[data-stat-tone="info"] { --vt-tone: var(--info); }
+/* Sin tocar el foco: su anillo también es box-shadow. */
+.vt-pilot input:not([type="checkbox"], [type="radio"], :focus-visible),
+.vt-pilot button[role="combobox"]:not(:focus-visible) {
+  box-shadow: var(--vt-field-shadow);
+}
+.vt-pilot .relative > svg:has(+ input) {
+  color: hsl(var(--primary));
+}
+
 /* ─── Micro-animaciones del carrito (SÓLO GPU: transform3d + opacity) ─── */
 @keyframes cart-item-in {
   from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.98); }

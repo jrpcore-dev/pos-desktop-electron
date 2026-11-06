@@ -106,6 +106,7 @@ const StatCard = React.forwardRef(
         {...(onClick
           ? { type: "button", onClick, "aria-pressed": active }
           : {})}
+        data-stat-tone={hero ? undefined : tone}
         className={cn(
           "relative isolate flex min-w-0 flex-col justify-between overflow-hidden rounded-xl border transition-all duration-200 hover:-translate-y-0.5",
           lg ? "min-h-[8.5rem] gap-4 p-5" : prominent ? "gap-2 px-4 py-3" : "gap-3 p-4",

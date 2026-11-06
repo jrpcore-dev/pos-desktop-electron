@@ -477,7 +477,7 @@ const ChartsSection = React.memo(function ChartsSection({
   return (
     <section className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
       {/* Tendencia */}
-      <Card className={cn(CARD_RADIUS, "min-w-0 lg:col-span-2")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0 lg:col-span-2")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Tendencia de ventas</CardTitle>
           <CardDescription className="text-xs">
@@ -528,7 +528,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
       {/* Ventas por hora del día */}
-      <Card className={cn(CARD_RADIUS, "min-w-0")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Ventas por hora del día</CardTitle>
           <CardDescription className="text-xs">
@@ -593,7 +593,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
       {/* Distribución por método */}
-      <Card className={cn(CARD_RADIUS, "min-w-0")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Distribución por método de pago</CardTitle>
           <CardDescription className="text-xs">
@@ -673,7 +673,7 @@ const ChartsSection = React.memo(function ChartsSection({
 
 
       {/* Comparativa Ingresos vs Gastos vs Ganancia */}
-      <Card className={cn(CARD_RADIUS, "min-w-0")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-sm">Ingresos vs gastos vs ganancia</CardTitle>
           <CardDescription className="text-xs">
@@ -743,7 +743,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
       {/* Top productos */}
-      <Card className={cn(CARD_RADIUS, "min-w-0")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="flex-row items-start justify-between pb-0">
           <div>
             <div className="flex items-center gap-2">
@@ -851,7 +851,7 @@ const ChartsSection = React.memo(function ChartsSection({
         </CardContent>
       </Card>
       {/* Unidades vendidas por categoría */}
-      <Card className={cn(CARD_RADIUS, "min-w-0")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <div className="flex items-center gap-2">
             <CardTitle className="text-sm">Unidades vendidas por categoría</CardTitle>
@@ -912,7 +912,7 @@ const ChartsSection = React.memo(function ChartsSection({
           )}
         </CardContent>
       </Card>
-      <Card className={cn(CARD_RADIUS, "min-w-0 overflow-hidden")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0 overflow-hidden")}>
         <CardHeader className="border-b bg-muted/20 pb-3">
           <CardTitle className="text-sm">Gastos por tipo</CardTitle>
         </CardHeader>
@@ -1807,7 +1807,7 @@ const Reports = () => {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="animate-enter p-1">
+      <div className="vt-pilot animate-enter p-1">
         <h1 className="sr-only">Reportes</h1>
         {/* ─── CABECERA ─────────────────────────────────────── */}
         <PageHeader

@@ -1445,7 +1445,7 @@ const EndOfDay = () => {
   ];
 
   return (
-    <div className="fade-in p-1">
+    <div className="vt-pilot fade-in p-1">
       {/* HEADER */}
       <div className="mb-2 flex items-end justify-between">
         <div>
@@ -1670,7 +1670,7 @@ const EndOfDay = () => {
             )}
 
             {/* MOVIMIENTOS DEL TURNO */}
-            <Card>
+            <Card wash>
               <CardContent className="py-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="flex min-w-0 items-center gap-1.5 text-base font-bold">
@@ -1771,7 +1771,7 @@ const EndOfDay = () => {
 
           {/* ─── TAB: ARQUEO ──────────────────────────────────── */}
           <TabsContent value="arqueo" className="animate-enter">
-            <Card>
+            <Card wash>
               <CardContent className="px-4 py-4">
                 <h3 className="mb-3 flex items-center gap-1.5 text-base font-bold">
                   <Landmark size={18} />

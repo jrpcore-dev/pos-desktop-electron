@@ -2,11 +2,13 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Card = React.forwardRef(({ className, ...props }, ref) => (
+// `wash`: degradado azul suave, el mismo de las estadísticas.
+const Card = React.forwardRef(({ className, wash = false, ...props }, ref) => (
   <div
     ref={ref}
     className={cn(
       "rounded-xl border bg-card text-card-foreground shadow-md",
+      wash && "vt-wash",
       className
     )}
     {...props}
