@@ -3700,7 +3700,7 @@ let lastPairNoticeAt = 0;
 function handlePairEvent({ type, deviceName, deviceCode, reason } = {}) {
   const name = String(deviceName || "Caja nueva").slice(0, 80);
   const failed = type === "invalid_code" || type === "error";
-  lastPairFailure = failed ? { deviceName: name, type, at: Date.now() } : null;
+  lastPairFailure = failed ? { deviceName: name, type, reason: reason || null, at: Date.now() } : null;
   emitDbChanged(["paired_devices"], {});
   appendErrorLog(
     `[${new Date().toISOString()}] pair/${type} ${name}${deviceCode ? ` (${deviceCode})` : ""}${reason ? `: ${reason}` : ""}\n---\n`,

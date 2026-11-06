@@ -64,8 +64,7 @@ const ensureColumn = (db, table, column, definition) => {
   }
 };
 
-const ensureSchema = (db) => {
-  db.exec(`CREATE TABLE IF NOT EXISTS paired_devices (
+const pairedDevicesDdl = (table) => `CREATE TABLE IF NOT EXISTS ${table} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id TEXT NOT NULL UNIQUE,
     device_name TEXT DEFAULT '',
@@ -80,7 +79,74 @@ const ensureSchema = (db) => {
     protocol_version TEXT,
     approved INTEGER DEFAULT 1,
     pending_sync INTEGER DEFAULT 0
-  )`);
+  )`;
+
+const PAIRED_DEVICES_COLUMNS = [
+  "id",
+  "device_id",
+  "device_name",
+  "paired_token_hash",
+  "cashier_id",
+  "activated_at",
+  "last_seen_at",
+  "revoked",
+  "device_code",
+  "device_type",
+  "scopes",
+  "protocol_version",
+  "approved",
+  "pending_sync",
+];
+
+// `registerPairing` necesita un UNIQUE sobre device_id para su ON CONFLICT y
+// que ninguna columna ajena exija valor al insertar. ensureColumn no da ninguna
+// de las dos cosas en una tabla de otra versión: todo emparejamiento fallaba con
+// "El Host no pudo registrar esta caja" y no se creaba ninguna solicitud.
+const pairedDevicesCanPair = (db) => {
+  const cols = db.prepare("PRAGMA table_info(paired_devices)").all();
+  if (!cols.some((c) => c.name === "id")) return false;
+  const blocksInsert = (c) =>
+    !PAIRED_DEVICES_COLUMNS.includes(c.name) && c.notnull && c.dflt_value === null && !c.pk;
+  if (cols.some(blocksInsert)) return false;
+  return db
+    .prepare("PRAGMA index_list(paired_devices)")
+    .all()
+    .filter((ix) => ix.unique && !ix.partial)
+    .some((ix) => {
+      const parts = db.prepare(`PRAGMA index_info(${JSON.stringify(ix.name)})`).all();
+      return parts.length === 1 && parts[0].name === "device_id";
+    });
+};
+
+// Reconstruye la tabla con la forma actual. Sólo se pierden las filas sin
+// device_id (nadie podía autenticarse con ellas) y los duplicados, conservando
+// el más reciente. Los triggers de réplica mueren con la tabla vieja: se copian
+// tal cual porque tras restaurar un respaldo no vuelve a correr ensureChangeLog.
+const rebuildPairedDevices = (db) => {
+  const triggers = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'paired_devices' AND sql IS NOT NULL")
+    .all();
+  const present = db.prepare("PRAGMA table_info(paired_devices)").all().map((c) => c.name);
+  const cols = PAIRED_DEVICES_COLUMNS.filter((c) => present.includes(c));
+  const values = cols.map((c) =>
+    c === "paired_token_hash" ? "COALESCE(paired_token_hash, '')" : c,
+  );
+  db.transaction(() => {
+    // Por DELETE y no al copiar: así las cajas también reciben la baja.
+    db.exec(`DELETE FROM paired_devices
+      WHERE device_id IS NULL OR device_id = ''
+         OR rowid NOT IN (SELECT MAX(rowid) FROM paired_devices GROUP BY device_id)`);
+    db.exec(pairedDevicesDdl("paired_devices_new"));
+    db.exec(`INSERT INTO paired_devices_new (${cols.join(", ")})
+      SELECT ${values.join(", ")} FROM paired_devices`);
+    db.exec("DROP TABLE paired_devices");
+    db.exec("ALTER TABLE paired_devices_new RENAME TO paired_devices");
+    for (const t of triggers) db.exec(t.sql);
+  })();
+};
+
+const ensureSchema = (db) => {
+  db.exec(pairedDevicesDdl("paired_devices"));
   // Reparación de BDs cuya tabla vino de otra versión sin device_id: sin esto
   // el Host truena en la sección de activación y rechaza a toda caja con
   // "Este dispositivo no está activado para este negocio".
@@ -88,7 +154,9 @@ const ensureSchema = (db) => {
   ensureColumn(db, "paired_devices", "device_name", "TEXT DEFAULT ''");
   ensureColumn(db, "paired_devices", "paired_token_hash", "TEXT");
   ensureColumn(db, "paired_devices", "cashier_id", "INTEGER");
-  ensureColumn(db, "paired_devices", "activated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+  // Sin DEFAULT: SQLite rechaza CURRENT_TIMESTAMP al agregar columna a una tabla
+  // con filas, y registerPairing siempre escribe la fecha.
+  ensureColumn(db, "paired_devices", "activated_at", "DATETIME");
   ensureColumn(db, "paired_devices", "last_seen_at", "DATETIME");
   ensureColumn(db, "paired_devices", "revoked", "INTEGER DEFAULT 0");
   // Entrega 2b: migración aditiva para BD existentes. `approved` DEFAULT 1
@@ -100,6 +168,14 @@ const ensureSchema = (db) => {
   ensureColumn(db, "paired_devices", "approved", "INTEGER DEFAULT 1");
   // Bloque 5 · la caja reporta cuántas ventas le faltan por subir.
   ensureColumn(db, "paired_devices", "pending_sync", "INTEGER DEFAULT 0");
+  if (!pairedDevicesCanPair(db)) {
+    try {
+      rebuildPairedDevices(db);
+    } catch (err) {
+      // No impide abrir el POS: el motivo vuelve a salir al emparejar una caja.
+      console.error("No se pudo reparar paired_devices:", err.message);
+    }
+  }
   if (!getSetting(db, "activation_code")) {
     setSetting(db, "activation_code", generateCode());
   }

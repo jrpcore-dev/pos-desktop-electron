@@ -216,7 +216,7 @@ export default function HostStatusBanner() {
         >
           {failure.type === "invalid_code"
             ? "No se creó ninguna solicitud. Compártele el código completo de 16 caracteres."
-            : "No se creó ninguna solicitud. El detalle quedó en el log del Host."}
+            : `No se creó ninguna solicitud. ${failure.reason ? `Motivo: ${failure.reason}` : "El detalle quedó en el log del Host."}`}
         </AlertCard>
       );
     }

@@ -49,6 +49,7 @@ const CHECKS = [
   { file: "check-3a-ipc.cjs" },
   { file: "check-3a-register.cjs" },
   { file: "check-3b-sessions.cjs" },
+  { file: "check-pair-legacy-schema.cjs" },
   { file: "check-3c-link.cjs", ports: { tcp: 3456, udp: 3457 } },
   { file: "check-3d-replica.cjs" },
   { file: "check-3e-events.cjs" },
