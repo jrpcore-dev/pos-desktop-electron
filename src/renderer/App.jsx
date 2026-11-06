@@ -9,6 +9,7 @@ import BoxWelcome from "./components/BoxWelcome";
 import Catalog from "./components/Catalog";
 import ToastProvider from "./components/ToastProvider";
 import { Spinner } from "./components/ui/spinner";
+import { routeAfterLogin } from "./lib/sessionReturn";
 
 const Layout = React.lazy(() => import("./components/Layout"));
 const SalesTerminal = React.lazy(() => import("./components/SalesTerminal"));
@@ -230,7 +231,7 @@ const AppInner = () => {
   const handleLogin = (cashier) => {
     setLoggedIn(true);
     setCashier(cashier);
-    navigate("/");
+    navigate(routeAfterLogin(cashier));
   };
 
   const loadingScreen = (

@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback } from "react";
+import { rememberSessionRoute } from "@/lib/sessionReturn";
 
 const CashierContext = createContext({ cashier: null, setCashier: () => {}, logout: () => {} });
 
@@ -11,7 +12,10 @@ export const CashierProvider = ({ children }) => {
   });
 
   const logout = useCallback(() => {
-    setCashier(null);
+    setCashier((current) => {
+      rememberSessionRoute(current, window.location.hash);
+      return null;
+    });
     localStorage.removeItem("currentCashier");
   }, []);
 
