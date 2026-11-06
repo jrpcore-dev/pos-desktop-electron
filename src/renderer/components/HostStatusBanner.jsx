@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CloudOff, Database, KeyRound, RefreshCw, TimerReset, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { AlertTriangle, CloudOff, Database, KeyRound, Link2Off, MonitorSmartphone, RefreshCw, TimerReset, X } from "lucide-react";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./ui/confirm";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { formatMXTime } from "../utils/dateUtils";
 import { fmtMoney } from "../utils/format";
 import { useToast } from "./ToastProvider";
+import { useDbChanges } from "../lib/useDbChanges";
 import { PENDING_ADMIN_MS, STALE_STRONG_MS, STALE_WARN_MS } from "../lib/replicaThresholds";
 
 // Bloque 4/D · Estado visible de la caja: Host caído ≠ Host ocupado, datos
@@ -27,6 +30,8 @@ const fmtAge = (ms) => {
 
 export default function HostStatusBanner() {
   const notify = useToast();
+  const navigate = useNavigate();
+  const [relinkOpen, setRelinkOpen] = useState(false);
   const [status, setStatus] = useState(null);
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState([]);
@@ -52,6 +57,9 @@ export default function HostStatusBanner() {
       // Se reintenta en el siguiente ciclo con el estado anterior en pantalla.
     }
   }, []);
+
+  // En el Host ya no se sondea: una caja que pide emparejarse llega por aquí.
+  useDbChanges(refresh, ["paired_devices"]);
 
   useEffect(() => {
     refresh();
@@ -150,7 +158,81 @@ export default function HostStatusBanner() {
     }
   };
 
-  if (!status || status.role !== "client") return null;
+  // Host · cajas esperando aprobación: se queda visible en cualquier pantalla
+  // hasta que el administrador decida.
+  const pendingDevices = status?.pendingDevices || [];
+  if (status && status.role !== "client") {
+    if (!pendingDevices.length) return null;
+    const first = pendingDevices[0];
+    return (
+      <div className="mb-4 flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/[0.08] px-4 py-3 text-warning">
+        <MonitorSmartphone size={18} className="shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">
+            {pendingDevices.length === 1
+              ? `${first.deviceName}${first.deviceCode ? ` (${first.deviceCode})` : ""} espera tu aprobación`
+              : `${pendingDevices.length} cajas esperan tu aprobación`}
+          </p>
+          <p className="mt-0.5 text-xs opacity-90">
+            No podrá vender ni descargar datos hasta que la apruebes.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          onClick={() => navigate("/configuration", { state: { tab: "mobile" } })}
+        >
+          Revisar
+        </Button>
+      </div>
+    );
+  }
+
+  if (!status) return null;
+
+  const authIssue = status.host?.authIssue || null;
+  if (authIssue) {
+    const pendingApproval = authIssue === "pending";
+    return (
+      <>
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/[0.08] px-4 py-3 text-warning">
+          <Link2Off size={18} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">
+              {pendingApproval
+                ? "Esta caja espera aprobación en el Host"
+                : "El Host ya no reconoce esta caja"}
+            </p>
+            <p className="mt-0.5 text-xs opacity-90">
+              {pendingApproval
+                ? "Hasta que el Host la apruebe no podrá registrar ventas ni sincronizar."
+                : "No podrá registrar ventas ni sincronizar hasta volver a vincularla con el código de activación."}
+            </p>
+          </div>
+          {!pendingApproval && (
+            <Button size="sm" variant="outline" className="shrink-0" onClick={() => setRelinkOpen(true)}>
+              Volver a vincular
+            </Button>
+          )}
+        </div>
+        <ConfirmDialog
+          open={relinkOpen}
+          onOpenChange={setRelinkOpen}
+          title="Volver a vincular esta caja"
+          description="Se pedirá el código de activación y luego la aprobación en el Host; hasta entonces esta caja no podrá vender. Las ventas pendientes se conservan y suben después."
+          confirmLabel="Vincular de nuevo"
+          cancelLabel="Ahora no"
+          variant="default"
+          iconColor="warning"
+          onConfirm={async () => {
+            await window.api.invoke("replica-reset");
+            window.location.reload();
+          }}
+        />
+      </>
+    );
+  }
 
   const host = status.host || {};
   const pending = status.pending || { count: 0 };

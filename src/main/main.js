@@ -8,6 +8,7 @@ const {
   Menu,
   nativeImage,
   safeStorage,
+  Notification,
 } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
@@ -680,6 +681,7 @@ app.on("ready", async () => {
         onDataChanged: emitDbChanged,
         // Bloque 6 · la caja designada baja la copia más reciente.
         getLatestBackup: getLatestBackupPayload,
+        onPairEvent: handlePairEvent,
       });
       if (result.success) {
         await discovery.startDiscovery(3456);
@@ -3686,12 +3688,41 @@ ipcMain.handle("rename-device", async (event, { deviceId, name } = {}) => {
   }
 });
 
+// Una caja pide emparejarse: el Host tiene que enterarse aunque esté en otra
+// pantalla o minimizado. La lista de pendientes sale de get-server-status; esto
+// sólo añade el aviso del sistema y deja rastro de lo que falló.
+function handlePairEvent({ type, deviceName, deviceCode, reason } = {}) {
+  const name = String(deviceName || "Caja nueva").slice(0, 80);
+  appendErrorLog(
+    `[${new Date().toISOString()}] pair/${type} ${name}${deviceCode ? ` (${deviceCode})` : ""}${reason ? `: ${reason}` : ""}\n---\n`,
+  );
+  if (type !== "pending" && type !== "error") return;
+  try {
+    if (!Notification.isSupported()) return;
+    const note = new Notification({
+      title: type === "pending" ? "Caja esperando aprobación" : "Falló el emparejamiento de una caja",
+      body:
+        type === "pending"
+          ? `${name}${deviceCode ? ` · Caja ${deviceCode}` : ""}. Apruébala en Configuración → App Móvil.`
+          : `${name} no se pudo registrar. Revisa el log del Host.`,
+    });
+    note.on("click", () => {
+      if (!mainWin || mainWin.isDestroyed()) return;
+      if (mainWin.isMinimized()) mainWin.restore();
+      mainWin.show();
+      mainWin.focus();
+    });
+    note.show();
+  } catch (err) {}
+}
+
 // Entrega 2b: aprobar/rechazar un dispositivo pendiente (p.ej. una caja
 // desktop_box auto-declarada). Aprobar asigna el set de scopes de su tipo.
 ipcMain.handle("approve-device", async (event, deviceId) => {
   try {
     const res = activation.approveDevice(db, deviceId);
     if (!res.success) return res;
+    emitDbChanged(["paired_devices"], {});
     return { success: true, scopes: res.scopes, status: getActivationStatus() };
   } catch (error) {
     return { success: false, error: error.message };
@@ -3702,6 +3733,7 @@ ipcMain.handle("reject-device", async (event, deviceId) => {
   try {
     const res = activation.rejectDevice(db, deviceId);
     if (!res.success) return res;
+    emitDbChanged(["paired_devices"], {});
     return { success: true, status: getActivationStatus() };
   } catch (error) {
     return { success: false, error: error.message };
@@ -3943,6 +3975,21 @@ ipcMain.handle("replica-reset", async () => replicaEngine.resetSync(db));
 ipcMain.handle("get-server-status", () => {
   const api = apiServer.getStatus();
   const out = { running: api.running, port: api.port || 3456, role: deviceRole };
+  // Cajas que esperan aprobación: el banner del Host las lista.
+  if (deviceRole !== ipcScopes.ROLES.CLIENT) {
+    try {
+      out.pendingDevices = activation
+        .listDevices(db)
+        .filter((d) => d.approved !== 1 && d.revoked !== 1)
+        .map((d) => ({
+          deviceId: d.device_id,
+          deviceName: d.device_name || "Caja nueva",
+          deviceCode: d.device_code || null,
+        }));
+    } catch (err) {
+      out.pendingDevices = [];
+    }
+  }
   // 3g/F · en la caja el estado que importa es el Host al que sirve: el
   // encabezado lo enseña como "conectado/desconectado" en vez del servidor local.
   if (deviceRole === ipcScopes.ROLES.CLIENT) {

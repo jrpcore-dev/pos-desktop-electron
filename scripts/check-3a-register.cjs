@@ -173,14 +173,9 @@ const cashRegisterRow = (db, id) =>
   // Funciones de la tienda (claves feature_* en los triggers de settings) ya
   // está en HEAD. Sin delta pendiente: 0 altas / 0 bajas.
   // Paso 1 local-first (tablas de movimientos replicadas) ya está en HEAD.
-  // Paso 2 local-first · cola de operaciones de la caja: `pending_ops` y sus
-  // dos índices (llave única y estado).
-  const DDL_AGREGADO = [
-    /^CREATE TABLE pending_ops \(/,
-    /^CREATE UNIQUE INDEX idx_pending_ops_key ON pending_ops/,
-    /^CREATE INDEX idx_pending_ops_status ON pending_ops/,
-  ];
-  const DDL_AGREGADO_TOTAL = 3;
+  // Paso 2 local-first (`pending_ops` y sus índices) ya está en HEAD.
+  const DDL_AGREGADO = [];
+  const DDL_AGREGADO_TOTAL = 0;
   const DDL_BORRADO = [];
   const DDL_BORRADO_TOTAL = 0;
   console.log("  statements nuevos :", d.added.length);

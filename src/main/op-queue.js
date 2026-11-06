@@ -166,7 +166,16 @@ const reapplyPending = (db, productIds = null) => {
 };
 
 // Fallos de red: se reintenta más tarde sin marcar nada.
-const TRANSIENT = new Set(["HOST_UNREACHABLE", "NO_HOST_LINKED", "HOST_ERROR", "HOST_BUSY"]);
+// Lo mismo si el Host aún no aprueba o ya no reconoce esta caja: la operación
+// es válida, sólo falta el vínculo. No es un rechazo: deshacerla la perdería.
+const TRANSIENT = new Set([
+  "HOST_UNREACHABLE",
+  "NO_HOST_LINKED",
+  "HOST_ERROR",
+  "HOST_BUSY",
+  "NOT_APPROVED",
+  "NOT_PAIRED",
+]);
 
 // Sube en orden. `send(row)` devuelve lo que contestó el Host (el valor del
 // handler o un fallo {success:false, code}). Se corta en el primer fallo de

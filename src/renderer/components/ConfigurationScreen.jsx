@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Blocks,
@@ -49,6 +49,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ToastProvider";
+import { useDbChanges } from "../lib/useDbChanges";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "./PageHeader";
@@ -383,9 +384,11 @@ function ToggleBlock({
 
 function ConfigurationScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const notify = useToast();
   const fileInputRef = useRef(null);
-  const [activeTab, setActiveTab] = useState("store");
+  // El aviso de "caja esperando aprobación" entra directo a Dispositivos.
+  const [activeTab, setActiveTab] = useState(location.state?.tab || "store");
   const scaleEnabled = useScaleEnabled();
   const cartSide = useCartSide();
 
@@ -879,6 +882,8 @@ function ConfigurationScreen() {
     setActivation(status);
     return status;
   };
+  // Una caja que pide emparejarse aparece aquí sin salir de la pantalla.
+  useDbChanges(() => reloadActivation().catch(() => {}), ["paired_devices"]);
 
   const handleSetActivation = async (enabled) => {
     if (enabled) {

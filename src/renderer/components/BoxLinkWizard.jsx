@@ -37,9 +37,12 @@ const ERRORS = {
   TOKEN_UNAVAILABLE: "No se pudo guardar la credencial de la caja (falta cifrado con safeStorage). Reintenta.",
   NO_HOST_LINKED: "La caja todavía no tiene Host configurado.",
   INVALID_PAIR_INPUT: "Falta el Host o el código de activación.",
-  PAIR_REJECTED: "El Host rechazó el emparejamiento.",
+  PAIR_HOST_ERROR: "El Host no pudo registrar esta caja. Revisa el aviso en el Host y vuelve a intentar.",
+  PAIR_CODE_UNAVAILABLE: "El Host no tiene código de activación. Genera uno en Configuración → App Móvil.",
 };
 
+// `PAIR_REJECTED` no va en la tabla: es el comodín de cualquier fallo sin código
+// y un texto fijo escondía el motivo real, que aquí llega en `error`.
 const message = (res) => ERRORS[res?.code] || res?.error || "Error desconocido";
 
 const BoxLinkWizard = ({ api, className }) => {

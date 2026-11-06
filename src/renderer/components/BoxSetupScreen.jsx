@@ -124,6 +124,8 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
               : {
                   approved: false,
                   revoked: false,
+                  // El Host ya no reconoce esta caja: esperar no lo arregla.
+                  notPaired: res?.code === "NOT_PAIRED",
                   deviceCode: prev?.deviceCode || null,
                   error: res?.error || res?.code || "Sin conexión con el Host",
                 },
@@ -205,7 +207,7 @@ const BoxSetupScreen = ({ settings, onRefresh, className }) => {
           </div>
         ) : (
           <section className="flex flex-col gap-3 rounded-lg border border-border p-4">
-            {waiting && link?.revoked && (
+            {waiting && (link?.revoked || link?.notPaired) && (
               <button className={btn} onClick={() => setRelink(true)}>
                 Volver a vincular con el código de activación
               </button>

@@ -38,6 +38,8 @@ const KEYS = Object.freeze({
   // falsa alarma de red: el Host contesta, pero no conviene escribirle encima.
   BUSY: "host_busy",
   BUSY_AT: "host_busy_at",
+  // El Host contesta pero no deja pasar a esta caja: "pending" | "not_paired".
+  AUTH_ISSUE: "replica_auth_issue",
 });
 
 const DEFAULT_PAGE = 2000;
@@ -331,12 +333,28 @@ const connectOnce = async (ctx) => {
       },
       signal,
     });
-    if (res.status === 403) throw new Error("El Host rechazó el emparejamiento de esta caja");
+    if (res.status === 403) {
+      // El Host SÍ contestó: no es una caída. El 403 dice qué le pasa a la
+      // caja, y el aviso de pantalla depende de eso.
+      markHostOk();
+      let body = null;
+      try {
+        body = await res.json();
+      } catch (err) {}
+      const issue = body && body.code === "NOT_APPROVED" ? "pending" : "not_paired";
+      activation.setSetting(ctx.db, KEYS.AUTH_ISSUE, issue);
+      throw new Error(
+        issue === "pending"
+          ? "La caja espera aprobación en el Host"
+          : (body && body.error) || "El Host no reconoce esta caja",
+      );
+    }
     if (!res.ok || !res.body) throw new Error(`El Host respondió HTTP ${res.status}`);
 
     setLive(ctx, "connected", null);
     setBusy(ctx.db, false);
     markHostOk();
+    activation.setSetting(ctx.db, KEYS.AUTH_ISSUE, "");
     lastFrameAt = Date.now();
     // Fase 4 · conectado: la espera de la próxima caída vuelve a empezar corta.
     ctx.backoff = 0;
@@ -490,9 +508,12 @@ const hostOkInfo = (db) => {
   const busy = activation.getSetting(db, KEYS.BUSY) === "1";
   const busyAt = Number(activation.getSetting(db, KEYS.BUSY_AT) || 0) || 0;
   const busyFresh = busy && (ls.state === "busy" || Date.now() - busyAt < 120000);
+  const authIssue = activation.getSetting(db, KEYS.AUTH_ISSUE) || null;
   return {
     reachable:
       ls.state === "connected" ||
+      // Un 403 también es el Host contestando: "pendiente" no es "desconectado".
+      !!authIssue ||
       busyFresh ||
       (lastHostOkAt > 0 && Date.now() - lastHostOkAt < HOST_OK_GRACE_MS) ||
       // Descarga inicial activa: cada página del snapshot ES tráfico HTTP bueno
@@ -503,6 +524,7 @@ const hostOkInfo = (db) => {
     // Bloque 4/D · ocupado ≠ caído. El renderer muestra un aviso distinto.
     busy: busyFresh,
     busyAt: busyAt || null,
+    authIssue,
     liveState: ls.state,
     liveError: ls.error,
     lastFrameAt: ls.at,

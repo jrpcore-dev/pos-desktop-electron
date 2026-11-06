@@ -146,6 +146,19 @@ const dbFile = path.join(TMP, "db", "pos-system.db");
   const after = (await call("get-sales-by-range", { startDate: "2000-01-01", endDate: "2100-01-01" })) || {};
   check(after.sales?.[0]?.device_name === "Mostrador", "el nombre nuevo se ve al momento", after.sales?.[0]?.device_name);
 
+  // Una caja pendiente aparece en el estado que lee el banner del Host.
+  const side2 = new Database(dbFile);
+  side2
+    .prepare("INSERT INTO paired_devices (device_id, device_name, paired_token_hash, device_code, device_type, approved, revoked) VALUES ('box-p', 'Caja 9', 'x', 'C', 'desktop_box', 0, 0)")
+    .run();
+  side2.close();
+  const server = await call("get-server-status");
+  check(
+    server.pendingDevices?.length === 1 && server.pendingDevices[0].deviceName === "Caja 9",
+    "el Host ve la caja pendiente",
+    JSON.stringify(server.pendingDevices),
+  );
+
   console.log(`\n=== main handlers: ${pass} PASS / ${fail} FAIL ===`);
   process.exit(fail ? 1 : 0);
 })().catch((err) => {

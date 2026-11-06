@@ -126,7 +126,7 @@ const makeRequireScope = (db) => (scope) => (req, res, next) => {
 const startServer = async (
   db,
   port = 3456,
-  { appVersion, onDataChanged, getLatestBackup } = {},
+  { appVersion, onDataChanged, getLatestBackup, onPairEvent } = {},
 ) => {
   if (server) return { success: true, port };
 
@@ -1351,11 +1351,24 @@ const startServer = async (
   // Emparejamiento por código de activación: público porque un teléfono nuevo
   // no tiene cómo autenticarse aún. El código se valida en tiempo constante y
   // con su propio rate limit (evita fuerza bruta del código en la LAN).
+  // Lo que pasa aquí se le cuenta al Host (aviso y log): sin esto una caja
+  // podía quedar esperando o fallar sin que nadie en el Host se enterara.
+  const pairEvent = (event) => {
+    if (typeof onPairEvent !== "function") return;
+    try {
+      onPairEvent(event);
+    } catch (err) {}
+  };
+
   app.post("/api/activation/pair", safe((req, res) => {
     const { deviceId, code, deviceName, deviceType, protocol_version, protocolVersion } =
       req.body || {};
     if (!deviceId || !code)
-      return res.status(400).json({ success: false, error: "Faltan datos de activación" });
+      return res.status(400).json({
+        success: false,
+        code: "PAIR_BAD_REQUEST",
+        error: "Faltan datos de activación",
+      });
 
     const now = Date.now();
     pruneAttempts(now);
@@ -1389,8 +1402,10 @@ const startServer = async (
 
     const stored = activation.getActivationCode(db);
     if (!stored) {
+      pairEvent({ type: "error", deviceName, reason: "Código de activación no disponible" });
       return res.status(409).json({
         success: false,
+        code: "PAIR_CODE_UNAVAILABLE",
         error: "Código de activación no disponible",
       });
     }
@@ -1404,6 +1419,7 @@ const startServer = async (
       }
       e.count += 1;
       pairAttempts.set(key, e);
+      pairEvent({ type: "invalid_code", deviceName });
       return res.status(401).json({
         success: false,
         code: "PAIR_CODE_INVALID",
@@ -1422,15 +1438,30 @@ const startServer = async (
     const type = deviceType || scopeDefs.DEVICE_TYPE.MOBILE;
     const isDesktop = type === scopeDefs.DEVICE_TYPE.DESKTOP_BOX;
     const list = isDesktop ? [] : scopeDefs.scopesForDeviceType(type);
-    const registered = activation.registerPairing(db, {
-      deviceId,
-      deviceName,
-      token,
-      deviceType: type,
-      protocolVersion: protocolVersion || protocol_version || null,
-      approved: isDesktop ? 0 : 1,
-      scopes: list,
-    });
+    let registered;
+    try {
+      registered = activation.registerPairing(db, {
+        deviceId,
+        deviceName,
+        token,
+        deviceType: type,
+        protocolVersion: protocolVersion || protocol_version || null,
+        approved: isDesktop ? 0 : 1,
+        scopes: list,
+      });
+    } catch (err) {
+      // El detalle se queda en el log del Host: esta ruta es pública en la LAN.
+      pairEvent({ type: "error", deviceName, reason: err.message });
+      return res.status(500).json({
+        success: false,
+        code: "PAIR_HOST_ERROR",
+        error: "El Host no pudo registrar esta caja",
+      });
+    }
+    if (registered && registered.approved !== 1) {
+      pairEvent({ type: "pending", deviceId, deviceName, deviceCode: registered.deviceCode });
+    }
+    if (typeof onDataChanged === "function") onDataChanged(["paired_devices"], {});
     res.json({
       success: true,
       pairedToken: token,

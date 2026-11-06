@@ -933,6 +933,10 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
   }
   if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
   if (res.status === 401) return expired(db, res.data);
+  // Vínculo con el Host, no respuesta del negocio: la cola lo reintenta.
+  if (res.status === 403 && res.data.needsActivation) {
+    return fail("NOT_PAIRED", res.data.error || "El Host no reconoce esta caja");
+  }
   // Éxito: el Host envuelve el valor del handler en {success, result}.
   if (res.status === 200 && res.data.success) {
     if (!READ_CHANNEL_RE.test(channel)) await settleWrite(db);
