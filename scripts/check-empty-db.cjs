@@ -142,6 +142,40 @@ try {
 }
 check(tiers === 3, "customer_tiers sembrado (Normal/Frecuente/Mayorista)", `c=${tiers}`);
 
+// Gastos sin caja: una caja nueva los recibe del Host en su primera descarga.
+const expenseRegister = () =>
+  db.prepare("PRAGMA table_info(cash_register_expenses)").all().find((c) => c.name === "register_id");
+check(expenseRegister().notnull === 0, "instalación nueva: gastos aceptan register_id vacío");
+db.prepare("INSERT INTO cash_register_expenses (register_id, amount, reason) VALUES (NULL, 20, 'sin caja')").run();
+check(db.prepare("SELECT COUNT(*) c FROM cash_register_expenses WHERE register_id IS NULL").get().c === 1, "se guarda un gasto sin caja");
+
+// Una BD ya creada con la regla vieja se corrige sin perder columnas posteriores.
+db.pragma("foreign_keys = OFF");
+db.exec(`DROP TABLE cash_register_expenses;
+  CREATE TABLE cash_register_expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    register_id INTEGER NOT NULL REFERENCES cash_register(id),
+    amount REAL NOT NULL,
+    reason TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT,
+    cancelled_at DATETIME,
+    cancelled_by INTEGER,
+    product_id INTEGER,
+    quantity INTEGER DEFAULT 0
+  );
+  INSERT INTO cash_register_expenses (id, register_id, amount, reason, status, cancelled_by, product_id, quantity)
+  VALUES (5, 1, 30, 'compra', 'cancelado', 2, 9, 4);`);
+db.pragma("foreign_keys = ON");
+dbSchema.runMigrations(db);
+check(expenseRegister().notnull === 0, "BD con la regla vieja: se corrige al arrancar");
+const kept = db.prepare("SELECT * FROM cash_register_expenses WHERE id = 5").get();
+check(
+  kept && kept.status === "cancelado" && kept.cancelled_by === 2 && kept.product_id === 9 && kept.quantity === 4,
+  "BD con la regla vieja: conserva estado y producto del gasto",
+  JSON.stringify(kept),
+);
+
 let idx = null;
 try {
   idx = db

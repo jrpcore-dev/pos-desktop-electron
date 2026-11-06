@@ -649,9 +649,15 @@ const runMigrations = (db) => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+      // Columnas agregadas después (estado, producto…): se copian con sus datos.
+      const BASE = ["id", "register_id", "amount", "reason", "created_at"];
+      for (const c of expCols.filter((col) => !BASE.includes(col.name))) {
+        const dflt = c.dflt_value === null ? "" : ` DEFAULT ${c.dflt_value}`;
+        db.exec(`ALTER TABLE cash_register_expenses_v2 ADD COLUMN ${c.name} ${c.type}${dflt}`);
+      }
+      const names = expCols.map((c) => c.name).join(", ");
       db.exec(
-        `INSERT INTO cash_register_expenses_v2 (id, register_id, amount, reason, created_at)
-       SELECT id, register_id, amount, reason, created_at FROM cash_register_expenses`,
+        `INSERT INTO cash_register_expenses_v2 (${names}) SELECT ${names} FROM cash_register_expenses`,
       );
       db.exec(`DROP TABLE cash_register_expenses`);
       db.exec(
@@ -903,7 +909,7 @@ const runMigrations = (db) => {
   db.exec(`
   CREATE TABLE IF NOT EXISTS cash_register_expenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    register_id INTEGER NOT NULL REFERENCES cash_register(id),
+    register_id INTEGER REFERENCES cash_register(id),
     amount REAL NOT NULL,
     reason TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP

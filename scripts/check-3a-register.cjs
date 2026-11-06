@@ -175,6 +175,7 @@ const cashRegisterRow = (db, id) =>
   // Paso 1 local-first (tablas de movimientos replicadas) ya está en HEAD.
   // Paso 2 local-first (`pending_ops` y sus índices) ya está en HEAD.
   // Índice parcial de productos activos ya está en HEAD.
+  // Gastos sin caja (register_id opcional desde la creación) ya está en HEAD.
   const DDL_AGREGADO = [];
   const DDL_AGREGADO_TOTAL = 0;
   const DDL_BORRADO = [];
