@@ -95,6 +95,7 @@ const CLASSIFICATION_BASE = {
 
   // ── SYSTEM: vínculo caja ↔ Host (Entrega 3c) ───────────────────────────
   "box-discover-hosts": SCOPES.SYSTEM,
+  "box-find-host": SCOPES.SYSTEM,
   "box-pair": SCOPES.SYSTEM,
   "box-wait-approval": SCOPES.SYSTEM,
   // 3d · sincronizar la réplica escribe en la BD y usa la red: SYSTEM.

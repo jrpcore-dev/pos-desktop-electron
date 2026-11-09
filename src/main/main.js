@@ -327,6 +327,7 @@ const apiServer = require("./api-server");
 const clientLink = require("./client-link");
 const protocol = require("./protocol");
 const discovery = require("./discovery");
+const hostWatcher = require("./host-watcher");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -3773,6 +3774,26 @@ ipcMain.handle("rotate-activation-code", async () => {
 // ─── VÍNCULO CAJA ↔ HOST (Entrega 3c) ─────────────────────────────
 // El asistente del renderer aún no está conectado: estos canales exponen
 // la lógica de client-link.js y están clasificados en ipc-scopes.js.
+// El Host cambió de IP: todo lee la dirección guardada, así que basta con avisar.
+const onHostMoved = ({ host_url: url }) => {
+  appendErrorLog(`[${new Date().toISOString()}] host/movido ${url}\n---\n`);
+  boxRpc.noteHostMoved(db);
+};
+
+// Búsqueda manual desde Configuración, con o sin IP escrita.
+ipcMain.handle("box-find-host", async (event, { address } = {}) => {
+  const opts = {};
+  if (address) {
+    const parsed = clientLink.parseHostAddress(address);
+    if (!parsed) return { success: false, code: "BAD_ADDRESS", error: "Escribe una IP válida, por ejemplo 192.168.1.20" };
+    opts.manualIps = [parsed.ip];
+    opts.manualPort = parsed.port;
+  }
+  const res = await clientLink.relocateHost(db, opts);
+  if (res.success && res.moved) onHostMoved(res);
+  return res;
+});
+
 ipcMain.handle("box-discover-hosts", async (event, opts) =>
   clientLink.discoverHosts(opts || {}),
 );
@@ -3949,8 +3970,16 @@ if (!isBoxDevice()) {
 // esta BD no abre una segunda conexión compitiendo por el mismo cursor. Sólo
 // arranca con la réplica ya aplicada; antes no hay delta que aplicar y el
 // snapshot manda.
+let stopHostWatcher = null;
 const startLiveReplica = () => {
   if (!replicaEngine.state(db).sync_completed) return false;
+  if (!stopHostWatcher) {
+    stopHostWatcher = hostWatcher.startHostWatcher({
+      isHostOk: () => replicaLive.hostOkInfo(db).reachable,
+      relocate: () => clientLink.relocateHost(db),
+      onMoved: onHostMoved,
+    });
+  }
   replicaLive.startLiveSync({
     db,
     // Paso 2 · la réplica pisa productos con la fila del Host: lo que la cola

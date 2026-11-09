@@ -9,6 +9,7 @@ import {
   FlaskConical,
   Loader2,
   Monitor,
+  Network,
   Pencil,
   Printer,
   ReceiptText,
@@ -76,6 +77,7 @@ const TABS = [
   { id: "printer", label: "Impresora", icon: Printer, group: "Equipos" },
   { id: "scale", label: "Báscula", icon: Scale, group: "Equipos" },
   { id: "mobile", label: "Dispositivos", icon: Smartphone, group: "Equipos" },
+  { id: "host", label: "Conexión al Host", icon: Network, group: "Equipos" },
 ];
 const TAB_GROUPS = ["Tienda", "Operación", "Equipos"];
 
@@ -108,6 +110,11 @@ const TABS_META = {
     title: "Dispositivos",
     description:
       "Código de activación, cajas y teléfonos conectados a este negocio.",
+  },
+  host: {
+    icon: Network,
+    title: "Conexión al Host",
+    description: "La caja encuentra sola al Host si cambia de dirección. Aquí puedes buscarlo o escribir su IP.",
   },
   printer: {
     icon: Printer,
@@ -397,12 +404,17 @@ function ConfigurationScreen() {
   // Una caja no administra dispositivos: eso vive en el Host. Mientras se pregunta
   // se trata como caja para que la pestaña no se asome y desaparezca.
   const [isBoxDevice, setIsBoxDevice] = useState(null);
+  const [hostUrl, setHostUrl] = useState("");
+  const [hostAddress, setHostAddress] = useState("");
+  const [hostBusy, setHostBusy] = useState(false);
   useEffect(() => {
     let alive = true;
     Promise.resolve()
       .then(() => window.api.invoke("box-get-settings"))
       .then((res) => {
-        if (alive) setIsBoxDevice(res?.device_role === "client");
+        if (!alive) return;
+        setIsBoxDevice(res?.device_role === "client");
+        setHostUrl(res?.host_url || "");
       })
       .catch(() => {
         if (alive) setIsBoxDevice(false);
@@ -414,6 +426,7 @@ function ConfigurationScreen() {
   const hiddenTabs = [
     ...(isAdmin ? [] : ["features", "mobile"]),
     ...(isBoxDevice === false ? [] : ["mobile"]),
+    ...(isAdmin && isBoxDevice === true ? [] : ["host"]),
   ];
   const visibleTabs = TABS.filter((t) => !hiddenTabs.includes(t.id));
   const [storeUnlocked, setStoreUnlocked] = useState(false);
@@ -1758,6 +1771,46 @@ function ConfigurationScreen() {
     </>
   );
 
+  const findHost = async (address) => {
+    setHostBusy(true);
+    const res = await window.api.invoke("box-find-host", address ? { address } : {});
+    setHostBusy(false);
+    if (!res?.success) {
+      notify(res?.error || "No se encontró el Host.", "error");
+      return;
+    }
+    setHostUrl(res.host_url);
+    setHostAddress("");
+    notify(res.moved ? "Host encontrado. La caja ya usa la dirección nueva." : "La dirección del Host está bien.", "success");
+  };
+
+  const renderHostTab = () => (
+    <section className="divide-y divide-border/40">
+      <FieldRow label="Dirección actual" description="Con esta dirección se comunica la caja.">
+        <Input readOnly value={hostUrl.replace(/^https?:\/\//, "")} aria-label="Dirección actual del Host" />
+      </FieldRow>
+      <FieldRow label="Buscar en la red" description="Encuentra al Host de este negocio. Nunca se conecta a otro.">
+        <Button variant="outline" className="w-full" disabled={hostBusy} onClick={() => findHost()}>
+          {hostBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />}
+          Buscar Host
+        </Button>
+      </FieldRow>
+      <FieldRow label="Escribir la IP" description="Úsalo si la búsqueda no lo encuentra. No hace falta volver a vincular la caja.">
+        <div className="flex gap-2">
+          <Input
+            value={hostAddress}
+            placeholder="192.168.1.20"
+            aria-label="IP del Host"
+            onChange={(e) => setHostAddress(e.target.value)}
+          />
+          <Button disabled={hostBusy || !hostAddress.trim()} onClick={() => findHost(hostAddress.trim())}>
+            Conectar
+          </Button>
+        </div>
+      </FieldRow>
+    </section>
+  );
+
   const renderScaleTab = () => {
     const savedPort = getScaleConfig().port;
     return (
@@ -2199,6 +2252,7 @@ function ConfigurationScreen() {
               {activeTab === "pos" && renderPosTab()}
               {activeTab === "features" && !tabHidden && renderFeaturesTab()}
               {activeTab === "mobile" && !tabHidden && renderMobileTab()}
+              {activeTab === "host" && !tabHidden && renderHostTab()}
               {activeTab === "printer" && renderPrinterTab()}
               {activeTab === "scale" && renderScaleTab()}
             </div>

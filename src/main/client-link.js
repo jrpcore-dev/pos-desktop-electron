@@ -334,6 +334,44 @@ const discoverHosts = async (opts = {}) => {
   return { success: true, hosts };
 };
 
+// Lo que escribe el administrador: IP, IP:puerto o la dirección completa.
+const parseHostAddress = (value) => {
+  const raw = String(value || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+  const m = /^((?:\d{1,3}\.){3}\d{1,3})(?::(\d{1,5}))?$/.exec(raw);
+  if (!m) return null;
+  if (m[1].split(".").some((n) => Number(n) > 255)) return null;
+  return { ip: m[1], port: m[2] ? Number(m[2]) : DEFAULT_API_PORT };
+};
+
+// El Host cambió de dirección: lo busca y se queda con él SÓLO si es el mismo
+// con el que se emparejó. Otro equipo en la red nunca recibe los tokens.
+const relocateHost = async (db, opts = {}) => {
+  const saved = activation.getSetting(db, SETTINGS.HOST_DEVICE_ID);
+  if (!saved) return fail("NOT_PAIRED", "La caja no está vinculada a un Host");
+  const current = trimUrl(activation.getSetting(db, SETTINGS.HOST_URL));
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const manual = [].concat(opts.manualIps || []).length > 0;
+  if (current && !manual) {
+    const known = await inspectHost(current, timeoutMs);
+    if (known && known.host_device_id === saved) {
+      return { success: true, moved: false, host_url: current };
+    }
+  }
+  const found = await discoverHosts({ ...opts, timeoutMs });
+  if (!found.success) return found;
+  const match = found.hosts.find((h) => h.host_device_id === saved);
+  if (!match) {
+    return fail("HOST_MISMATCH", "El equipo que respondió no es el Host de este negocio");
+  }
+  if (!match.compatible) {
+    return fail("HOST_INCOMPATIBLE", "El Host tiene otra versión: actualízalo para reconectar");
+  }
+  const url = trimUrl(match.url);
+  const moved = url !== current;
+  if (moved) activation.setSetting(db, SETTINGS.HOST_URL, url);
+  return { success: true, moved, host_url: url };
+};
+
 // El código son 16 letras y números (los guiones son opcionales). Se revisa
 // antes de tocar la red: no gasta intentos y dice exactamente qué le falta.
 const CODE_CHARS = 16;
@@ -555,6 +593,8 @@ module.exports = {
   markSyncCompleted,
   inspectHost,
   discoverHosts,
+  parseHostAddress,
+  relocateHost,
   pairAsBox,
   linkStatus,
   waitForApproval,

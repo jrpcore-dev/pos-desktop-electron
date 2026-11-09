@@ -14,6 +14,7 @@ export const invoke = [
   "approve-device",
   "box-cancel-setup",
   "box-discover-hosts",
+  "box-find-host",
   "box-get-settings",
   "box-link-status",
   "box-pair",

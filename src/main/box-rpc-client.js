@@ -807,6 +807,14 @@ const syncPending = async (db) => {
   }
 };
 
+// El Host cambió de dirección: lo anterior ya no cuenta como caída, y lo que
+// quedó en cola puede subir sin esperar al temporizador.
+const noteHostMoved = (db) => {
+  lastHostFailAt = 0;
+  syncPending(db).catch(() => {});
+  syncOps(db).catch(() => {});
+};
+
 // ── PIN cacheado (Bloque 4) ─────────────────────────────────────────────────
 // Fase 1 · sin red no hay rate limit del Host: la caja lleva el suyo, en
 // disco para que reiniciar la app no lo borre.
@@ -1109,6 +1117,7 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
 module.exports = {
   setTimingSink,
   setOpsChangedHook,
+  noteHostMoved,
   withPendingSales,
   pendingSaleDetails,
   syncOps,
