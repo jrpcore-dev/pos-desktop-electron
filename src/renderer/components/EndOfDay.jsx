@@ -13,6 +13,7 @@ import {
   Landmark,
   HandCoins,
   Minus,
+  PackagePlus,
   PackageX,
   Plus,
   Printer,
@@ -22,6 +23,7 @@ import {
   Store,
   Trash2,
   TriangleAlert,
+  Truck,
   Wallet,
   X,
 } from "lucide-react";
@@ -104,6 +106,46 @@ const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 
 const fmtKg = (n) => String(round3(n));
 
+// Error mostrado DENTRO del modal abierto: el aviso de la página queda
+// detrás del modal y no se ve.
+const ModalError = ({ text, onClose }) =>
+  text ? (
+    <Alert
+      variant="destructive"
+      className="flex items-center gap-3 border-red-500/30 bg-[rgba(239,68,68,.12)] py-2.5 pr-2 [&>svg]:static! [&>svg]:shrink-0 [&>svg~*]:pl-0! [&>svg+div]:translate-y-0!"
+    >
+      <TriangleAlert size={18} />
+      <AlertDescription className="min-w-0 flex-1 font-semibold leading-snug">
+        {text}
+      </AlertDescription>
+      <button
+        type="button"
+        aria-label="Cerrar aviso"
+        onClick={onClose}
+        className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted"
+      >
+        <X size={15} />
+      </button>
+    </Alert>
+  ) : null;
+
+const purchaseParts = (expense) => {
+  const raw = String(expense.reason || "")
+    .replace(/^Compra de inventario:\s*/, "")
+    .replace(/^Compra de\s+/, "");
+  const [name, supplier] = raw.split(" — ");
+  return { name: (name || "").trim(), supplier: (supplier || "").trim() };
+};
+const purchaseName = (expense) => purchaseParts(expense).name || null;
+// Debajo del nombre: "24 piezas · FEMSA".
+const purchaseDetail = (expense) => {
+  const { supplier } = purchaseParts(expense);
+  const qty = Number(expense.quantity || 0);
+  return [qty > 0 ? `${qty} ${qty === 1 ? "pieza" : "piezas"}` : null, supplier]
+    .filter(Boolean)
+    .join(" · ");
+};
+
 const TurnoRow = memo(function TurnoRow({
   item,
   idx,
@@ -115,13 +157,36 @@ const TurnoRow = memo(function TurnoRow({
 }) {
   const isCancelled = item.status === "cancelado";
   const isSale = item.type === "sale";
+  // Entrada de dinero: suma como ingreso, pero se cancela como un gasto.
+  const isInflow = isSale || item.type === "cash_in";
+  // Mismo diseño Ingreso/Egreso; el ícono dice qué movimiento es.
+  const TypeIcon = isSale
+    ? ShoppingCart
+    : item.type === "cash_in"
+      ? ArrowUpRight
+      : item.subtype === "supplier"
+        ? Truck
+        : item.subtype === "purchase"
+          ? PackagePlus
+          : ArrowDownRight;
+  const typeLabel = isSale
+    ? "Venta"
+    : item.type === "cash_in"
+      ? "Entrada"
+      : item.subtype === "supplier"
+        ? "Pago de mercancía"
+        : item.subtype === "purchase"
+          ? "Compra"
+          : "Salida";
+  const canCancel = isSale ? !isCancelled && !item.pending : true;
 
   return (
     <TableRow
       data-turno-idx={idx}
       onClick={() => onSelect(idx)}
       className={cn(
-        "cursor-pointer",
+        "group cursor-pointer",
+        isCancelled && "opacity-70",
         selected &&
           "bg-blue-100/70 hover:bg-blue-100/70 dark:bg-blue-500/15 dark:hover:bg-blue-500/15",
       )}
@@ -138,22 +203,32 @@ const TurnoRow = memo(function TurnoRow({
           )}
         >
           {item.title}
+        </p>
+
+        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+          {isCancelled && (
+            <span className="rounded-md bg-destructive/10 px-1.5 py-px text-[11px] font-bold text-destructive">
+              Cancelada
+            </span>
+          )}
           {item.pending && (
-            <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-foreground">
+            <span className="rounded-md bg-warning/15 px-1.5 py-px text-[11px] font-semibold text-foreground">
               {item.pending === "conflict" ? "En revisión" : "Por subir"}
             </span>
           )}
-        </p>
+        </div>
 
-        <p className="max-w-[480px] truncate text-xs text-muted-foreground">
-          {item.desc}
-        </p>
+        {item.desc && (
+          <p className="max-w-[480px] truncate text-xs text-muted-foreground">
+            {item.desc}
+          </p>
+        )}
       </TableCell>
 
       <TableCell>
-        <Badge variant={isSale ? "soft-success" : "soft-destructive"}>
-          {isSale ? <ArrowUpRight /> : <ArrowDownRight />}
-          {isSale ? "Ingreso" : "Egreso"}
+        <Badge variant={isInflow ? "soft-success" : "soft-destructive"}>
+          <TypeIcon />
+          {typeLabel}
         </Badge>
       </TableCell>
 
@@ -162,18 +237,24 @@ const TurnoRow = memo(function TurnoRow({
           "whitespace-nowrap text-right font-bold tabular-nums",
           isCancelled
             ? "text-muted-foreground line-through"
-            : isSale
+            : isInflow
               ? "text-emerald-600 dark:text-emerald-400"
               : "text-destructive",
         )}
       >
-        {isSale ? "+" : "-"}
+        {isInflow ? "+" : "-"}
         {fmtMoneyAbs(item.amount)}
       </TableCell>
 
       {canManageRegister && (
-        <TableCell className="whitespace-nowrap text-center">
-          {isSale && !isCancelled && !item.pending && (
+        <TableCell
+          className={cn(
+            "whitespace-nowrap text-center transition-opacity",
+            // Cancelar solo aparece en la fila elegida o al pasar el mouse.
+            selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
+          )}
+        >
+          {isSale && canCancel && (
             <CancelButton
               size="sm"
               onClick={(e) => {
@@ -185,7 +266,7 @@ const TurnoRow = memo(function TurnoRow({
             </CancelButton>
           )}
 
-          {!isSale && (
+          {!isSale && canCancel && (
             <CancelButton
               size="sm"
               onClick={(e) => {
@@ -222,6 +303,8 @@ const EndOfDay = () => {
   const [registerName, setRegisterName] = useState("");
 
   const [registerMessage, setRegisterMessage] = useState(null);
+  // Error del modal abierto (abrir/cerrar caja, entrada/salida, detalle de venta).
+  const [modalError, setModalError] = useState(null);
 
   const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
   const [withdrawLoading, setWithdrawLoading] = useState(false);
@@ -231,6 +314,24 @@ const EndOfDay = () => {
   const [closeLoading, setCloseLoading] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawReason, setWithdrawReason] = useState("");
+  // El mismo diálogo registra salidas ("out") y entradas ("in") de dinero.
+  const [moneyMode, setMoneyMode] = useState("out");
+  const isMoneyIn = moneyMode === "in";
+  // Tipo de salida: "supplier" (pago a proveedor/mercancía) u "other" (otro
+  // gasto). Se recuerda el último usado en esta caja.
+  const [cashOutCategory, setCashOutCategory] = useState(() => {
+    try {
+      return localStorage.getItem("cashOutCategory") === "other" ? "other" : "supplier";
+    } catch {
+      return "supplier";
+    }
+  });
+  const isSupplierPay = !isMoneyIn && cashOutCategory === "supplier";
+  // Sugerencias de producto/proveedor: ayudan a escribir, nunca obligan.
+  const [reasonSuggestions, setReasonSuggestions] = useState([]);
+  const [suggestIdx, setSuggestIdx] = useState(-1);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const suppliersRef = useRef(null);
 
   const [expensesList, setExpensesList] = useState([]);
 
@@ -430,7 +531,8 @@ const EndOfDay = () => {
     return (
       Number(register.opening_balance || 0) +
       totalCash +
-      collectedCash -
+      collectedCash +
+      Number(register.cash_in || 0) -
       Number(register.expenses || 0)
     );
   }, [register, totalCash, collectedCash]);
@@ -467,12 +569,76 @@ const EndOfDay = () => {
       // Se relee el estado real: la pantalla nunca se queda con una caja
       // distinta de la que tiene el Host.
       await fetchData();
-      setRegisterMessage({
-        type: "error",
-        text: result?.error || "No se pudo abrir la caja.",
-      });
+      setModalError(result?.error || "No se pudo abrir la caja.");
     }
   };
+
+  // Los avisos de éxito e informativos se quitan solos; los errores y las
+  // advertencias se quedan hasta que el cajero los cierra.
+  useEffect(() => {
+    if (!registerMessage) return;
+    if (registerMessage.type !== "success" && registerMessage.type !== "info") return;
+    const t = setTimeout(() => setRegisterMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [registerMessage]);
+
+  // Sugerencias del campo Producto / proveedor (solo en Pago a proveedor).
+  useEffect(() => {
+    if (!withdrawDialogOpen || !isSupplierPay) {
+      setReasonSuggestions([]);
+      return;
+    }
+    const q = withdrawReason.trim().toLowerCase();
+    if (q.length < 2) {
+      setReasonSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (!suppliersRef.current) {
+        try {
+          const rows = await window.api.invoke("get-suppliers");
+          suppliersRef.current = Array.isArray(rows) ? rows.map((r) => r.name).filter(Boolean) : [];
+        } catch {
+          suppliersRef.current = [];
+        }
+      }
+      let products = [];
+      try {
+        const rows = await window.api.invoke("search-products", q);
+        products = Array.isArray(rows) ? rows.slice(0, 5).map((p) => p.name) : [];
+      } catch {
+        products = [];
+      }
+      if (cancelled) return;
+      const past = expensesList
+        .filter((e) => e.category === "supplier" && e.reason)
+        .map((e) => e.reason);
+      const seen = new Set();
+      const list = [];
+      const add = (label, kind) => {
+        const key = String(label).toLowerCase();
+        if (!label || seen.has(key) || key === q) return;
+        if (kind !== "Producto" && !key.includes(q)) return;
+        seen.add(key);
+        list.push({ label, kind });
+      };
+      suppliersRef.current.forEach((n) => add(n, "Proveedor"));
+      past.forEach((n) => add(n, "Usado antes"));
+      products.forEach((n) => add(n, "Producto"));
+      setReasonSuggestions(list.slice(0, 7));
+      setSuggestIdx(-1);
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [withdrawReason, withdrawDialogOpen, isSupplierPay, expensesList]);
+
+  // Un modal nuevo (o uno que se cierra) no arrastra el error del anterior.
+  useEffect(() => {
+    setModalError(null);
+  }, [openRegisterModal, closeRegisterModal, withdrawDialogOpen, saleDetailData]);
 
   const handleCloseRegister = async () => {
     if (closeLoading) return;
@@ -511,10 +677,7 @@ const EndOfDay = () => {
       });
     } else {
       await fetchData();
-      setRegisterMessage({
-        type: "error",
-        text: result?.error || "No se pudo cerrar la caja.",
-      });
+      setModalError(result?.error || "No se pudo cerrar la caja.");
     }
   };
 
@@ -522,18 +685,17 @@ const EndOfDay = () => {
     const amount = parseFloat(withdrawAmount);
 
     if (!amount || amount <= 0) {
-      setRegisterMessage({
-        type: "error",
-        text: "Ingresa un monto válido.",
-      });
+      setModalError("Ingresa un monto válido.");
       return;
     }
 
-    if (!withdrawReason.trim()) {
-      setRegisterMessage({
-        type: "error",
-        text: "Ingresa el motivo del retiro.",
-      });
+    // Salida: el motivo es obligatorio (es por donde se pierde el dinero).
+    // Entrada: si no lo ponen, se guarda como "Sin motivo".
+    const motive = withdrawReason.trim() || (isMoneyIn ? "Sin motivo" : "");
+    if (!motive) {
+      setModalError(
+        isSupplierPay ? "Escribe el producto o el proveedor." : "Ingresa el motivo.",
+      );
       return;
     }
 
@@ -541,12 +703,16 @@ const EndOfDay = () => {
     setWithdrawLoading(true);
 
     try {
-      const result = await window.api.invoke("register-cash-expense", {
+      const payload = {
         amount,
-        reason: withdrawReason.trim(),
+        reason: motive,
+        category: isSupplierPay ? "supplier" : undefined,
         cashierId: cashier?.id,
         role: cashier?.role,
-      });
+      };
+      const result = isMoneyIn
+        ? await window.api.invoke("register-cash-income", payload)
+        : await window.api.invoke("register-cash-expense", payload);
 
       if (result.success) {
         setWithdrawDialogOpen(false);
@@ -562,15 +728,15 @@ const EndOfDay = () => {
         setRegisterMessage({
           type: "success",
           text:
-            `Retiro de ${fmtMoney(amount)} registrado: ` +
-            withdrawReason.trim(),
+            (isMoneyIn
+              ? `Entrada de ${fmtMoney(amount)} registrada: `
+              : isSupplierPay
+                ? `Pago de mercancía de ${fmtMoney(amount)} registrado: `
+                : `Salida de ${fmtMoney(amount)} registrada: `) + motive,
         });
       } else {
         await fetchData();
-        setRegisterMessage({
-          type: "error",
-          text: result.error,
-        });
+        setModalError(result.error || "No se pudo registrar.");
       }
     } finally {
       setWithdrawLoading(false);
@@ -690,10 +856,7 @@ const EndOfDay = () => {
               : `"${itemName}" cancelado (−${refundText}). Se revirtió el stock.`,
         });
       } else {
-        setRegisterMessage({
-          type: "error",
-          text: result.error,
-        });
+        setModalError(result.error || "No se pudo cancelar el artículo.");
       }
     } finally {
       setCancelItemLoading(false);
@@ -719,7 +882,9 @@ const EndOfDay = () => {
 
         setRegisterMessage({
           type: "success",
-          text: "Gasto cancelado correctamente.",
+          text: cancelExpenseData?.isCashIn
+            ? "Entrada cancelada correctamente."
+            : "Gasto cancelado correctamente.",
         });
       } else {
         setRegisterMessage({
@@ -1117,6 +1282,7 @@ const EndOfDay = () => {
             status: sale.status,
             title: sale.pending ? `Venta ${sale.folio}` : `Venta #${sale.id}`,
             pending: sale.pending || null,
+            method,
             desc: [method, productsText].filter(Boolean).join(" · "),
             time: sale.created_at,
             amount: Number(sale.total || 0),
@@ -1126,15 +1292,27 @@ const EndOfDay = () => {
         }),
 
         ...expensesList.map((expense) => ({
-          type: "expense",
+          type: expense.kind === "in" ? "cash_in" : "expense",
+          subtype: expense.product_id
+            ? "purchase"
+            : expense.category === "supplier"
+              ? "supplier"
+              : "other",
           id: `expense-${expense.id}`,
           expenseId: expense.id,
-          title: expense.reason?.startsWith("Compra")
-            ? "Compra de inventario"
-            : "Retiro de efectivo",
-          desc: expense.reason,
+          title: expense.product_id
+            ? purchaseName(expense) || "Compra de mercancía"
+            : expense.reason ||
+              (expense.kind === "in" ? "Entrada de dinero" : "Salida de dinero"),
+          desc: expense.product_id ? purchaseDetail(expense) : "",
+          reason: expense.reason,
+          productQty: expense.product_id ? Number(expense.quantity || 0) : 0,
+          productName: expense.product_id ? purchaseName(expense) : null,
           time: expense.created_at,
-          amount: -Number(expense.amount || 0),
+          amount:
+            expense.kind === "in"
+              ? Number(expense.amount || 0)
+              : -Number(expense.amount || 0),
           icon: Wallet,
         })),
       ].sort((a, b) => new Date(toUTC(a.time)) - new Date(toUTC(b.time))),
@@ -1150,14 +1328,16 @@ const EndOfDay = () => {
     const q = deferredTurnoSearch.trim().toLowerCase();
     let items = dayItems;
     if (turnoFilter !== "todos") {
-      const target = turnoFilter === "ingresos" ? "sale" : "expense";
-      items = items.filter((item) => item.type === target);
+      const targets =
+        turnoFilter === "ingresos" ? ["sale", "cash_in"] : ["expense"];
+      items = items.filter((item) => targets.includes(item.type));
     }
     if (q) {
       items = items.filter(
         (item) =>
           item.title.toLowerCase().includes(q) ||
-          item.desc.toLowerCase().includes(q) ||
+          String(item.desc || "").toLowerCase().includes(q) ||
+          String(item.method || "").toLowerCase().includes(q) ||
           String(item.id).toLowerCase().includes(q),
       );
     }
@@ -1245,11 +1425,14 @@ const EndOfDay = () => {
         e.preventDefault();
         if (item.type === "sale" && item.status !== "cancelado" && !item.pending) {
           setCancelSaleData({ id: item.saleId });
-        } else if (item.type === "expense") {
+        } else if (item.type === "expense" || item.type === "cash_in") {
           setCancelExpenseData({
             id: item.expenseId,
             amount: Math.abs(item.amount),
-            reason: item.desc,
+            reason: item.reason ?? item.desc,
+            isCashIn: item.type === "cash_in",
+            productQty: item.productQty || 0,
+            productName: item.productName || null,
           });
         }
       }
@@ -1330,7 +1513,10 @@ const EndOfDay = () => {
       setCancelExpenseData({
         id: item.expenseId,
         amount: Math.abs(item.amount),
-        reason: item.desc,
+        reason: item.reason ?? item.desc,
+        isCashIn: item.type === "cash_in",
+        productQty: item.productQty || 0,
+        productName: item.productName || null,
       }),
     [],
   );
@@ -1354,7 +1540,8 @@ const EndOfDay = () => {
   const baseExpected =
     Number(register?.opening_balance || 0) +
     totalCash +
-    collectedCash -
+    collectedCash +
+    Number(register?.cash_in || 0) -
     Number(register?.expenses || 0) -
     (parseFloat(expenses) || 0);
   const openCloseDifference =
@@ -1386,11 +1573,11 @@ const EndOfDay = () => {
       setDeclaredClose("");
       setExpenses("");
       setCloseRegisterModal(true);
-    } else if (action === "withdraw") {
+    } else if (action === "withdraw" || action === "deposit") {
       if (!canManageRegister) {
         setRegisterMessage({
           type: "error",
-          text: "No hay caja abierta para retirar efectivo",
+          text: "No hay caja abierta para registrar dinero",
         });
         return;
       }
@@ -1409,6 +1596,7 @@ const EndOfDay = () => {
         setWithdrawAmount("");
         setWithdrawReason("");
       }
+      setMoneyMode(action === "deposit" ? "in" : "out");
       setWithdrawDialogOpen(true);
     } else if (action === "open-register") {
       if (isOpen) return;
@@ -1444,20 +1632,30 @@ const EndOfDay = () => {
     error: <TriangleAlert size={18} />,
   };
 
+  // Conteos y totales del turno (sin cancelados) para el encabezado.
+  const activeTurno = dayItems.filter((i) => i.status !== "cancelado");
+  const inflowItems = dayItems.filter((i) => i.type === "sale" || i.type === "cash_in");
+  const outflowItems = dayItems.filter((i) => i.type === "expense");
+  const turnoIn = activeTurno
+    .filter((i) => i.type === "sale" || i.type === "cash_in")
+    .reduce((sum, i) => sum + Math.abs(Number(i.amount) || 0), 0);
+  const turnoOut = activeTurno
+    .filter((i) => i.type === "expense")
+    .reduce((sum, i) => sum + Math.abs(Number(i.amount) || 0), 0);
   const filterChips = [
-    { value: "todos", label: "Todos" },
-    { value: "ingresos", label: "Ingresos" },
-    { value: "egresos", label: "Egresos" },
+    { value: "todos", label: "Todos", count: dayItems.length },
+    { value: "ingresos", label: "Ingresos", count: inflowItems.length },
+    { value: "egresos", label: "Egresos", count: outflowItems.length },
   ];
 
   return (
     <div className="vt-pilot fade-in p-1">
-      {/* HEADER */}
-      <div className="mb-2 flex items-end justify-between">
-        <div>
+      {/* HEADER: título, estado del turno y todas las acciones de la caja */}
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-[1.8rem] font-extrabold leading-tight">Caja</h2>
 
-          <p className="mt-0.5 flex items-center gap-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-muted-foreground">
             <CalendarDays size={15} />
 
             {new Date().toLocaleDateString("es-MX", {
@@ -1475,8 +1673,93 @@ const EndOfDay = () => {
               minute: "2-digit",
               timeZone: "America/Mexico_City",
             })}
+
+            {isOpen && statusSubtitle && (
+              <>
+                {" · "}
+                <span className="font-semibold text-foreground/80">
+                  {statusSubtitle}
+                </span>
+              </>
+            )}
           </p>
         </div>
+
+        {isOpen && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="icon" variant="outline" onClick={exportDailyPDF}>
+                  <Download size={17} />
+                  <span className="sr-only">Exportar PDF</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Exportar PDF</TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="icon" variant="outline" onClick={printDailyReport}>
+                  <Printer size={17} />
+                  <span className="sr-only">Imprimir reporte</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Imprimir reporte</TooltipContent>
+            </Tooltip>
+
+            {canManageRegister && (
+              <>
+                <span className="mx-1 hidden h-6 w-px bg-border sm:block" aria-hidden="true" />
+
+                {/* Mismo estilo que las etiquetas Ingreso / Egreso de Movimientos */}
+                <Button
+                  variant="outline"
+                  className="border-success/25 bg-success/10 text-success hover:border-success/40 hover:bg-success/20 hover:text-success"
+                  onClick={() => {
+                    setWithdrawAmount("");
+                    setWithdrawReason("");
+                    setMoneyMode("in");
+                    setWithdrawDialogOpen(true);
+                  }}
+                >
+                  <ArrowUpRight size={17} />
+                  Entrada de dinero
+                </Button>
+
+                <Button
+                  variant="outline"
+                  className="border-destructive/25 bg-destructive/10 text-destructive hover:border-destructive/40 hover:bg-destructive/20 hover:text-destructive dark:text-red-400 dark:hover:text-red-400"
+                  onClick={() => {
+                    setWithdrawAmount("");
+                    setWithdrawReason("");
+                    setMoneyMode("out");
+                    setWithdrawDialogOpen(true);
+                  }}
+                >
+                  <ArrowDownRight size={17} />
+                  Salida de dinero
+                </Button>
+
+                <Button
+                  variant="outline"
+                  className="border-2 border-amber-600/80 bg-amber-500/[0.06] px-4 text-amber-600 hover:border-amber-600 hover:bg-amber-500/15 hover:text-amber-600 dark:border-amber-500/80 dark:text-amber-500 dark:hover:border-amber-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
+                  onClick={() => {
+                    setDeclaredClose("");
+                    setExpenses("");
+                    setRegisterName("");
+                    setCloseRegisterModal(true);
+                    window.api
+                      .invoke("open-cash-drawer")
+                      .catch((e) => console.error("[DRAWER]", e));
+                  }}
+                >
+                  <Wallet size={17} />
+                  Cerrar caja
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ALERT */}
@@ -1506,62 +1789,6 @@ const EndOfDay = () => {
             </button>
           </Alert>
         </div>
-      )}
-
-      {/* STATUS */}
-      {isOpen && (
-      <Card className="mb-2">
-        <CardContent className="flex items-center justify-between gap-4 px-4 py-3.5">
-          <div className="flex items-center gap-3">
-            <div
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
-              style={{ background: "rgba(16,185,129,.12)" }}
-            >
-              <CircleCheck size={23} style={{ color: "#059669" }} />
-            </div>
-
-            <div>
-              <p className="font-bold leading-tight">Caja abierta</p>
-
-              <p className="mt-0.5 block text-xs text-muted-foreground">
-                {statusSubtitle}
-              </p>
-            </div>
-          </div>
-
-          {isOpen && (
-            <div className="flex gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="icon-sm"
-                    variant="outline"
-                    onClick={exportDailyPDF}
-                  >
-                    <Download size={17} />
-                    <span className="sr-only">Exportar PDF</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Exportar PDF</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="icon-sm"
-                    variant="outline"
-                    onClick={printDailyReport}
-                  >
-                    <Printer size={17} />
-                    <span className="sr-only">Imprimir reporte</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Imprimir reporte</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
-        </CardContent>
-      </Card>
       )}
 
       {/* TOP SUMMARY */}
@@ -1641,55 +1868,24 @@ const EndOfDay = () => {
 
           {/* ─── TAB: MOVIMIENTOS ─────────────────────────────── */}
           <TabsContent value="movimientos" className="animate-enter">
-            {/* ACCIONES */}
-            {canManageRegister && (
-              <div className="mb-3 flex flex-wrap justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setWithdrawAmount("");
-                    setWithdrawReason("");
-                    setWithdrawDialogOpen(true);
-                  }}
-                >
-                  <Wallet size={17} />
-                  Retirar dinero
-                </Button>
-
-                <Button
-                  variant="outline"
-                  className="border-2 border-amber-600/80 bg-amber-500/[0.06] px-4 text-amber-600 hover:border-amber-600 hover:bg-amber-500/15 hover:text-amber-600 dark:border-amber-500/80 dark:text-amber-500 dark:hover:border-amber-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
-                  onClick={() => {
-                    setDeclaredClose("");
-                    setExpenses("");
-                    setRegisterName("");
-                    setCloseRegisterModal(true);
-                    window.api
-                      .invoke("open-cash-drawer")
-                      .catch((e) => console.error("[DRAWER]", e));
-                  }}
-                >
-                  <Wallet size={17} />
-                  Cerrar caja
-                </Button>
-              </div>
-            )}
-
             {/* MOVIMIENTOS DEL TURNO */}
             <Card wash>
               <CardContent className="py-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="flex min-w-0 items-center gap-1.5 text-base font-bold">
-                    <Activity size={19} />
-                    Movimientos del turno
-
-                    <Badge
-                      variant="soft-neutral"
-                      className="ml-1 shrink-0 tabular-nums"
-                    >
-                      {filteredTurnoItems.length}
-                    </Badge>
-                  </h3>
+                  <div className="min-w-0">
+                    <h3 className="flex min-w-0 items-center gap-1.5 text-base font-bold">
+                      <Activity size={19} />
+                      Movimientos del turno
+                    </h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                      Entró{" "}
+                      <b className="text-emerald-600 dark:text-emerald-400">
+                        {fmtMoney(turnoIn)}
+                      </b>
+                      {" · "}Salió{" "}
+                      <b className="text-destructive">{fmtMoney(turnoOut)}</b>
+                    </p>
+                  </div>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
@@ -1702,24 +1898,34 @@ const EndOfDay = () => {
                         ref={turnoSearchRef}
                         value={turnoSearch}
                         onChange={(e) => setTurnoSearch(e.target.value)}
-                        placeholder="Buscar producto..."
-                        className="h-9 w-[200px] pl-9"
+                        placeholder="Buscar folio, producto o motivo"
+                        className="h-9 w-[250px] pl-9"
                       />
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 rounded-lg bg-sidebar p-1">
                       {filterChips.map((chip) => (
                         <button
                           key={chip.value}
                           onClick={() => setTurnoFilter(chip.value)}
                           className={cn(
-                            "cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                            "flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
                             turnoFilter === chip.value
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                              ? "bg-primary text-primary-foreground shadow-sm"
+                              : "text-muted-foreground hover:bg-background hover:text-foreground",
                           )}
                         >
                           {chip.label}
+                          <span
+                            className={cn(
+                              "rounded px-1 tabular-nums",
+                              turnoFilter === chip.value
+                                ? "bg-primary-foreground/20"
+                                : "bg-muted",
+                            )}
+                          >
+                            {chip.count}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -1878,6 +2084,14 @@ const EndOfDay = () => {
                             ],
                           ]
                         : []),
+                      ...(Number(register.cash_in || 0) > 0
+                        ? [
+                            [
+                              "Entradas de dinero",
+                              `+${fmtMoneyAbs(register.cash_in)}`,
+                            ],
+                          ]
+                        : []),
                       [
                         "Gastos",
                         `-${fmtMoneyAbs(register.expenses)}`,
@@ -1956,6 +2170,8 @@ const EndOfDay = () => {
               />
             </div>
           </div>
+
+          <ModalError text={modalError} onClose={() => setModalError(null)} />
 
           <DialogBrandFooter>
             <Button
@@ -2132,6 +2348,8 @@ const EndOfDay = () => {
             </div>
           </div>
 
+          <ModalError text={modalError} onClose={() => setModalError(null)} />
+
           <DialogBrandFooter>
             <CancelButton
               disabled={closeLoading}
@@ -2167,32 +2385,142 @@ const EndOfDay = () => {
           }}
         >
           <DialogHeader className="flex-row items-center gap-3 space-y-0 text-left">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-500/10">
-              <Wallet size={20} className="text-destructive" />
+            <div
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+                isMoneyIn ? "bg-emerald-500/10" : "bg-red-500/10",
+              )}
+            >
+              {isMoneyIn ? (
+                <ArrowUpRight
+                  size={20}
+                  className="text-emerald-600 dark:text-emerald-400"
+                />
+              ) : (
+                <ArrowDownRight size={20} className="text-destructive" />
+              )}
             </div>
 
             <div>
               <DialogTitle className="text-base font-extrabold">
-                Retirar dinero
+                {isMoneyIn ? "Entrada de dinero" : "Salida de dinero"}
               </DialogTitle>
 
               <DialogDescription className="text-xs leading-relaxed">
-                Registra una salida de efectivo. Se agregará a los gastos del
-                día.
+                {isMoneyIn
+                  ? "Registra dinero que metes a la caja. Se suma al efectivo esperado del corte."
+                  : "Registra dinero que sacas de la caja. Se agregará a los gastos del día."}
               </DialogDescription>
             </div>
           </DialogHeader>
 
           <Separator />
 
-          <Alert variant="default" className="mb-5 rounded-lg py-2.5">
-            <Info size={16} className="text-info" />
-            <AlertDescription>Aquí solo retiros por otras salidas.</AlertDescription>
-          </Alert>
+          {(() => {
+            const typed = parseFloat(withdrawAmount) || 0;
+            const after = isMoneyIn
+              ? cashInRegister + typed
+              : cashInRegister - typed;
+            return (
+              <div className="grid grid-cols-2 overflow-hidden rounded-xl border bg-muted/40 shadow-sm">
+                <div className="px-4 py-3">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+                    Disponible en caja
+                  </p>
+                  <p className="mt-0.5 text-xl font-extrabold tabular-nums">
+                    {fmtMoney(cashInRegister)}
+                  </p>
+                </div>
+                <div
+                  className={cn(
+                    "border-l px-4 py-3",
+                    typed > 0 &&
+                      (after < 0
+                        ? "bg-red-500/10"
+                        : isMoneyIn
+                          ? "bg-emerald-500/10"
+                          : "bg-card"),
+                  )}
+                >
+                  <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+                    Quedará
+                  </p>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-xl font-extrabold tabular-nums",
+                      typed <= 0
+                        ? "text-muted-foreground"
+                        : after < 0
+                          ? "text-destructive"
+                          : isMoneyIn
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-foreground",
+                    )}
+                  >
+                    {typed > 0 ? fmtMoney(after) : "—"}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
-          <div className="space-y-3">
+          {!isMoneyIn && (
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-sidebar p-1">
+              {[
+                { value: "supplier", label: "Pago de mercancía" },
+                { value: "other", label: "Otro gasto" },
+              ].map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  disabled={withdrawLoading}
+                  onClick={() => {
+                    setCashOutCategory(tab.value);
+                    setModalError(null);
+                    try {
+                      localStorage.setItem("cashOutCategory", tab.value);
+                    } catch {}
+                  }}
+                  className={cn(
+                    "h-9 cursor-pointer rounded-md text-sm font-bold transition-colors",
+                    cashOutCategory === tab.value
+                      ? "bg-background text-foreground shadow"
+                      : "text-foreground/60 hover:text-foreground",
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-4">
             <div>
-              <FieldLabel>Motivo del retiro</FieldLabel>
+              <FieldLabel>{isMoneyIn ? "¿Cuánto entra?" : "¿Cuánto sale?"}</FieldLabel>
+
+              <div className="relative">
+                <Banknote
+                  size={20}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+
+                <Input
+                  type="number"
+                  value={withdrawAmount}
+                  autoFocus
+                  disabled={withdrawLoading}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  placeholder="0.00"
+                  min={0}
+                  step={0.01}
+                  inputMode="decimal"
+                  className="h-12 pl-10 text-lg font-bold tabular-nums"
+                />
+              </div>
+            </div>
+
+            <div>
+              <FieldLabel>{isSupplierPay ? "Producto / proveedor" : "Motivo"}</FieldLabel>
 
               <div className="relative">
                 <Receipt
@@ -2202,49 +2530,83 @@ const EndOfDay = () => {
 
                 <Input
                   value={withdrawReason}
-                  autoFocus
                   disabled={withdrawLoading}
-                  onChange={(e) => setWithdrawReason(e.target.value)}
-                  placeholder="Ej: Pago a proveedor..."
-                  className="pl-9"
+                  autoComplete="off"
+                  onChange={(e) => {
+                    setWithdrawReason(e.target.value);
+                    setSuggestOpen(true);
+                  }}
+                  onFocus={() => setSuggestOpen(true)}
+                  onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
+                  onKeyDown={(e) => {
+                    const list = suggestOpen ? reasonSuggestions : [];
+                    if (!list.length) return;
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setSuggestIdx((i) => (i + 1) % list.length);
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSuggestIdx((i) => (i <= 0 ? list.length - 1 : i - 1));
+                    } else if (e.key === "Enter" && suggestIdx >= 0) {
+                      // Solo toma la sugerencia si el cajero la marcó con las
+                      // flechas; si no, Enter confirma con lo que escribió.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setWithdrawReason(list[suggestIdx].label);
+                      setSuggestOpen(false);
+                      setSuggestIdx(-1);
+                    } else if (e.key === "Escape") {
+                      e.stopPropagation();
+                      setSuggestOpen(false);
+                    }
+                  }}
+                  placeholder={
+                    isMoneyIn
+                      ? "Ej: cambio extra, préstamo del dueño..."
+                      : isSupplierPay
+                        ? "Ej: Coca-Cola, FEMSA, Bimbo..."
+                        : "Ej: gasolina, luz, comida..."
+                  }
+                  className="h-11 pl-9"
                 />
+
+                {isSupplierPay && suggestOpen && reasonSuggestions.length > 0 && (
+                  <div className="absolute inset-x-0 top-full z-50 mt-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg">
+                    {reasonSuggestions.map((sug, i) => (
+                      <button
+                        key={sug.kind + sug.label}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setWithdrawReason(sug.label);
+                          setSuggestOpen(false);
+                          setSuggestIdx(-1);
+                        }}
+                        className={cn(
+                          "flex w-full cursor-pointer items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-sm",
+                          i === suggestIdx ? "bg-accent" : "hover:bg-accent/60",
+                        )}
+                      >
+                        <span className="min-w-0 truncate font-medium">{sug.label}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{sug.kind}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div>
-              <FieldLabel>Monto a retirar</FieldLabel>
-
-              <div className="relative">
-                <Banknote
-                  size={18}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-
-                <Input
-                  type="number"
-                  value={withdrawAmount}
-                  disabled={withdrawLoading}
-                  onChange={(e) => setWithdrawAmount(e.target.value)}
-                  placeholder="0.00"
-                  min={0}
-                  step={0.01}
-                  inputMode="decimal"
-                  className="pl-9"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 rounded-md border px-3 py-2">
-              <Banknote size={15} className="text-muted-foreground" />
-
-              <p className="text-sm text-muted-foreground">
-                Disponible en caja:{" "}
-                <b className="text-foreground tabular-nums">
-                  {fmtMoney(cashInRegister)}
-                </b>
-              </p>
-            </div>
+            {isMoneyIn && (
+              <Alert variant="default" className="rounded-lg py-2.5">
+                <Info size={16} className="text-info" />
+                <AlertDescription>
+                  No es una venta: úsalo para cambio extra o un préstamo a la caja.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
+
+          <ModalError text={modalError} onClose={() => setModalError(null)} />
 
           <DialogFooter className="sm:justify-between">
             <CancelButton
@@ -2258,7 +2620,11 @@ const EndOfDay = () => {
               variant="outline"
               disabled={withdrawLoading}
               onClick={handleRegisterExpense}
-              className="border-red-600 bg-red-500/10 text-red-600 hover:border-red-600 hover:bg-red-500/20 hover:text-red-600 dark:border-red-500 dark:text-red-400 dark:hover:border-red-400 dark:hover:bg-red-500/20 dark:hover:text-red-300"
+              className={
+                isMoneyIn
+                  ? "border-emerald-600 bg-emerald-500/10 text-emerald-700 hover:border-emerald-600 hover:bg-emerald-500/20 hover:text-emerald-700 dark:border-emerald-500 dark:text-emerald-400 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-300"
+                  : "border-red-600 bg-red-500/10 text-red-600 hover:border-red-600 hover:bg-red-500/20 hover:text-red-600 dark:border-red-500 dark:text-red-400 dark:hover:border-red-400 dark:hover:bg-red-500/20 dark:hover:text-red-300"
+              }
             >
               {withdrawLoading ? (
                 <>
@@ -2268,7 +2634,7 @@ const EndOfDay = () => {
               ) : (
                 <>
                   <CircleCheck size={18} />
-                  Confirmar retiro
+                  {isMoneyIn ? "Confirmar entrada" : "Confirmar salida"}
                 </>
               )}
             </Button>
@@ -2867,6 +3233,8 @@ const EndOfDay = () => {
             )}
           </div>
 
+          <ModalError text={modalError} onClose={() => setModalError(null)} />
+
           <SheetFooter className="sm:justify-between">
             {isSingle ? (
               <Button
@@ -2925,19 +3293,34 @@ const EndOfDay = () => {
             <TriangleAlert size={22} className="text-destructive" />
 
             <DialogTitle className="text-base font-bold">
-              Cancelar gasto
+              {cancelExpenseData?.isCashIn ? "Cancelar entrada" : "Cancelar gasto"}
             </DialogTitle>
           </DialogHeader>
 
           <DialogDescription className="leading-relaxed">
-            Se quitará el gasto{" "}
+            Se quitará {cancelExpenseData?.isCashIn
+              ? "la entrada"
+              : cancelExpenseData?.productQty > 0
+                ? "la compra"
+                : "el gasto"}{" "}
             {cancelExpenseData?.reason && (
               <strong className="text-foreground">
                 "{cancelExpenseData.reason}"
               </strong>
             )}{" "}
-            por {fmtMoney(cancelExpenseData?.amount)} de la
-            caja. Esta acción no se puede deshacer.
+            por {fmtMoney(cancelExpenseData?.amount)} de la caja
+            {cancelExpenseData?.productQty > 0 && (
+              <>
+                {" "}y se restarán{" "}
+                <strong className="text-foreground">
+                  {cancelExpenseData.productQty}{" "}
+                  {cancelExpenseData.productQty === 1 ? "pieza" : "piezas"}
+                  {cancelExpenseData.productName ? ` de ${cancelExpenseData.productName}` : ""}
+                </strong>{" "}
+                del inventario
+              </>
+            )}
+            . Esta acción no se puede deshacer.
           </DialogDescription>
 
           <DialogFooter className="sm:justify-between">

@@ -176,10 +176,16 @@ const cashRegisterRow = (db, id) =>
   // Paso 2 local-first (`pending_ops` y sus índices) ya está en HEAD.
   // Índice parcial de productos activos ya está en HEAD.
   // Gastos sin caja (register_id opcional desde la creación) ya está en HEAD.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  // Entradas de dinero y tipo de salida: `cash_register.cash_in`,
+  // `cash_register_expenses.kind` y `.category` (ALTER ADD COLUMN reescribe el
+  // CREATE TABLE de ambas: alta Y baja).
+  const DDL_AGREGADO = [
+    /^CREATE TABLE cash_register \(.*cash_in REAL DEFAULT 0/s,
+    /^CREATE TABLE cash_register_expenses \(.*kind TEXT.*category TEXT/s,
+  ];
+  const DDL_AGREGADO_TOTAL = 2;
+  const DDL_BORRADO = [/^CREATE TABLE cash_register \(/, /^CREATE TABLE cash_register_expenses \(/];
+  const DDL_BORRADO_TOTAL = 2;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -323,6 +329,18 @@ const cashRegisterRow = (db, id) =>
             .filter((c) => c.split("|")[0] === "unit")
             .map((c) => `+ product_prices.${c}`)),
     ];
+    // Entradas de dinero y tipo de salida. Delta 0 si la app ya corrió.
+    const ESPERADO_CAJA = [
+      ...(colDe(before.cols.cash_register, "cash_in")
+        ? []
+        : ["+ cash_register.cash_in|REAL|nn=0|dflt=0"]),
+      ...(colDe(before.cols.cash_register_expenses, "kind")
+        ? []
+        : ["+ cash_register_expenses.kind|TEXT|nn=0|dflt=null"]),
+      ...(colDe(before.cols.cash_register_expenses, "category")
+        ? []
+        : ["+ cash_register_expenses.category|TEXT|nn=0|dflt=null"]),
+    ];
     // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
     const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)
       ? []
@@ -367,7 +385,7 @@ const cashRegisterRow = (db, id) =>
     // en 3d y `sales.device_id` en 3g/C: el diff esperado es el de 3b (si
     // falta migrar) más el de 3d más el de 3g.
     const esperadoCol = (yaMigrada ? ESPERADO_3D : ESPERADO_B)
-      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO, ESPERADO_PROMOS, ESPERADO_OPS)
+      .concat(ESPERADO_3G, ESPERADO_TAECEL, ESPERADO_ALERTAS, ESPERADO_FIADO, ESPERADO_PROMOS, ESPERADO_OPS, ESPERADO_CAJA)
       .sort();
     check(
       visto.length === esperadoCol.length && visto.every((v, i) => v === esperadoCol[i]),

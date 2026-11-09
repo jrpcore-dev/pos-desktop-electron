@@ -128,6 +128,7 @@ export const invoke = [
   "read-weight",
   "record-sale",
   "register-cash-expense",
+  "register-cash-income",
   "reject-device",
   "remove-stock",
   "rename-device",

@@ -48,6 +48,7 @@ const RPC_CHANNELS = new Set([
   "open-cash-register",
   "close-cash-register",
   "register-cash-expense",
+  "register-cash-income",
   "delete-cash-expense",
   "get-closed-registers",
   "get-register-movements",

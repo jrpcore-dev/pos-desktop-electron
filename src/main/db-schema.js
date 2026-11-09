@@ -928,6 +928,15 @@ const runMigrations = (db) => {
   ensureColumn("cash_register_expenses", "product_id", "INTEGER");
   ensureColumn("cash_register_expenses", "quantity", "INTEGER DEFAULT 0");
 
+  // Entradas de dinero a la caja (cambio extra, préstamo…). Viven en la misma
+  // tabla que las salidas: kind NULL = salida, 'in' = entrada. cash_in lleva
+  // el total vivo de entradas, igual que `expenses` lleva el de salidas.
+  ensureColumn("cash_register_expenses", "kind", "TEXT");
+  ensureColumn("cash_register", "cash_in", "REAL DEFAULT 0");
+  // Tipo de salida: 'supplier' = pago a proveedor/mercancía, NULL = otro gasto.
+  // Las compras desde "Llegó mercancía" se reconocen por product_id.
+  ensureColumn("cash_register_expenses", "category", "TEXT");
+
   // 3b · sesiones de caja persistidas: solo hashes, el token nunca en claro.
   db.exec(`
   CREATE TABLE IF NOT EXISTS box_sessions (

@@ -126,6 +126,7 @@
   "read-weight": "system",
   "record-sale": "rpc",
   "register-cash-expense": "rpc",
+  "register-cash-income": "rpc",
   "reject-device": "host_write",
   "remove-stock": "rpc",
   "rename-device": "host_write",

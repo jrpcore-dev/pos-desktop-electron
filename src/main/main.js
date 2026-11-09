@@ -3472,6 +3472,7 @@ ipcMain.handle(
       LEFT JOIN cash_register cr ON e.register_id = cr.id
       LEFT JOIN cashiers opener ON cr.opened_by = opener.id
       WHERE e.created_at >= ? AND e.created_at < ?${dev.sql}
+        AND (e.kind IS NULL OR e.kind != 'in')
       ORDER BY e.created_at DESC
     `,
         )
@@ -3505,6 +3506,7 @@ ipcMain.handle("get-expenses-by-date", async (event, { date, deviceId } = {}) =>
       LEFT JOIN cash_register cr ON e.register_id = cr.id
       LEFT JOIN cashiers opener ON cr.opened_by = opener.id
       WHERE e.created_at >= ? AND e.created_at < ?${dev.sql}
+        AND (e.kind IS NULL OR e.kind != 'in')
       ORDER BY e.created_at DESC
     `,
       )
@@ -4200,7 +4202,7 @@ ipcMain.handle("is-first-time", async () => {
 
 ipcMain.handle(
   "register-cash-expense",
-  async (event, { amount, reason, cashierId, role }) => {
+  async (event, { amount, reason, category, cashierId, role }) => {
     try {
       const register = findOpenRegister(cashierId, role);
       if (!register)
@@ -4215,14 +4217,53 @@ ipcMain.handle(
           newExpenses,
           register.id,
         );
+        // category 'supplier' = pago a proveedor/mercancía; NULL = otro gasto.
         db.prepare(
-          "INSERT INTO cash_register_expenses (register_id, amount, reason) VALUES (?, ?, ?)",
-        ).run(register.id, amount, reason);
+          "INSERT INTO cash_register_expenses (register_id, amount, reason, category) VALUES (?, ?, ?, ?)",
+        ).run(register.id, amount, reason, category === "supplier" ? "supplier" : null);
         return newExpenses;
       });
       const newExpenses = registerExpense();
       emitDbChanged(["cash_register", "cash_register_expenses"], {});
       return { success: true, expenses: newExpenses };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
+
+// Entrada de dinero a la caja abierta (cambio extra, préstamo del dueño…).
+// Suma al efectivo esperado del corte; no es venta ni cuenta como gasto.
+ipcMain.handle(
+  "register-cash-income",
+  async (event, { amount, reason, cashierId, role }) => {
+    try {
+      const value = Number(amount);
+      if (!(value > 0)) return { success: false, error: "Ingresa un monto válido." };
+      // El motivo de una entrada no es obligatorio: sin él queda "Sin motivo",
+      // visible en los movimientos (una entrada no puede causar faltante).
+      const motive = String(reason || "").trim() || "Sin motivo";
+      const register = findOpenRegister(cashierId, role);
+      if (!register)
+        return {
+          success: false,
+          error: "No hay caja abierta para registrar la entrada",
+        };
+
+      const registerIncome = db.transaction(() => {
+        const newCashIn = (register.cash_in || 0) + value;
+        db.prepare("UPDATE cash_register SET cash_in = ? WHERE id = ?").run(
+          newCashIn,
+          register.id,
+        );
+        db.prepare(
+          "INSERT INTO cash_register_expenses (register_id, amount, reason, kind) VALUES (?, ?, ?, 'in')",
+        ).run(register.id, value, motive);
+        return newCashIn;
+      });
+      const cashIn = registerIncome();
+      emitDbChanged(["cash_register", "cash_register_expenses"], {});
+      return { success: true, cashIn };
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -4278,7 +4319,8 @@ ipcMain.handle(
           register.currentCash =
             (register.opening_balance || 0) +
             money.cashSales +
-            money.collected.cash -
+            money.collected.cash +
+            (register.cash_in || 0) -
             (register.expenses || 0);
         }
       }
@@ -4307,7 +4349,8 @@ ipcMain.handle(
         const expectedClose =
           (existing.opening_balance || 0) +
           cashSales +
-          collected.cash -
+          collected.cash +
+          (existing.cash_in || 0) -
           totalExpenses;
 
         db.prepare(
@@ -4407,7 +4450,11 @@ ipcMain.handle(
         registerMoney(register.id);
       const totalExpenses = (register.expenses || 0) + (expenses || 0);
       const expectedClose =
-        register.opening_balance + cashSales + collected.cash - totalExpenses;
+        register.opening_balance +
+        cashSales +
+        collected.cash +
+        (register.cash_in || 0) -
+        totalExpenses;
       const difference =
         expectedClose >= 0
           ? (declaredClose || 0) - expectedClose
@@ -4570,7 +4617,13 @@ ipcMain.handle(
           "UPDATE cash_register_expenses SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=? WHERE id=?",
         ).run(cashierId || null, expenseId);
         let newExpenses = null;
-        if (register && register.status === "open") {
+        if (register && register.status === "open" && expense.kind === "in") {
+          // Entrada de dinero: se descuenta del total de entradas, no de gastos.
+          db.prepare("UPDATE cash_register SET cash_in = ? WHERE id = ?").run(
+            Math.max(0, (register.cash_in || 0) - (expense.amount || 0)),
+            register.id,
+          );
+        } else if (register && register.status === "open") {
           newExpenses = Math.max(
             0,
             (register.expenses || 0) - (expense.amount || 0),
@@ -4639,7 +4692,12 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
       .get(registerId).c;
     const totalExpenses = db
       .prepare(
-        "SELECT COALESCE(SUM(amount),0) as t FROM cash_register_expenses WHERE register_id = ? AND (status IS NULL OR status != 'cancelado')",
+        "SELECT COALESCE(SUM(amount),0) as t FROM cash_register_expenses WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') AND (kind IS NULL OR kind != 'in')",
+      )
+      .get(registerId).t;
+    const totalCashIn = db
+      .prepare(
+        "SELECT COALESCE(SUM(amount),0) as t FROM cash_register_expenses WHERE register_id = ? AND (status IS NULL OR status != 'cancelado') AND kind = 'in'",
       )
       .get(registerId).t;
     const productsCount = db
@@ -4669,6 +4727,7 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
       totalItems,
       saleCount,
       totalExpenses,
+      totalCashIn,
       productsCount,
       live: {
         cashSales: liveCash,
@@ -4677,6 +4736,7 @@ ipcMain.handle("get-register-sales-detail", async (event, registerId) => {
         creditSales: liveMoney.creditSales,
         collected: liveMoney.collected,
         expenses: totalExpenses,
+        cashIn: totalCashIn,
         cancelledCount,
       },
     };
@@ -4728,11 +4788,11 @@ ipcMain.handle(
           WHERE s.register_id = ?
           UNION ALL
           SELECT
-            'expense' AS kind,
+            CASE WHEN e.kind = 'in' THEN 'cash_in' ELSE 'expense' END AS kind,
             e.id AS ref_id,
             e.created_at AS created_at,
             NULL AS method,
-            -e.amount AS amount,
+            CASE WHEN e.kind = 'in' THEN e.amount ELSE -e.amount END AS amount,
             e.reason AS reason,
             CASE WHEN e.status = 'cancelado' THEN 'cancelled' ELSE 'active' END AS state,
             CASE WHEN cr.status = 'open' THEN 1
@@ -5251,7 +5311,11 @@ const migrateRegisterContinuity = () => {  try {
         registerMoney(reg.id);
       const totalExpenses = reg.expenses || 0;
       const expectedClose =
-        (reg.opening_balance || 0) + cashSales + collected.cash - totalExpenses;
+        (reg.opening_balance || 0) +
+        cashSales +
+        collected.cash +
+        (reg.cash_in || 0) -
+        totalExpenses;
 
       db.prepare(
         `UPDATE cash_register SET

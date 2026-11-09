@@ -736,7 +736,7 @@ const processSaleRef = useRef(null);
         // Mismo criterio que F11: no abrir un corte de caja con la venta a medias.
         if (cartRef.current.length > 0) {
           showNotification(
-            "Termina la venta actual antes de retirar de caja",
+            "Termina la venta actual antes de registrar una salida de dinero",
             "warning",
           );
           return;

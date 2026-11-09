@@ -50,6 +50,7 @@ const RPC_TIMEOUTS = {
   "open-cash-register": 20000,
   "close-cash-register": 20000,
   "register-cash-expense": 20000,
+  "register-cash-income": 20000,
   "delete-cash-expense": 20000,
   "cancel-sale": 20000,
   "cancel-sale-item": 20000,
@@ -975,7 +976,12 @@ const forward = (db, channel, args = []) => {
       );
     }
   }
-  if (channel === "open-cash-register" || channel === "register-cash-expense" || channel === "delete-cash-expense") {
+  if (
+    channel === "open-cash-register" ||
+    channel === "register-cash-expense" ||
+    channel === "register-cash-income" ||
+    channel === "delete-cash-expense"
+  ) {
     // Si el Host está caído, el error de red no es claro para el cajero.
     return rpcCall(db, channel, args).then((r) => {
       if (r && r.code === "HOST_UNREACHABLE") return HOST_REQUIRED("Esta operación");

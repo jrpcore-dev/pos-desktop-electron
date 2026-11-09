@@ -21,6 +21,7 @@ import {
   UserPlus,
   Wallet,
   ArrowDownToLine,
+  ArrowUpFromLine,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -231,8 +232,17 @@ const CommandPalette = ({
           onSelect: () => go("/customers", { newCustomer: true }),
         },
         registerOpen && {
+          id: "deposit",
+          label: "Registrar entrada de dinero",
+          icon: <ArrowUpFromLine />,
+          onSelect: () => {
+            localStorage.setItem("eodPendingAction", "deposit");
+            go("/end-of-day");
+          },
+        },
+        registerOpen && {
           id: "withdraw",
-          label: "Registrar retiro de efectivo",
+          label: "Registrar salida de dinero",
           icon: <ArrowDownToLine />,
           onSelect: () => {
             localStorage.setItem("eodPendingAction", "withdraw");

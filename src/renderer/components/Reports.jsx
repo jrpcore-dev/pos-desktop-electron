@@ -238,7 +238,9 @@ const categorizeExpenses = (expenses) => {
   for (const e of expenses || []) {
     if (e.status === "cancelado") continue;
     const amt = Number(e.amount) || 0;
-    if (e.reason.startsWith("Compra")) {
+    // Compras = pagos a proveedor (Salida de dinero) + compras desde
+    // "Llegó mercancía" (llevan product_id). Lo demás son otros gastos.
+    if (e.category === "supplier" || e.product_id) {
       out.compra += amt;
       out.compraCount += 1;
     } else {
@@ -928,7 +930,7 @@ const ChartsSection = React.memo(function ChartsSection({
                 <TableRow className="hover:bg-muted/30">
                   <TableCell className="px-4 py-2.5">
                     <Badge variant="outline" className="border-destructive/20 bg-destructive/5 text-[0.7rem] font-bold uppercase text-destructive">
-                      Compras
+                      Compras de mercancía
                     </Badge>
                   </TableCell>
                   <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
@@ -941,7 +943,7 @@ const ChartsSection = React.memo(function ChartsSection({
                 <TableRow className="hover:bg-muted/30">
                   <TableCell className="px-4 py-2.5">
                     <Badge variant="outline" className="border-warning/25 bg-warning/10 text-[0.7rem] font-bold uppercase text-warning">
-                      Retiros
+                      Otros gastos
                     </Badge>
                   </TableCell>
                   <TableCell className="px-4 py-2.5 text-right tabular-nums text-foreground">
@@ -1558,8 +1560,8 @@ const Reports = () => {
     rows.push("");
     rows.push("GASTOS POR TIPO");
     rows.push("Tipo,Cantidad,Total");
-    rows.push(`Compras,${summary.compraCount},${summary.compra.toFixed(2)}`);
-    rows.push(`Retiros,${summary.retiroCount},${summary.retiro.toFixed(2)}`);
+    rows.push(`Compras de mercancía,${summary.compraCount},${summary.compra.toFixed(2)}`);
+    rows.push(`Otros gastos,${summary.retiroCount},${summary.retiro.toFixed(2)}`);
     rows.push("");
     rows.push("PRODUCTOS MAS VENDIDOS");
     rows.push("Producto,Unidades");
@@ -1701,8 +1703,8 @@ const Reports = () => {
       startY: yy + 3,
       head: [["Tipo", "Cantidad", "Total"]],
       body: [
-        ["Compras", String(summary.compraCount), fmtMoney(summary.compra)],
-        ["Retiros", String(summary.retiroCount), fmtMoney(summary.retiro)],
+        ["Compras de mercancía", String(summary.compraCount), fmtMoney(summary.compra)],
+        ["Otros gastos", String(summary.retiroCount), fmtMoney(summary.retiro)],
       ],
       margin: { left: margin, right: margin },
       styles: tblBase,

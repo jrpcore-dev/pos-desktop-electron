@@ -100,7 +100,9 @@ const sortRows = (rows, key, dir) => {
   });
 };
 
-const expenseType = (e) => (e.reason?.startsWith("Compra") ? "Compra" : "Retiro");
+// Por el tipo guardado, no por el texto del motivo.
+const expenseType = (e) =>
+  e.product_id ? "Compra" : e.category === "supplier" ? "Pago de mercancía" : "Salida";
 
 const statusBadge = (s) => {
   if (s.pending) {

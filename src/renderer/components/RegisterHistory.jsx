@@ -668,6 +668,9 @@ const RegisterHistory = () => {
         ["Efectivo", `$${fmtNumber(r.cash_sales)}`],
         ["Tarjeta", `$${fmtNumber(r.card_sales)}`],
         ["Transferencia", `$${fmtNumber(r.transfer_sales)}`],
+        ...(detail.totalCashIn > 0
+          ? [["Entradas de dinero", `+$${fmtNumber(detail.totalCashIn)}`]]
+          : []),
         ["Gastos", `-$${fmtNumber(detail.totalExpenses)}`],
         ["Neto", `$${fmtNumber(detail.totalSales - (detail.totalExpenses || 0))}`],
       ],
@@ -699,13 +702,15 @@ const RegisterHistory = () => {
     const txn = movs
       .map((m) => ({
         time: m.created_at,
-        id: `#${m.kind === "income" ? "V" : "G"}-${m.ref_id}`,
+        id: `#${m.kind === "income" ? "V" : m.kind === "cash_in" ? "E" : "G"}-${m.ref_id}`,
         type:
           m.state === "cancelled"
             ? "Cancelado"
             : m.kind === "income"
               ? "Venta"
-              : "Gasto",
+              : m.kind === "cash_in"
+                ? "Entrada"
+                : "Gasto",
         method:
           m.kind === "income"
             ? methodNames[m.method] || m.method
@@ -1253,6 +1258,15 @@ const RegisterHistory = () => {
                         value: fmtNumber(detail.register.transfer_sales),
                         neg: false,
                       },
+                      ...(detail.totalCashIn > 0
+                        ? [
+                            {
+                              label: "Entradas de dinero",
+                              value: fmtNumber(detail.totalCashIn),
+                              neg: false,
+                            },
+                          ]
+                        : []),
                       {
                         label: "Gastos",
                         value: fmtNumber(detail.totalExpenses),
@@ -1476,6 +1490,9 @@ const RegisterHistory = () => {
                   <div className="divide-y divide-border">
                     {movements.map((mov) => {
                       const isIncome = mov.kind === "income";
+                      // Entrada de dinero: suma como un ingreso, pero no es venta.
+                      const isCashIn = mov.kind === "cash_in";
+                      const isInflow = isIncome || isCashIn;
                       const cancelled = mov.state === "cancelled";
                       const key = `${mov.kind}-${mov.ref_id}`;
                       const expanded = expandedKey === key;
@@ -1495,12 +1512,12 @@ const RegisterHistory = () => {
                             <span
                               className={cn(
                                 "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                                isIncome
+                                isInflow
                                   ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                                   : "bg-red-500/10 text-red-600 dark:text-red-400",
                               )}
                             >
-                              {isIncome ? (
+                              {isInflow ? (
                                 <TrendingUp size={15} />
                               ) : (
                                 <TrendingDown size={15} />
@@ -1512,7 +1529,9 @@ const RegisterHistory = () => {
                                 <span className="min-w-0 truncate text-sm font-semibold text-foreground">
                                   {isIncome
                                     ? mov.products || "Venta"
-                                    : mov.reason || "Gasto"}
+                                    : isCashIn
+                                      ? mov.reason || "Entrada de dinero"
+                                      : mov.reason || "Gasto"}
                                 </span>
                                 {cancelled && (
                                   <ShBadge
@@ -1528,8 +1547,13 @@ const RegisterHistory = () => {
                                   {formatMXTime(mov.created_at)}
                                 </span>
                                 <span className="font-semibold text-primary">
-                                  {isIncome ? `#V-${mov.ref_id}` : `#G-${mov.ref_id}`}
+                                  {isIncome
+                                    ? `#V-${mov.ref_id}`
+                                    : isCashIn
+                                      ? `#E-${mov.ref_id}`
+                                      : `#G-${mov.ref_id}`}
                                 </span>
+                                {isCashIn && <span>Entrada de dinero</span>}
                                 {isIncome && (
                                   <span className="flex items-center gap-1">
                                     {methodIcons[mov.method]}
@@ -1544,12 +1568,12 @@ const RegisterHistory = () => {
                                 "shrink-0 text-right text-sm font-bold tabular-nums",
                                 cancelled
                                   ? "text-muted-foreground line-through"
-                                  : isIncome
+                                  : isInflow
                                     ? "text-emerald-600 dark:text-emerald-400"
                                     : "text-red-600 dark:text-red-400",
                               )}
                             >
-                              {isIncome ? "+" : "−"}${fmtNumber(Math.abs(mov.amount))}
+                              {isInflow ? "+" : "−"}${fmtNumber(Math.abs(mov.amount))}
                             </span>
 
                             {(isAdmin || mov.can_cancel) && !cancelled && (
@@ -1573,7 +1597,7 @@ const RegisterHistory = () => {
                                   <DropdownMenuItem
                                     onSelect={() =>
                                       navigator.clipboard?.writeText(
-                                        `${isIncome ? "V" : "G"}-${mov.ref_id}`,
+                                        `${isIncome ? "V" : isCashIn ? "E" : "G"}-${mov.ref_id}`,
                                       )
                                     }
                                   >

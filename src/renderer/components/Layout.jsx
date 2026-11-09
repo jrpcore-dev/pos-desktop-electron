@@ -1542,7 +1542,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 { keys: ["F3"], desc: "Disminuir cantidad (terminal)" },
                 { keys: ["F4"], desc: "Aumentar cantidad (terminal)" },
                 { keys: ["F8"], desc: "Finalizar venta (terminal)" },
-                { keys: ["F10"], desc: "Retirar efectivo (terminal)" },
+                { keys: ["F10"], desc: "Salida de dinero (terminal)" },
                 { keys: ["F11"], desc: "Cerrar caja (sin venta en curso)" },
                 { keys: ["F12"], desc: "Cerrar sesión" },
                 { keys: ["Ctrl", "Q"], desc: "Enfocar búsqueda (terminal)" },
