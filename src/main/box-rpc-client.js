@@ -16,6 +16,7 @@ const customersCore = require("./customers-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
+const salesLocal = require("./sales-local");
 // 3g/D · registro de listeners CRUDOS: el puente lo usa para ejecutar en la
 // caja las claves de `save-setting` que son del propio aparato.
 const ipcRegistry = require("./ipc-registry");
@@ -258,97 +259,16 @@ const withPendingMovements = (db, rows, params = {}) => {
   return [...extra.reverse(), ...rows];
 };
 
-// Ventas sin subir: la caja las muestra como si ya estuvieran en su copia local,
-// marcadas `pending`. Son sólo lectura: al llegar por la réplica las reemplaza
-// la venta real (mismo folio).
-const PENDING_SALE_ID = "pending-";
-const SALE_LIST_CHANNELS = new Set(["get-sales-for-today", "get-sales-by-date", "get-sales-by-range"]);
-const mxDate = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
-
-const pendingSaleRow = (db, row) => {
-  const payload = row.payload || {};
-  const cart = Array.isArray(payload.cart) ? payload.cart : [];
-  const items = cart.map((item, i) => ({
-    id: `${PENDING_SALE_ID}${row.id}-${i}`,
-    sale_id: `${PENDING_SALE_ID}${row.id}`,
-    product_id: typeof item.id === "number" ? item.id : null,
-    name: item.name,
-    product_name: item.name,
-    quantity: Number(item.quantity) || 0,
-    price_at_sale: Number(item.finalPrice ?? item.price) || 0,
-    discount_percent: Number(item.discount_percent) || 0,
-    returned_qty: 0,
-    status: null,
-    sale_unit: item.sale_unit || "piece",
-  }));
-  return {
-    id: `${PENDING_SALE_ID}${row.id}`,
-    folio: row.folio,
-    total: Number(payload.total) || 0,
-    payment_method: payload.paymentMethod,
-    discount_total: Number(payload.discountTotal) || 0,
-    status: "completado",
-    register_id: row.registerId ?? null,
-    cashier_id: row.cashierId ?? null,
-    cashier_name: row.cashierName || null,
-    device_code: activation.getSetting(db, "box_device_code") || null,
-    created_at: String(row.localCreatedAt || "").replace("T", " ").slice(0, 19),
-    can_cancel: 0,
-    pending: row.status === "conflict" ? "conflict" : "pending",
-    pending_error: row.status === "conflict" ? row.lastError : null,
-    products: items.map((it) => ({ name: it.name, qty: it.quantity })),
-    items,
-  };
-};
-
-const pendingSaleMatches = (db, channel, row, params = {}) => {
-  const ownId = activation.getSetting(db, "box_device_id");
-  if (params.deviceId && params.deviceId !== ownId) return false;
-  const day = mxDate(row.localCreatedAt);
-  if (channel === "get-sales-by-range") {
-    return (!params.startDate || day >= params.startDate) && (!params.endDate || day <= params.endDate);
-  }
-  if (channel === "get-sales-for-today" && params.registerId) {
-    return String(row.registerId) === String(params.registerId);
-  }
-  return !params.date || day === params.date;
-};
-
-const withPendingSales = (db, channel, result, params = {}) => {
-  if (!result || !result.success) return result;
-  const rows = offlineQueue
-    .unsettled(db)
-    .filter((row) => pendingSaleMatches(db, channel, row, params))
-    .map((row) => pendingSaleRow(db, row));
-  if (!rows.length) return result;
-  const merged = { ...result, sales: [...rows, ...(result.sales || [])] };
-  if (result.total !== undefined) {
-    merged.total = Number(result.total || 0) + rows.reduce((sum, r) => sum + r.total, 0);
-  }
-  if (result.count !== undefined) merged.count = Number(result.count || 0) + rows.length;
-  if (Array.isArray(result.byMethod)) {
-    const byMethod = result.byMethod.map((m) => ({ ...m }));
-    for (const r of rows) {
-      const entry = byMethod.find((m) => m.payment_method === r.payment_method);
-      if (entry) {
-        entry.count = Number(entry.count || 0) + 1;
-        entry.total = Number(entry.total || 0) + r.total;
-      } else {
-        byMethod.push({ payment_method: r.payment_method, count: 1, total: r.total });
-      }
-    }
-    merged.byMethod = byMethod;
-  }
-  return merged;
-};
-
-const pendingSaleDetails = (db, saleId) => {
-  const id = Number(String(saleId).slice(PENDING_SALE_ID.length));
-  const row = offlineQueue.get(db, id);
-  if (!row) return fail("SALE_NOT_FOUND", "La venta ya no está en la cola");
-  const sale = pendingSaleRow(db, row);
-  return { success: true, sale, items: sale.items };
-};
+// Lecturas de ventas: las que la caja hizo y el Host aún no confirma llevan
+// id negativo y se marcan "pendiente" (ver sales-local.markPending).
+const SALE_READ_CHANNELS = new Set([
+  "get-sales-for-today",
+  "get-sales-by-date",
+  "get-sales-by-range",
+  "get-sale-details",
+  "find-sales-by-folio",
+  "get-register-sales-detail",
+]);
 
 // La venta en cola cambia lo que muestran Caja y Transacciones.
 const salesChanged = () => {
@@ -679,6 +599,46 @@ const saleBody = (payload, folio, offline) => {
   return body;
 };
 
+// Local-first · la venta se escribe al momento en la copia de la caja (mismo
+// código que el Host) y en la cola, en UNA transacción, y sube en segundo
+// plano. El cobro no espera a la red aunque el Host esté conectado.
+const recordSaleLocal = (db, payload) => {
+  const deviceId = activation.getSetting(db, "box_device_id") || null;
+  let row;
+  let written;
+  try {
+    written = db.transaction(() => {
+      row = {
+        folio: nextBoxFolio(db),
+        payload,
+        idempotencyKey: crypto.randomUUID(),
+        registerId: payload.registerId,
+        cashierId: payload.cashierId,
+        cashierName: payload.cashierName,
+        localCreatedAt: new Date().toISOString(),
+      };
+      // Las mismas reglas del Host: si la venta no es válida, no se cobra.
+      const out = salesLocal.writeLocalSale(db, row, deviceId);
+      offlineQueue.enqueue(db, row);
+      clearAttempt(db);
+      return out;
+    })();
+  } catch (err) {
+    return fail((err && err.code) || "SALE_FAILED", (err && err.message) || "No se pudo registrar la venta");
+  }
+  opsChanged(["sales", "products"]);
+  syncPending(db).catch(() => {});
+  return {
+    success: true,
+    pending: true,
+    // Sólo avisa "sin conexión" cuando de verdad no la hay.
+    offline: hostKnownDown(db) || replicaLive.liveState(db).state !== "connected",
+    saleId: written.saleId,
+    folio: written.folio,
+    warnings: written.warnings,
+  };
+};
+
 // POST /api/sales · la venta viaja con Idempotency-Key; el cajero que la firma
 // lo decide el token de sesión, no el payload (3a.i).
 const recordSale = async (db, payload = {}) => {
@@ -688,6 +648,9 @@ const recordSale = async (db, payload = {}) => {
   }
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  // Fiado sigue en línea (saldo y límite viven en el Host). Sin copia local
+  // completa todavía, el camino de siempre.
+  if (payload.paymentMethod !== "credit" && localReady(db)) return recordSaleLocal(db, payload);
 
   const signature = sha256(
     canonical({
@@ -1033,6 +996,34 @@ const cachedRegister = (db) => {
 const HOST_REQUIRED = (what) =>
   fail("HOST_REQUIRED", `${what} requiere conexión con el Host.`);
 
+const CLOSE_SYNC_WAIT_MS = 5000;
+const closeWhenQueueEmpty = async (db) => {
+  if (opQueue.countOpen(db) > 0 || offlineQueue.countBlocking(db) > 0) {
+    await Promise.race([
+      (async () => {
+        await syncOps(db).catch(() => {});
+        await syncPending(db).catch(() => {});
+      })(),
+      new Promise((r) => setTimeout(r, CLOSE_SYNC_WAIT_MS)),
+    ]);
+  }
+  const pendingOps = opQueue.countOpen(db);
+  if (pendingOps > 0) {
+    return fail(
+      "PENDING_OPS",
+      `Hay ${pendingOps} movimiento(s) de inventario sin subir al Host. Espera a que se sincronicen antes de cerrar caja.`,
+    );
+  }
+  const pending = offlineQueue.countBlocking(db);
+  if (pending > 0) {
+    return fail(
+      "PENDING_SALES",
+      `Hay ${pending} venta(s) pendiente(s) de sincronizar. Conecta el Host y espera a que suban antes de cerrar caja.`,
+    );
+  }
+  return null;
+};
+
 // Punto de entrada del guard: el canal entra igual que por IPC y sale traducido.
 const forward = (db, channel, args = []) => {
   if (channel === "verify-cashier-pin") {
@@ -1044,7 +1035,7 @@ const forward = (db, channel, args = []) => {
     return recordSale(db, args[0]).then((r) => {
       // Venta en línea: Caja y Transacciones la reciben por la réplica y se
       // refrescan solas. Va en segundo plano: el cobro no espera a la copia.
-      if (r && r.success && !r.offline) settleWrite(db).catch(() => {});
+      if (r && r.success && !r.pending) settleWrite(db).catch(() => {});
       return r;
     });
   }
@@ -1056,41 +1047,22 @@ const forward = (db, channel, args = []) => {
   if (QUEUED_OPS[channel] && localReady(db)) {
     return Promise.resolve(enqueueOp(db, channel, args));
   }
-  if (channel === "get-sale-details" && String(args[0]).startsWith(PENDING_SALE_ID)) {
-    return Promise.resolve(pendingSaleDetails(db, args[0]));
-  }
   if (LOCAL_READ_CHANNELS.has(channel) && localReady(db)) {
     const local = runLocal(db, channel, args);
     if (local) {
       return Promise.resolve(local).then((r) => {
         if (channel === "get-cash-register-status" && r && r.success) cacheRegister(db, r);
         if (channel === "get-stock-movements" && Array.isArray(r)) return withPendingMovements(db, r, args[0]);
-        if (SALE_LIST_CHANNELS.has(channel)) return withPendingSales(db, channel, r, args[0]);
+        if (SALE_READ_CHANNELS.has(channel)) return salesLocal.markPending(db, r);
         return r;
       });
     }
   }
   // Cerrar caja exige que la cola esté vacía (decisión de negocio).
+  // Antes se sube lo que quede (local-first: lo recién cobrado suele estar
+  // subiendo todavía) y sólo si algo se atora se avisa.
   if (channel === "close-cash-register") {
-    const pendingOps = opQueue.countOpen(db);
-    if (pendingOps > 0) {
-      syncOps(db).catch(() => {});
-      return Promise.resolve(
-        fail(
-          "PENDING_OPS",
-          `Hay ${pendingOps} movimiento(s) de inventario sin subir al Host. Espera a que se sincronicen antes de cerrar caja.`,
-        ),
-      );
-    }
-    const pending = offlineQueue.countBlocking(db);
-    if (pending > 0) {
-      return Promise.resolve(
-        fail(
-          "PENDING_SALES",
-          `Hay ${pending} venta(s) pendiente(s) de sincronizar. Conecta el Host y espera a que suban antes de cerrar caja.`,
-        ),
-      );
-    }
+    return closeWhenQueueEmpty(db).then((blocked) => blocked || rpcCall(db, channel, args));
   }
   if (
     channel === "open-cash-register" ||
@@ -1185,8 +1157,6 @@ module.exports = {
   setTimingSink,
   setOpsChangedHook,
   noteHostMoved,
-  withPendingSales,
-  pendingSaleDetails,
   syncOps,
   opsSummary: (db) => opQueue.summary(db),
   opsList: (db, statuses) => opQueue.list(db, statuses),
@@ -1208,6 +1178,21 @@ module.exports = {
   offlineVerifyPin,
   pendingSummary: (db) => offlineQueue.summary(db),
   pendingList: (db, statuses) => offlineQueue.list(db, statuses),
-  pendingCancel: (db, id) => offlineQueue.cancel(db, id),
+  pendingCancel: (db, id) => {
+    const row = offlineQueue.get(db, id);
+    const out = offlineQueue.cancel(db, id);
+    if (out.success && row) {
+      salesLocal.removeLocalSale(db, row.folio);
+      opsChanged(["sales", "products"]);
+    }
+    return out;
+  },
+  // Réplica · lo provisional de ventas se mantiene encima de lo del Host.
+  rematerializeSales: (db, log) => {
+    const deviceId = activation.getSetting(db, "box_device_id") || null;
+    return salesLocal.rematerialize(db, deviceId, log);
+  },
+  dropOrphanSaleItems: (db) => salesLocal.dropOrphanItems(db),
+  reapplyPendingSales: (db, productIds) => salesLocal.reapplyStock(db, productIds),
   pendingRetry: (db) => offlineQueue.retryConflicts(db),
 };

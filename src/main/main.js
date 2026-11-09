@@ -637,6 +637,15 @@ app.on("ready", async () => {
 
   // 3f · si esta caja ya tenía la réplica aplicada, retoma el delta desde donde
   // se quedó. Va DESPUÉS del cipher porque necesita leer el token de emparejar.
+  // Antes, las ventas en cola que la copia local no tiene (de una versión
+  // anterior) se escriben en ella para que Caja y Transacciones las vean.
+  if (boxDevice && replicaEngine.state(db).sync_completed) {
+    try {
+      boxRpc.rematerializeSales(db, (m) => console.warn(m));
+    } catch (err) {
+      console.warn("[sales-local]", err && err.message);
+    }
+  }
   startLiveReplica();
   // Bloque 4 · la caja reintenta su cola aunque el arranque anterior haya
   // quedado a medias. Sin Host no hace nada.
@@ -3971,6 +3980,20 @@ const startLiveReplica = () => {
     // Paso 2 · la réplica pisa productos con la fila del Host: lo que la cola
     // aún no subió se vuelve a aplicar encima antes de avisar a las pantallas.
     onChanged: (tables, ids, meta) => {
+      // Ventas hechas aquí que el Host aún no confirma: un resync vació la
+      // tabla y se vuelven a escribir (eso ya descuenta su stock); en un
+      // cambio normal se quitan las que el Host ya sustituyó y su stock se
+      // descuenta otra vez sobre el que trajo la réplica.
+      try {
+        if (meta && meta.resync) {
+          boxRpc.rematerializeSales(db, (m) => console.warn(m));
+        } else {
+          if (tables.includes("sales") || tables.includes("sale_items")) boxRpc.dropOrphanSaleItems(db);
+          if (tables.includes("products") && ids && ids.products) boxRpc.reapplyPendingSales(db, ids.products);
+        }
+      } catch (err) {
+        console.warn("[sales-local]", err && err.message);
+      }
       if (tables.includes("products")) {
         try {
           boxRpc.reapplyPendingOps(db, meta && meta.resync ? null : ids && ids.products);

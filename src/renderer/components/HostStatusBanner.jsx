@@ -15,7 +15,7 @@ import { formatMXTime } from "../utils/dateUtils";
 import { fmtMoney } from "../utils/format";
 import { useToast } from "./ToastProvider";
 import { useDbChanges } from "../lib/useDbChanges";
-import { PENDING_ADMIN_MS, STALE_STRONG_MS, STALE_WARN_MS } from "../lib/replicaThresholds";
+import { PENDING_ADMIN_MS, STALE_STRONG_MS, STALE_WARN_MS, visiblePending } from "../lib/replicaThresholds";
 
 // Bloque 4/D · Estado visible de la caja: Host caído ≠ Host ocupado, datos
 // viejos a los 30 min / 4 h y ventas pendientes. NADA de esto bloquea vender.
@@ -281,7 +281,7 @@ export default function HostStatusBanner() {
   }
 
   const host = status.host || {};
-  const pending = status.pending || { count: 0 };
+  const pending = visiblePending(status);
   // Paso 2 · entradas/salidas de stock hechas aquí que aún no llegan al Host.
   const pendingOps = status.pendingOps || { count: 0 };
   const opsConflicts = Number(pendingOps.conflicts) || 0;

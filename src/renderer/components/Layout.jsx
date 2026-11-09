@@ -47,6 +47,7 @@ import InsightItem, { ACTIONABLE_TYPES } from "./InsightItem";
 import { Hint } from "./ui/hint";
 import { useFeatures } from "../lib/useFeatures";
 import { useDbChanges } from "../lib/useDbChanges";
+import { visiblePending } from "../lib/replicaThresholds";
 import { useThemeMode } from "../contexts/ThemeContext";
 import { formatMXTime } from "../utils/dateUtils";
 import { fmtMoney } from "../utils/format";
@@ -553,7 +554,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         const status = await window.api.invoke("get-server-status");
         setServerRunning(status.running);
         setHostStatus(status.host || null);
-        setPendingCount(Number(status.pending?.count) || 0);
+        setPendingCount(Number(visiblePending(status).count) || 0);
         setReplicaStaleMs(
           status.replica && status.replica.stale_ms != null
             ? Number(status.replica.stale_ms)

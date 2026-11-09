@@ -69,7 +69,7 @@ const CHECKS = [
   { file: "check-5-movil-idempotencia.cjs" },
   { file: "check-local-first-1.cjs" },
   { file: "check-local-first-2.cjs" },
-  { file: "check-pending-sales-view.cjs" },
+  { file: "check-local-sales.cjs" },
   { file: "check-host-relocate.cjs" },
   { file: "check-local-customers.cjs" },
   { file: "check-pair-notify.cjs" },

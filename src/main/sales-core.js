@@ -269,6 +269,10 @@ const createSaleTx = (
     creditPaid,
     creditPaidMethod,
     ownerPin,
+    // Local-first · la caja aplica la venta en SU copia con este mismo código
+    // antes de subirla: el folio ya es suyo (el Host lo valida al recibirla) y
+    // la caja abierta puede no haber llegado aún por la réplica.
+    localApply,
   },
 ) => {
   if (!Array.isArray(cart) || cart.length === 0) {
@@ -328,21 +332,28 @@ const createSaleTx = (
     const row = db
       .prepare("SELECT id, device_id, status FROM cash_register WHERE id = ?")
       .get(registerId);
-    if (!row) throw fail("REGISTER_NOT_FOUND", "La caja de la venta no existe");
-    if (deviceId && row.device_id && row.device_id !== deviceId) {
-      throw fail("REGISTER_NOT_OWNED", "La caja de la venta pertenece a otro dispositivo");
-    }
-    registerIdFinal = row.id;
-    // Fase 2 · la venta se hizo con la caja abierta pero llegó después del
-    // corte: se conserva en su turno (el dinero estaba en ese cajón) y se
-    // avisa para que el admin revise la diferencia del corte.
-    if (row.status === "closed") {
-      lateWarning = { code: "LATE_SYNC_CLOSED_REGISTER", register_id: row.id };
+    if (!row && localApply) {
+      registerIdFinal = Number(registerId);
+    } else if (!row) {
+      throw fail("REGISTER_NOT_FOUND", "La caja de la venta no existe");
+    } else {
+      if (deviceId && row.device_id && row.device_id !== deviceId) {
+        throw fail("REGISTER_NOT_OWNED", "La caja de la venta pertenece a otro dispositivo");
+      }
+      registerIdFinal = row.id;
+      // Fase 2 · la venta se hizo con la caja abierta pero llegó después del
+      // corte: se conserva en su turno (el dinero estaba en ese cajón) y se
+      // avisa para que el admin revise la diferencia del corte.
+      if (row.status === "closed") {
+        lateWarning = { code: "LATE_SYNC_CLOSED_REGISTER", register_id: row.id };
+      }
     }
   }
-  const folioFinal = folio
-    ? acceptFolio(db, deviceId, folio)
-    : nextFolio(db, folioDeviceId !== undefined ? folioDeviceId : deviceId);
+  const folioFinal = localApply
+    ? String(folio)
+    : folio
+      ? acceptFolio(db, deviceId, folio)
+      : nextFolio(db, folioDeviceId !== undefined ? folioDeviceId : deviceId);
 
   const saleStmt = db.prepare(
     // 3g/C · `device_id` deja constancia de qué aparato hizo la venta: sin él,
