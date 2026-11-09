@@ -759,6 +759,260 @@ body {
   .vt-status div.vt-last { animation: none; opacity: 1; }
 }
 
+/* ─── Caja nueva esperando al Host (BoxApprovalScene). `bw-` = box wait.
+   Espera: ola en los 4 bloques. Aprobada: muestran el código en verde, se
+   juntan al centro y queda una palomita. Rechazada: código en rojo y tiemblan. ─── */
+.bw-ready {
+  animation: bw-ready 1.6s ease-in-out 1;
+}
+@keyframes bw-ready {
+  40% { box-shadow: 0 0 0 6px hsl(var(--chart-2) / 0.35); }
+}
+.bw-swap {
+  animation: bw-fadeup 0.35s ease both;
+}
+@keyframes bw-fadeup {
+  from { opacity: 0; transform: translateY(6px); }
+}
+.bw-blk {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: clamp(56px, 8vw, 84px);
+  height: 52px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1.5px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  transition: background 0.3s, border-color 0.3s;
+}
+.bw-blk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, hsl(var(--chart-2) / 0.3) 50%, transparent 75%);
+  transform: translateX(-130%);
+}
+.bw-d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(var(--muted-foreground) / 0.45);
+}
+.bw-t {
+  font: 700 clamp(15px, 1.6vw, 20px) ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.1em;
+  animation: bw-show 0s calc(0.25s + var(--i) * 0.13s) both;
+}
+@keyframes bw-show {
+  from { opacity: 0; }
+}
+
+/* espera */
+.bw-wait .bw-blk { animation: bw-wave 2.4s ease-in-out calc(var(--i) * 0.18s) infinite; }
+.bw-wait .bw-blk::after { animation: bw-scan 2.4s ease-in-out calc(var(--i) * 0.18s) infinite; }
+.bw-wait .bw-d { animation: bw-dot 2.4s ease-in-out calc(var(--i) * 0.18s + var(--j) * 0.08s) infinite; }
+@keyframes bw-wave {
+  0%, 55%, 100% { transform: translateY(0); border-color: hsl(var(--border)); }
+  18% { transform: translateY(-9px); border-color: hsl(var(--chart-2)); box-shadow: 0 10px 18px -8px hsl(var(--chart-2) / 0.6); }
+}
+@keyframes bw-scan {
+  0%, 10% { transform: translateX(-130%); }
+  40%, 100% { transform: translateX(130%); }
+}
+@keyframes bw-dot {
+  0%, 55%, 100% { background: hsl(var(--muted-foreground) / 0.45); transform: scale(1); }
+  18% { background: hsl(var(--chart-2)); transform: scale(1.35); }
+}
+.bw-off .bw-blk { opacity: 0.55; }
+
+/* aprobada / rechazada: cada bloque gira y se pinta */
+.bw-blk.bw-ok,
+.bw-blk.bw-bad {
+  animation: bw-flip 0.5s cubic-bezier(0.3, 0.7, 0.3, 1.3) calc(var(--i) * 0.13s) both;
+}
+.bw-blk.bw-ok { background: hsl(var(--success) / 0.12); border-color: hsl(var(--success)); color: hsl(var(--success)); }
+.bw-blk.bw-bad { background: hsl(var(--destructive) / 0.1); border-color: hsl(var(--destructive)); color: hsl(var(--destructive)); }
+.bw-blk.bw-bad .bw-d { background: hsl(var(--destructive) / 0.7); }
+@keyframes bw-flip {
+  0% { transform: rotateX(0); }
+  50% { transform: rotateX(90deg); }
+  100% { transform: rotateX(0); }
+}
+.bw-merge .bw-blk {
+  /* sin quitar el giro, su `fill: both` le ganaría al transform */
+  animation: none;
+  transform: translateX(var(--dx)) scale(0.35);
+  opacity: 0;
+  transition: transform 0.45s cubic-bezier(0.6, 0, 0.3, 1), opacity 0.3s 0.2s ease-in;
+}
+.bw-done .bw-blocks { visibility: hidden; }
+.bw-shake { animation: bw-shake 0.45s ease-in-out; }
+@keyframes bw-shake {
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+/* sello: una sola palomita */
+.bw-seal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 84px;
+  height: 84px;
+  margin: -42px 0 0 -42px;
+}
+.bw-seal svg { position: relative; z-index: 1; width: 100%; height: 100%; }
+.bw-c { fill: hsl(var(--success)); transform-origin: 50% 50%; animation: bw-pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.4) both; }
+.bw-k {
+  fill: none;
+  stroke: hsl(var(--success-foreground));
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 60;
+  stroke-dashoffset: 60;
+  animation: bw-draw 0.4s 0.35s ease-out forwards;
+}
+.bw-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid hsl(var(--success));
+  animation: bw-burst 0.9s 0.3s ease-out both;
+}
+.bw-ring + .bw-ring { animation-delay: 0.5s; }
+.bw-spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: hsl(var(--chart-2));
+  opacity: 0;
+  animation: bw-spark 0.8s 0.35s ease-out both;
+}
+@keyframes bw-pop { from { transform: scale(0); } }
+@keyframes bw-draw { to { stroke-dashoffset: 0; } }
+@keyframes bw-burst {
+  from { transform: scale(0.9); opacity: 0.8; }
+  to { transform: scale(1.9); opacity: 0; }
+}
+@keyframes bw-spark {
+  0% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--a)) translateY(0); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--a)) translateY(-70px); }
+}
+
+/* Caja ↔ Host */
+.bw-host::before,
+.bw-host::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid hsl(var(--chart-2));
+  opacity: 0;
+}
+.bw-wait .bw-host::before { animation: bw-ping 2.4s ease-out infinite; }
+.bw-wait .bw-host::after { animation: bw-ping 2.4s 0.5s ease-out infinite; }
+@keyframes bw-ping {
+  0% { transform: scale(1); opacity: 0.7; }
+  70%, 100% { transform: scale(1.6); opacity: 0; }
+}
+.bw-bell {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: hsl(var(--warning));
+  color: hsl(var(--warning-foreground));
+  box-shadow: 0 0 0 3px hsl(var(--card));
+  transform-origin: 50% 0;
+  animation: bw-bell 2.4s ease-in-out infinite;
+}
+@keyframes bw-bell {
+  0%, 40%, 100% { transform: rotate(0); }
+  5% { transform: rotate(16deg); }
+  10% { transform: rotate(-14deg); }
+  15% { transform: rotate(10deg); }
+  20% { transform: rotate(-6deg); }
+}
+.bw-track {
+  position: relative;
+  min-width: 0;
+  height: 2px;
+  border-top: 2px dashed hsl(var(--chart-2) / 0.6);
+  transition: border-color 0.4s;
+}
+.bw-track i {
+  position: absolute;
+  top: -6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: hsl(var(--chart-2));
+  box-shadow: 0 0 10px hsl(var(--chart-2));
+  opacity: 0;
+}
+.bw-wait .bw-track i { animation: bw-go 2.4s cubic-bezier(0.5, 0, 0.5, 1) calc(var(--i) * 0.8s) infinite; }
+.bw-wait .bw-back i { animation-name: bw-back; animation-delay: calc(1.2s + var(--i) * 0.8s); }
+@keyframes bw-go {
+  0% { left: 0; opacity: 0; }
+  15%, 85% { opacity: 1; }
+  100% { left: calc(100% - 10px); opacity: 0; }
+}
+@keyframes bw-back {
+  0% { left: calc(100% - 10px); opacity: 0; }
+  15%, 85% { opacity: 1; }
+  100% { left: 0; opacity: 0; }
+}
+.bw-approved .bw-track { border-top-style: solid; border-color: hsl(var(--success)); }
+.bw-off .bw-track { border-color: hsl(var(--destructive) / 0.5); }
+.bw-rejected .bw-track { border-color: hsl(var(--destructive) / 0.6); }
+.bw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--warning) / 0.5);
+  background: hsl(var(--warning) / 0.15);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--foreground));
+}
+.bw-led { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--warning)); }
+.bw-wait .bw-led { animation: bw-blink 1.2s ease-in-out infinite; }
+@keyframes bw-blink { 50% { opacity: 0.25; } }
+.bw-off .bw-chip,
+.bw-rejected .bw-chip { border-color: hsl(var(--destructive) / 0.4); background: hsl(var(--destructive) / 0.1); color: hsl(var(--destructive)); }
+.bw-off .bw-led,
+.bw-rejected .bw-led { background: hsl(var(--destructive)); }
+.bw-approved .bw-chip { border-color: hsl(var(--success) / 0.45); background: hsl(var(--success) / 0.12); color: hsl(var(--success)); }
+.bw-approved .bw-led { background: hsl(var(--success)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bw-scene *,
+  .bw-scene *::before,
+  .bw-scene *::after,
+  .bw-ready {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
 /* ─── Identidad de tarjetas e inputs. Van como fondo de la propia tarjeta, sin
    capas encima: así no cambian el apilado ni cortan los tooltips de las gráficas.
    `.vt-pilot` limita los inputs a Reportes y Caja mientras se prueban. ─── */

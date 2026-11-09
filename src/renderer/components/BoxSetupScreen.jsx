@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, CircleAlert, Monitor, RefreshCw, Store, Unplug, X } from "lucide-react";
+import { Check, CircleAlert, RefreshCw, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import BoxApprovalScene from "./BoxApprovalScene";
 import BoxLinkWizard from "./BoxLinkWizard";
 import { TicketPrinter } from "./TicketPrinter";
 import { Button } from "./ui/button";
@@ -162,30 +163,9 @@ const SetupAside = ({ step }) => {
   );
 };
 
-// Caja → Host: quién espera a quién y en qué estado va el vínculo.
-const LinkDiagram = ({ code, chip, chipClass }) => (
-  <div className="flex items-center rounded-2xl bg-muted p-5">
-    <div className="flex w-32 shrink-0 flex-col items-center gap-2 text-center">
-      <span className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card text-foreground shadow-md">
-        <Monitor size={30} />
-      </span>
-      <span className="text-sm font-bold text-foreground">Esta caja</span>
-      <span className="text-xs text-muted-foreground">{code ? `Serie ${code}` : "Sin serie aún"}</span>
-    </div>
-    <div className="h-0.5 flex-1 border-t-2 border-dashed border-chart-2/70" />
-    <span className={cn("shrink-0 rounded-full border px-3 py-1 text-xs font-bold text-foreground", chipClass)}>
-      {chip}
-    </span>
-    <div className="h-0.5 flex-1 border-t-2 border-dashed border-chart-2/70" />
-    <div className="flex w-32 shrink-0 flex-col items-center gap-2 text-center">
-      <span className={cn(heroGradient, "flex h-16 w-16 items-center justify-center rounded-2xl text-primary-foreground shadow-lg")}>
-        <Store size={30} />
-      </span>
-      <span className="text-sm font-bold text-foreground">Host</span>
-      <span className="text-xs text-muted-foreground">PC principal</span>
-    </div>
-  </div>
-);
+// Lo que dura en pantalla "Verificación exitosa" antes de pasar a la descarga:
+// bloques en verde (1.3 s) + juntarse (0.45 s) + palomita.
+const APPROVED_SCENE_MS = 3400;
 
 const SetupAlert = ({ title, children }) => (
   <div role="alert" className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/[0.08] p-3.5">
@@ -220,9 +200,19 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
   const peakRef = useRef(0);
   const ticketRef = useRef(null);
 
+  // Lo que el asistente supo al emparejar (código, nombre). Sólo en memoria:
+  // tras un reinicio no está y los bloques se quedan sin caracteres.
+  const [pairInfo, setPairInfo] = useState(null);
+  // "Verificación exitosa" en pantalla antes de la descarga.
+  const [celebrating, setCelebrating] = useState(false);
+  // Sólo se celebra si esta pantalla vio la caja pendiente: al reabrir una
+  // caja ya aprobada se va directo a la descarga.
+  const sawPendingRef = useRef(false);
+  const celebratedRef = useRef(false);
+
   // Si una respuesta vieja llega tarde, la caja no vuelve al asistente.
   const pairedRef = useRef(!!settings?.host_url);
-  if (settings?.host_url) pairedRef.current = true;
+  if (settings?.host_url || pairInfo) pairedRef.current = true;
   const paired = pairedRef.current;
   const canSell = !!settings?.canSell;
 
@@ -335,6 +325,33 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
     sync();
   }, [paired, canSell, link, sync]);
 
+  useEffect(() => {
+    if (!link) return;
+    if (!link.approved) {
+      sawPendingRef.current = true;
+      return;
+    }
+    if (sawPendingRef.current && !celebratedRef.current) {
+      celebratedRef.current = true;
+      setCelebrating(true);
+    }
+  }, [link]);
+
+  useEffect(() => {
+    if (!celebrating) return undefined;
+    const timer = window.setTimeout(() => setCelebrating(false), APPROVED_SCENE_MS);
+    return () => window.clearTimeout(timer);
+  }, [celebrating]);
+
+  // El asistente terminó: la espera empieza ya, sin aguardar al sondeo de App.
+  const handlePaired = useCallback((info) => {
+    setPairInfo(info);
+    setRelink(false);
+    celebratedRef.current = false;
+    sawPendingRef.current = true;
+    setLink({ approved: false, revoked: false, deviceCode: info?.deviceCode || null });
+  }, []);
+
   // Con la descarga terminada se quedan los sellos un momento antes de seguir.
   useEffect(() => {
     if (!canSell) return undefined;
@@ -371,7 +388,8 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
     setConfirmCancel(false);
   };
 
-  const waiting = paired && !canSell && !link?.approved;
+  // Mientras se celebra la aprobación la descarga ya corre por detrás.
+  const waiting = paired && !canSell && (!link?.approved || celebrating);
   const linking = !paired || relink;
   const blocked = waiting && (link?.revoked || link?.notPaired);
   const step = linking ? wizardStep : waiting ? 2 : 3;
@@ -415,7 +433,7 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
         >
           {linking ? (
             <>
-              <BoxLinkWizard onStepChange={setWizardStep} />
+              <BoxLinkWizard onStepChange={setWizardStep} onPaired={handlePaired} />
               {relink && (
                 <Button type="button" variant="ghost" onClick={() => setRelink(false)}>
                   Volver
@@ -424,51 +442,18 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
             </>
           ) : waiting ? (
             <>
-              <header className="flex flex-col gap-1.5">
-                <h2 className="text-2xl font-bold text-foreground">
-                  {link?.revoked
-                    ? "El Host revocó esta caja"
-                    : link?.notPaired
-                      ? "El Host no reconoce esta caja"
-                      : "Esperando aprobación"}
-                </h2>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {blocked
-                    ? "Vuelve a vincularla con el código de activación; después el administrador la aprueba."
-                    : "El Host ya recibió el aviso. La descarga empieza sola al aprobarla."}
-                </p>
-              </header>
-
-              <LinkDiagram
-                code={link?.deviceCode}
-                chip={blocked ? "Sin vínculo" : link?.error ? "Sin conexión" : "Pendiente"}
-                chipClass={
-                  blocked || link?.error
-                    ? "border-destructive/40 bg-destructive/10"
-                    : "border-warning/50 bg-warning/15"
+              <BoxApprovalScene
+                phase={
+                  link?.approved ? "approved" : blocked ? "rejected" : link?.error ? "off" : "wait"
                 }
+                code={pairInfo?.code}
+                deviceName={pairInfo?.deviceName}
+                deviceCode={link?.deviceCode || pairInfo?.deviceCode}
+                revoked={!!link?.revoked}
+                errorText={link?.error}
+                onRelink={() => setRelink(true)}
               />
-
-              {link?.error && !blocked && (
-                <SetupAlert title="No se pudo consultar el Host">{link.error}</SetupAlert>
-              )}
               {error && <SetupAlert title="No se pudo descargar">{error}</SetupAlert>}
-
-              {blocked ? (
-                <Button type="button" size="lg" onClick={() => setRelink(true)}>
-                  <Unplug size={18} />
-                  Volver a vincular con el código
-                </Button>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <p className="text-sm font-bold text-foreground">En el Host:</p>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    Toca <strong className="text-foreground">Revisar</strong> en el aviso, o entra a
-                    Configuración → Dispositivos y presiona{" "}
-                    <strong className="text-foreground">Aprobar</strong>.
-                  </p>
-                </div>
-              )}
             </>
           ) : (
             <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_268px]">

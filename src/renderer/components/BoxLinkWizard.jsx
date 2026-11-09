@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Monitor, RefreshCw, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -15,16 +15,6 @@ import { Spinner } from "./ui/spinner";
    y esta pieza es sólo presentación. BoxSetupScreen pone la tarjeta y
    el panel de marca; `onStepChange` mantiene ese panel al día.
    ──────────────────────────────────────────────────────────── */
-
-// Animación mínima del emparejado: aunque el Host conteste enseguida, la
-// pantalla avanza etapa por etapa para que se vea el proceso (no un salto).
-const PAIR_STAGES = [
-  "Enviando el código al Host…",
-  "Registrando esta caja…",
-  "Confirmando el vínculo…",
-];
-const PAIR_MIN_MS = 2100;
-const PAIR_STAGE_MS = 700;
 
 // Mensajes de los códigos que devuelve client-link / api-server.
 const ERRORS = {
@@ -58,12 +48,26 @@ const message = (res) => {
 const CODE_LENGTH = 16;
 const codeChars = (value) => String(value || "").replace(/[^A-Za-z0-9]/g, "").length;
 
+// Máscara del código: se escribe seguido y el guion aparece cada 4 caracteres,
+// igual que lo muestra el Host (activation.js · XXXX-XXXX-XXXX-XXXX).
+const cleanCode = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, CODE_LENGTH);
+const formatCode = (chars) => (chars.match(/.{1,4}/g) || []).join("-");
+// Posición del cursor en el texto con guiones tras `n` caracteres reales.
+const caretAfter = (formatted, n) => {
+  if (!n) return 0;
+  let k = 0;
+  for (let i = 0; i < formatted.length; i++) {
+    if (formatted[i] !== "-" && ++k === n) return i + 1;
+  }
+  return formatted.length;
+};
+
 const hostIp = (url) => String(url || "").replace(/^https?:\/\//, "");
 
 const heroGradient =
   "bg-gradient-to-br from-[hsl(var(--hero-gradient-from))] to-[hsl(var(--hero-gradient-to))]";
 
-const BoxLinkWizard = ({ api, className, onStepChange }) => {
+const BoxLinkWizard = ({ api, className, onStepChange, onPaired }) => {
   const invoke = api?.invoke || window.api?.invoke;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -76,7 +80,45 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
   // Sin nombre el Host la registraría como "Dispositivo móvil".
   const [deviceName, setDeviceName] = useState("Caja 2");
   const [status, setStatus] = useState(null);
-  const [pairStage, setPairStage] = useState(-1);
+  const codeRef = useRef(null);
+  // Tras formatear, el cursor vuelve a donde iba (React lo mandaría al final).
+  const caretRef = useRef(null);
+  const codeFull = codeChars(code) === CODE_LENGTH;
+
+  useLayoutEffect(() => {
+    const el = codeRef.current;
+    if (el && caretRef.current != null && document.activeElement === el) {
+      el.setSelectionRange(caretRef.current, caretRef.current);
+    }
+    caretRef.current = null;
+  }, [code]);
+
+  const applyCode = (raw, caretRaw) => {
+    const before = cleanCode(raw.slice(0, caretRaw)).length;
+    const chars = cleanCode(raw);
+    const formatted = formatCode(chars);
+    let pos = caretAfter(formatted, before);
+    // Al final del texto el cursor queda después del guion recién puesto.
+    if (formatted[pos] === "-" && before === chars.length) pos++;
+    caretRef.current = pos;
+    setCode(formatted);
+  };
+
+  const onCodeKeyDown = (e) => {
+    const el = e.currentTarget;
+    const s = el.selectionStart;
+    const v = el.value;
+    if (s === el.selectionEnd && e.key === "Backspace" && s > 0 && v[s - 1] === "-") {
+      // Borrar sobre un guion borra el carácter de antes.
+      e.preventDefault();
+      applyCode(v.slice(0, s - 2) + v.slice(s), s - 2);
+    } else if (s === el.selectionEnd && e.key === "Delete" && v[s] === "-") {
+      e.preventDefault();
+      applyCode(v.slice(0, s + 1) + v.slice(s + 2), s + 1);
+    } else if (e.key === "Enter" && codeFull && deviceName.trim() && !busy) {
+      pair();
+    }
+  };
 
   useEffect(() => {
     onStepChange?.(step);
@@ -118,26 +160,16 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
     discover();
   }, []);
 
+  // La espera de aprobación con su animación vive en BoxSetupScreen: con
+  // `onPaired` le pasa la estafeta en cuanto el Host acepta el código, sin
+  // esperar al sondeo de `box-get-settings`.
   const pair = () =>
     run(async () => {
-      const t0 = Date.now();
-      setPairStage(0);
-      const timer = window.setInterval(
-        () => setPairStage((s) => Math.min(s + 1, PAIR_STAGES.length - 1)),
-        PAIR_STAGE_MS,
-      );
-      try {
-        const res = await invoke("box-pair", { hostUrl, code, deviceName });
-        if (!res?.success) return setError(message(res));
-        setStatus(res);
-        // Deja ver la animación aunque la respuesta haya llegado ya.
-        const left = Math.max(0, PAIR_MIN_MS - (Date.now() - t0));
-        await new Promise((r) => window.setTimeout(r, left));
-        setStep(2);
-      } finally {
-        window.clearInterval(timer);
-        setPairStage(-1);
-      }
+      const res = await invoke("box-pair", { hostUrl, code, deviceName });
+      if (!res?.success) return setError(message(res));
+      setStatus(res);
+      if (onPaired) return onPaired({ code, deviceName: deviceName.trim(), deviceCode: res.device_code || null });
+      setStep(2);
     });
 
   const poll = () =>
@@ -265,28 +297,7 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
         </section>
       )}
 
-      {step === 1 && pairStage >= 0 && (
-        <section className="flex flex-col gap-3 rounded-xl bg-muted p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Spinner size={16} className="text-brand" />
-            Emparejando con el Host…
-          </div>
-          <p className="text-sm text-muted-foreground">{PAIR_STAGES[pairStage]}</p>
-          <div
-            className="h-2 w-full overflow-hidden rounded-full bg-border"
-            role="progressbar"
-            aria-label="Avance del emparejamiento"
-            aria-valuenow={Math.round(((pairStage + 1) / PAIR_STAGES.length) * 100)}
-          >
-            <div
-              className="h-full rounded-full bg-brand transition-[width] duration-700 ease-linear"
-              style={{ width: `${((pairStage + 1) / PAIR_STAGES.length) * 100}%` }}
-            />
-          </div>
-        </section>
-      )}
-
-      {step === 1 && pairStage < 0 && (
+      {step === 1 && (
         <section className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="box-device-name">Nombre de la caja</Label>
@@ -302,26 +313,36 @@ const BoxLinkWizard = ({ api, className, onStepChange }) => {
             <Label htmlFor="box-pair-code">Código de activación</Label>
             <Input
               id="box-pair-code"
+              ref={codeRef}
               autoFocus
+              autoComplete="off"
+              spellCheck={false}
               aria-invalid={!!error}
-              className="h-[52px] text-center text-xl font-bold tracking-widest"
+              className="h-14 text-center font-mono text-xl font-bold tracking-[0.14em]"
               value={code}
               placeholder="XXXX-XXXX-XXXX-XXXX"
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && code && deviceName.trim() && !busy) pair();
-              }}
+              onChange={(e) => applyCode(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+              onKeyDown={onCodeKeyDown}
             />
-            <p className="text-right text-xs tabular-nums text-muted-foreground">
-              {codeChars(code)} de {CODE_LENGTH}
+            <p className="flex justify-between gap-2 text-xs tabular-nums text-muted-foreground">
+              <span>Escríbelo seguido, los guiones se ponen solos</span>
+              <span className={cn(codeFull && "font-bold text-success")}>
+                {codeChars(code)} de {CODE_LENGTH}
+              </span>
             </p>
           </div>
           <div className="flex gap-2.5">
-            <Button type="button" variant="outline" size="lg" onClick={() => setStep(0)}>
+            <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => setStep(0)}>
               Atrás
             </Button>
-            <Button type="button" size="lg" className="flex-1" disabled={busy || !code || !deviceName.trim()} onClick={pair}>
-              {busy ? "Emparejando…" : "Emparejar"}
+            <Button
+              type="button"
+              size="lg"
+              className={cn("flex-1", codeFull && "bw-ready")}
+              disabled={busy || !codeFull || !deviceName.trim()}
+              onClick={pair}
+            >
+              {busy ? "Enviando código…" : "Emparejar"}
             </Button>
           </div>
         </section>
