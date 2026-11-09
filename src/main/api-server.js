@@ -123,12 +123,49 @@ const makeRequireScope = (db) => (scope) => (req, res, next) => {
   return next();
 };
 
+// Medición · cuánto estuvo trabado el proceso del Host. Mientras está ocupado
+// no atiende peticiones, y la caja lo ve como red lenta: con este dato el
+// registro de la caja separa una cosa de la otra.
+const { monitorEventLoopDelay } = require("perf_hooks");
+const LAG_WINDOW_MS = 5000;
+const LAG_REPORT_MS = 250;
+let lagHistogram = null;
+let lagTimer = null;
+let lastWindowLagMs = 0;
+const currentLagMs = () =>
+  Math.round(Math.max(lastWindowLagMs, lagHistogram ? lagHistogram.max / 1e6 : 0));
+const startLagMonitor = (onHostLag) => {
+  if (lagTimer) return;
+  lagHistogram = monitorEventLoopDelay({ resolution: 20 });
+  lagHistogram.enable();
+  lagTimer = setInterval(() => {
+    const maxMs = Math.round(lagHistogram.max / 1e6);
+    const p99Ms = Math.round(lagHistogram.percentile(99) / 1e6);
+    lastWindowLagMs = maxMs;
+    lagHistogram.reset();
+    if (maxMs >= LAG_REPORT_MS && typeof onHostLag === "function") {
+      try {
+        onHostLag({ at: new Date().toISOString(), maxMs, p99Ms });
+      } catch (err) {}
+    }
+  }, LAG_WINDOW_MS);
+  lagTimer.unref?.();
+};
+const stopLagMonitor = () => {
+  if (lagTimer) clearInterval(lagTimer);
+  lagTimer = null;
+  if (lagHistogram) lagHistogram.disable();
+  lagHistogram = null;
+  lastWindowLagMs = 0;
+};
+
 const startServer = async (
   db,
   port = 3456,
-  { appVersion, onDataChanged, getLatestBackup, onPairEvent } = {},
+  { appVersion, onDataChanged, getLatestBackup, onPairEvent, onHostLag } = {},
 ) => {
   if (server) return { success: true, port };
+  startLagMonitor(onHostLag);
 
   const app = express();
   let replicaSeqStmtCache = null;
@@ -144,6 +181,8 @@ const startServer = async (
     res.json = (body) => {
       if (!res.headersSent) {
         res.setHeader("x-host-ms", String(Math.round(performance.now() - startedAt)));
+        // Lo más que estuvo trabado el Host en los últimos segundos.
+        res.setHeader("x-host-lag", String(currentLagMs()));
         // Paso 1 · hasta qué evento del change_log va el Host al contestar.
         // Tras una escritura la caja espera a tenerlo aplicado antes de leer
         // local: así nunca ve su propia acción "un instante antes".
@@ -1546,6 +1585,7 @@ const startServer = async (
 };
 
 const stopServer = () => {
+  stopLagMonitor();
   // 3e · el túnel va primero: cerrar el socket sin avisar dejaría a las cajas
   // colgadas esperando frames.
   if (changeStream) {

@@ -528,6 +528,10 @@ const postJson = async (
       totalMs,
       hostMs: known ? hostMs : null,
       netMs: known ? Math.max(0, totalMs - hostMs) : null,
+      // Si es alto, el Host estaba trabado: el tiempo de "red" fue espera allá.
+      hostLagMs: Number.isFinite(Number(res.headers.get("x-host-lag"))) && res.headers.get("x-host-lag") !== null
+        ? Number(res.headers.get("x-host-lag"))
+        : null,
       status: res.status,
     });
   }

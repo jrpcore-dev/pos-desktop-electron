@@ -683,6 +683,16 @@ app.on("ready", async () => {
         // Bloque 6 · la caja designada baja la copia más reciente.
         getLatestBackup: getLatestBackupPayload,
         onPairEvent: handlePairEvent,
+        // Medición · ratos en que el Host estuvo trabado (logs/host-lag.log).
+        onHostLag: (entry) => {
+          try {
+            const lagPath = path.join(logDir, "host-lag.log");
+            if (fs.existsSync(lagPath) && fs.statSync(lagPath).size > 2 * 1024 * 1024) {
+              fs.renameSync(lagPath, path.join(logDir, "host-lag.old.log"));
+            }
+            fs.appendFileSync(lagPath, JSON.stringify(entry) + "\n");
+          } catch (err) {}
+        },
       });
       if (result.success) {
         await discovery.startDiscovery(3456);
