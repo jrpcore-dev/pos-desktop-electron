@@ -37,13 +37,52 @@ const OPEN_STATUSES = [STATUS.PENDING, STATUS.SYNCING, STATUS.NEEDS_AUTH];
 
 const nowIso = () => new Date().toISOString();
 
-// Efecto local: por ahora sólo deltas de stock {productId, delta}.
+// Efectos locales:
+//   stock: deltas {productId, delta} (nunca chocan entre cajas)
+//   rows:  filas que la caja crea o edita {table, before, after}; deshacer es
+//          volver a `before` (o borrar si era nueva). Se ubican por uid si lo
+//          tienen (creadas aquí, id provisional) o por id.
+const ROW_COLUMNS = Object.freeze({
+  customers: ["id", "uid", "name", "phone", "tier_id", "qr_code", "created_at"],
+});
+const rowKey = (row) => (row.uid ? ["uid", row.uid] : ["id", row.id]);
+const writeRow = (db, table, row) => {
+  const cols = ROW_COLUMNS[table];
+  if (!cols || !row) return;
+  const [keyCol, keyVal] = rowKey(row);
+  const exists = db.prepare(`SELECT 1 FROM ${table} WHERE ${keyCol} = ?`).get(keyVal);
+  const present = cols.filter((c) => row[c] !== undefined);
+  if (exists) {
+    // El id nunca se pisa: si el Host ya dio el definitivo, se queda.
+    const sets = present.filter((c) => c !== "id" && c !== keyCol);
+    if (!sets.length) return;
+    db.prepare(`UPDATE ${table} SET ${sets.map((c) => `${c} = ?`).join(", ")} WHERE ${keyCol} = ?`).run(
+      ...sets.map((c) => row[c]),
+      keyVal,
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO ${table} (${present.join(", ")}) VALUES (${present.map(() => "?").join(", ")})`,
+    ).run(...present.map((c) => row[c]));
+  }
+};
+const removeRow = (db, table, row) => {
+  if (!ROW_COLUMNS[table] || !row) return;
+  const [keyCol, keyVal] = rowKey(row);
+  db.prepare(`DELETE FROM ${table} WHERE ${keyCol} = ?`).run(keyVal);
+};
 const applyEffect = (db, effect, sign = 1) => {
   const list = (effect && Array.isArray(effect.stock) && effect.stock) || [];
   const stmt = db.prepare("UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?");
   for (const e of list) {
     const delta = Number(e.delta) || 0;
     if (delta) stmt.run(sign * delta, Number(e.productId));
+  }
+  const rows = (effect && Array.isArray(effect.rows) && effect.rows) || [];
+  for (const r of sign > 0 ? rows : [...rows].reverse()) {
+    if (sign > 0) writeRow(db, r.table, r.after);
+    else if (r.before) writeRow(db, r.table, r.before);
+    else removeRow(db, r.table, r.after);
   }
 };
 
@@ -165,6 +204,23 @@ const reapplyPending = (db, productIds = null) => {
   return touched;
 };
 
+// Igual que el stock: la réplica trajo filas del Host que todavía no incluyen
+// lo que la caja creó o editó; se vuelve a aplicar encima.
+const reapplyRows = (db, table) => {
+  const rows = list(db, [STATUS.PENDING, STATUS.NEEDS_AUTH]);
+  let touched = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      for (const e of (r.effect && r.effect.rows) || []) {
+        if (e.table !== table) continue;
+        writeRow(db, table, e.after);
+        touched += 1;
+      }
+    }
+  })();
+  return touched;
+};
+
 // Fallos de red: se reintenta más tarde sin marcar nada.
 // Lo mismo si el Host aún no aprueba o ya no reconoce esta caja: la operación
 // es válida, sólo falta el vínculo. No es un rechazo: deshacerla la perdería.
@@ -175,6 +231,7 @@ const TRANSIENT = new Set([
   "HOST_BUSY",
   "NOT_APPROVED",
   "NOT_PAIRED",
+  "CUSTOMER_PENDING",
 ]);
 
 // Sube en orden. `send(row)` devuelve lo que contestó el Host (el valor del
@@ -234,6 +291,7 @@ const sync = (db, send) => {
 };
 
 module.exports = {
+  reapplyRows,
   STATUS,
   OPEN_STATUSES,
   enqueue,

@@ -1287,7 +1287,22 @@ const startServer = async (
     }
 
 
-    const rawCid = body.customer_id;
+    let rawCid = body.customer_id;
+    // Cliente creado en una caja: llega con su uid y aquí se traduce al id del
+    // Host. Si su alta todavía no llega, la caja reintenta la venta después.
+    if (body.customer_uid) {
+      const byUid = db
+        .prepare("SELECT id FROM customers WHERE uid = ?")
+        .get(String(body.customer_uid));
+      if (!byUid) {
+        return res.status(409).json({
+          success: false,
+          code: "CUSTOMER_PENDING",
+          error: "El cliente de esta venta todavía no llega al Host",
+        });
+      }
+      rawCid = byUid.id;
+    }
     let cidHash;
     if (rawCid === null || rawCid === undefined) cidHash = undefined;
     else cidHash = rawCid;

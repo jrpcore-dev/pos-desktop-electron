@@ -71,6 +71,7 @@ const CHECKS = [
   { file: "check-local-first-2.cjs" },
   { file: "check-pending-sales-view.cjs" },
   { file: "check-host-relocate.cjs" },
+  { file: "check-local-customers.cjs" },
   { file: "check-pair-notify.cjs" },
   { file: "check-sale-fast.cjs" },
 ];

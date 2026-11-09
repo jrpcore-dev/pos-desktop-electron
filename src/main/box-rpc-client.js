@@ -12,6 +12,7 @@ const activation = require("./activation");
 const clientLink = require("./client-link");
 const dbSchema = require("./db-schema");
 const offlineQueue = require("./offline-queue");
+const customersCore = require("./customers-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
@@ -91,6 +92,13 @@ const LOCAL_READ_CHANNELS = new Set([
   "get-suppliers",
   "get-top-products",
   "get-daily-sales-week",
+  // Clientes: la caja tiene su copia y ve al momento lo que crea o edita.
+  "search-customers",
+  "get-recent-customers",
+  "get-customer",
+  "get-customer-by-qr",
+  "get-customer-prices",
+  "get-customer-pricing",
 ]);
 const localReady = (db) => {
   const st = replicaEngine.state(db);
@@ -174,6 +182,35 @@ const QUEUED_OPS = {
       result: {},
     };
   },
+  // Clientes · mismas reglas que el Host (customers-core). El alta nace con un
+  // uid; el Host lo guarda y así reconoce al cliente en ediciones y ventas.
+  "add-customer": (db, [data = {}]) => {
+    const n = customersCore.normalize(data);
+    if (!n.success) return n;
+    const uid = crypto.randomUUID();
+    const after = customersCore.provisionalRow(db, n, uid);
+    return {
+      args: [{ ...data, name: n.name, phone: n.phone, tier_id: n.tier_id, uid }],
+      effect: { rows: [{ table: "customers", before: null, after }] },
+      tables: ["customers"],
+      label: `Cliente nuevo · ${n.name}`,
+      result: { customer: after },
+    };
+  },
+  "update-customer": (db, [id, data = {}]) => {
+    const n = customersCore.normalize(data);
+    if (!n.success) return n;
+    const before = db.prepare("SELECT * FROM customers WHERE id = ?").get(Number(id));
+    if (!before) return fail("CUSTOMER_NOT_FOUND", "Cliente no encontrado");
+    const pick = (row) => ({ id: row.id, uid: row.uid || undefined, name: row.name, phone: row.phone, tier_id: row.tier_id });
+    return {
+      args: [before.id, { ...data, name: n.name, phone: n.phone, tier_id: n.tier_id, uid: before.uid || undefined }],
+      effect: { rows: [{ table: "customers", before: pick(before), after: { ...pick(before), name: n.name, phone: n.phone, tier_id: n.tier_id } }] },
+      tables: ["customers"],
+      label: `Cliente editado · ${n.name}`,
+      result: {},
+    };
+  },
 };
 
 // Aviso a main para que las pantallas relean (stock y movimientos locales).
@@ -181,10 +218,10 @@ let opsChangedHook = null;
 const setOpsChangedHook = (fn) => {
   opsChangedHook = typeof fn === "function" ? fn : null;
 };
-const opsChanged = () => {
+const opsChanged = (tables = ["products", "stock_movements"]) => {
   if (opsChangedHook) {
     try {
-      opsChangedHook(["products", "stock_movements", "pending_ops"]);
+      opsChangedHook([...tables, "pending_ops"]);
     } catch (err) {}
   }
 };
@@ -327,22 +364,27 @@ const enqueueOp = (db, channel, args) => {
   if (prepared && prepared.success === false) return prepared;
   opQueue.enqueue(db, {
     channel,
-    args,
+    args: prepared.args || args,
     effect: prepared.effect,
     label: prepared.label,
     idempotencyKey: crypto.randomUUID(),
   });
-  opsChanged();
+  opsChanged(prepared.tables);
   // En segundo plano: la pantalla no espera a la red.
   syncOps(db).catch(() => {});
   return { success: true, queued: true, ...prepared.result };
 };
 
 const syncOps = async (db) => {
-  const out = await opQueue.sync(db, (row) =>
-    rpcCall(db, row.channel, row.args, null, { idempotencyKey: row.idempotencyKey }),
-  );
-  if (out.synced || out.conflicts) opsChanged();
+  const send = (row) => rpcCall(db, row.channel, row.args, null, { idempotencyKey: row.idempotencyKey });
+  let out = await opQueue.sync(db, send);
+  // Si se unió a una subida que ya iba en curso, lo encolado después no estaba
+  // en esa vuelta: se sube ahora, en orden, mientras el Host siga contestando.
+  for (let i = 0; i < 5 && out.success && opQueue.list(db, [opQueue.STATUS.PENDING]).length; i++) {
+    const next = await opQueue.sync(db, send);
+    out = { ...next, synced: out.synced + next.synced, conflicts: out.conflicts + next.conflicts };
+  }
+  if (out.synced || out.conflicts) opsChanged(["products", "stock_movements", "customers"]);
   return out;
 };
 
@@ -617,7 +659,9 @@ const saleBody = (payload, folio, offline) => {
     discountTotal: payload.discountTotal,
     folio,
   };
-  if (payload.customerId !== null && payload.customerId !== undefined) {
+  if (payload.customerUid) {
+    body.customer_uid = payload.customerUid;
+  } else if (payload.customerId !== null && payload.customerId !== undefined) {
     body.customer_id = payload.customerId;
   }
   if (payload.registerId != null) body.register_id = payload.registerId;
@@ -638,6 +682,10 @@ const saleBody = (payload, folio, offline) => {
 // POST /api/sales · la venta viaja con Idempotency-Key; el cajero que la firma
 // lo decide el token de sesión, no el payload (3a.i).
 const recordSale = async (db, payload = {}) => {
+  if (Number(payload.customerId) < 0) {
+    const provisional = db.prepare("SELECT uid FROM customers WHERE id = ?").get(Number(payload.customerId));
+    if (provisional && provisional.uid) payload = { ...payload, customerUid: provisional.uid };
+  }
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
 
@@ -713,6 +761,13 @@ const recordSale = async (db, payload = {}) => {
     if (cres.data.success) clearAttempt(db);
     return cres.data;
   }
+  // Cliente creado en la caja que el Host aún no conoce: la venta va a la cola
+  // con su uid y sube después del alta (syncPending sube antes las operaciones).
+  if (payload.customerUid) {
+    const queued = queueSale();
+    syncPending(db).catch(() => {});
+    return queued;
+  }
   if (hostKnownDown(db)) return queueSale();
   let res;
   try {
@@ -768,6 +823,9 @@ const recordSale = async (db, payload = {}) => {
 // Sube la cola en orden. El Host deduplica por la clave guardada en la fila.
 let syncInFlight = null;
 const syncPending = async (db) => {
+  if (syncInFlight) return syncInFlight;
+  // Primero las operaciones: una venta puede usar un cliente creado aquí.
+  if (opQueue.countOpen(db) > 0) await syncOps(db).catch(() => {});
   if (syncInFlight) return syncInFlight;
   const creds = credentials(db);
   if (!creds.hostUrl) return { success: false, code: "NO_HOST_LINKED", pending: offlineQueue.countBlocking(db) };
@@ -990,6 +1048,11 @@ const forward = (db, channel, args = []) => {
       return r;
     });
   }
+  if (channel === "touch-customer" && localReady(db)) {
+    const local = runLocal(db, channel, args);
+    if (Number(args[0]) > 0) rpcCall(db, channel, args).catch(() => {});
+    return Promise.resolve(local || { success: true });
+  }
   if (QUEUED_OPS[channel] && localReady(db)) {
     return Promise.resolve(enqueueOp(db, channel, args));
   }
@@ -1133,6 +1196,7 @@ module.exports = {
     return r;
   },
   reapplyPendingOps: (db, productIds) => opQueue.reapplyPending(db, productIds),
+  reapplyPendingRows: (db, table) => opQueue.reapplyRows(db, table),
   timingSummary,
   forward,
   rpcCall,

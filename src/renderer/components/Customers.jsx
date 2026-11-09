@@ -196,9 +196,12 @@ const CustomerForm = ({ value, onChange }) => (
 const QrDialog = ({ customer, open, onClose }) => {
   const notify = useToast();
   const [dataUrl, setDataUrl] = useState("");
+  // Creado en esta caja y aún sin confirmar por el Host: su código cambiará, así
+  // que no se muestra ni se imprime todavía.
+  const provisional = Number(customer?.id) < 0;
 
   useEffect(() => {
-    if (!open || !customer?.qr_code) return;
+    if (!open || !customer?.qr_code || provisional) return;
     QRCode.toDataURL(customer.qr_code, { width: 320, margin: 2 })
       .then(setDataUrl)
       .catch(() => setDataUrl(""));
@@ -246,6 +249,11 @@ const QrDialog = ({ customer, open, onClose }) => {
             Código QR de {customer?.name}
           </DialogTitle>
         </DialogHeader>
+        {provisional ? (
+          <p className="rounded-lg border border-border bg-muted/50 p-4 text-center text-sm text-muted-foreground">
+            El código QR estará listo cuando el Host confirme a este cliente. Ábrelo de nuevo en unos segundos.
+          </p>
+        ) : (
         <div className="flex flex-col items-center gap-3 py-2">
           {dataUrl ? (
             <img
@@ -260,14 +268,16 @@ const QrDialog = ({ customer, open, onClose }) => {
             {customer?.qr_code}
           </span>
         </div>
+        )}
         <div className="flex gap-2">
-          <Button type="button" variant="outline" className="h-12 flex-1" onClick={copyCode}>
+          <Button type="button" variant="outline" className="h-12 flex-1" disabled={provisional} onClick={copyCode}>
             <Copy size={16} />
             Copiar
           </Button>
           <Button
             type="button"
             className="h-12 flex-1 bg-success text-white hover:bg-success/90"
+            disabled={provisional}
             onClick={printQr}
           >
             <Printer size={16} />

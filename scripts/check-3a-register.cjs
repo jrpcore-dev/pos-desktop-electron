@@ -176,16 +176,13 @@ const cashRegisterRow = (db, id) =>
   // Paso 2 local-first (`pending_ops` y sus índices) ya está en HEAD.
   // Índice parcial de productos activos ya está en HEAD.
   // Gastos sin caja (register_id opcional desde la creación) ya está en HEAD.
-  // Entradas de dinero y tipo de salida: `cash_register.cash_in`,
-  // `cash_register_expenses.kind` y `.category` (ALTER ADD COLUMN reescribe el
-  // CREATE TABLE de ambas: alta Y baja).
-  const DDL_AGREGADO = [
-    /^CREATE TABLE cash_register \(.*cash_in REAL DEFAULT 0/s,
-    /^CREATE TABLE cash_register_expenses \(.*kind TEXT.*category TEXT/s,
-  ];
+  // Entradas de dinero y tipo de salida (cash_in, kind, category) ya está en HEAD.
+  // Local-first · clientes: `customers.uid` y su índice único (ALTER ADD COLUMN
+  // reescribe el CREATE TABLE: alta Y baja).
+  const DDL_AGREGADO = [/^CREATE TABLE customers \(.*uid TEXT/s, /idx_customers_uid/];
   const DDL_AGREGADO_TOTAL = 2;
-  const DDL_BORRADO = [/^CREATE TABLE cash_register \(/, /^CREATE TABLE cash_register_expenses \(/];
-  const DDL_BORRADO_TOTAL = 2;
+  const DDL_BORRADO = [/^CREATE TABLE customers \(/];
+  const DDL_BORRADO_TOTAL = 1;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -340,6 +337,8 @@ const cashRegisterRow = (db, id) =>
       ...(colDe(before.cols.cash_register_expenses, "category")
         ? []
         : ["+ cash_register_expenses.category|TEXT|nn=0|dflt=null"]),
+      // Local-first · clientes creados en una caja.
+      ...(colDe(before.cols.customers, "uid") ? [] : ["+ customers.uid|TEXT|nn=0|dflt=null"]),
     ];
     // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
     const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)
@@ -416,6 +415,8 @@ const cashRegisterRow = (db, id) =>
       "pending_ops.idx_pending_ops_status",
       // Rendimiento: productos activos, sin recorrer el catálogo de referencia.
       "products.idx_products_active_name",
+      // Local-first · clientes creados en una caja.
+      "customers.idx_customers_uid",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

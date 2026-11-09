@@ -530,6 +530,10 @@ const runMigrations = (db) => {
   // Los movimientos y el saldo viven sólo en el Host.
   ensureColumn("customers", "credit_enabled", "INTEGER DEFAULT 0");
   ensureColumn("customers", "credit_limit", "REAL DEFAULT 0");
+  // Local-first · un cliente creado en una caja lleva un uid global hasta que el
+  // Host le da su id. Los creados en el Host no lo necesitan (queda NULL).
+  ensureColumn("customers", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_uid ON customers(uid)");
   ensureColumn("sales", "credit_amount", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid_method", "TEXT");

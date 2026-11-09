@@ -328,6 +328,7 @@ const clientLink = require("./client-link");
 const protocol = require("./protocol");
 const discovery = require("./discovery");
 const hostWatcher = require("./host-watcher");
+const customersCore = require("./customers-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -1589,24 +1590,7 @@ ipcMain.handle("get-customer", async (event, id) => {
 
 ipcMain.handle("add-customer", async (event, data) => {
   try {
-    const name = String(data?.name || "").trim();
-    if (!name) return { success: false, error: "Nombre requerido" };
-    const phone = String(data?.phone || "").trim();
-    const tierId = data?.tier_id || null;
-    const info = db
-      .prepare(
-        "INSERT INTO customers (name, phone, tier_id) VALUES (?, ?, ?)",
-      )
-      .run(name, phone, tierId);
-    const qr = `CLI-${info.lastInsertRowid}`;
-    db.prepare("UPDATE customers SET qr_code = ? WHERE id = ?").run(
-      qr,
-      info.lastInsertRowid,
-    );
-    const customer = db
-      .prepare("SELECT * FROM customers WHERE id = ?")
-      .get(info.lastInsertRowid);
-    return { success: true, customer };
+    return customersCore.addCustomer(db, data);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1614,15 +1598,7 @@ ipcMain.handle("add-customer", async (event, data) => {
 
 ipcMain.handle("update-customer", async (event, id, data) => {
   try {
-    db.prepare(
-      "UPDATE customers SET name = ?, phone = ?, tier_id = ? WHERE id = ?",
-    ).run(
-      String(data?.name || "").trim(),
-      String(data?.phone || "").trim(),
-      data?.tier_id || null,
-      id,
-    );
-    return { success: true };
+    return customersCore.updateCustomer(db, id, data);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -3998,6 +3974,12 @@ const startLiveReplica = () => {
       if (tables.includes("products")) {
         try {
           boxRpc.reapplyPendingOps(db, meta && meta.resync ? null : ids && ids.products);
+        } catch (err) {}
+      }
+      // Lo mismo con clientes creados o editados en la caja que aún no suben.
+      if (tables.includes("customers")) {
+        try {
+          boxRpc.reapplyPendingRows(db, "customers");
         } catch (err) {}
       }
       emitDbChanged(tables, ids);
