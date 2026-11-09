@@ -199,12 +199,19 @@ const StockUnitToggle = ({ product, value, onChange }) => {
 };
 
 // "Cantidad (cajas)" / "(paquetes)" / "(piezas)" / "(kg)".
-const entryQtyLabel = (product, mode, fallback) =>
-  stockEntryUnits(product).length
-    ? `Cantidad (${entryUnit(product, mode).many})`
-    : product.sale_unit === "weight"
-      ? "Cantidad (kg)"
-      : fallback;
+const entryQtyLabel = (product, mode, question) =>
+  `${question} (${
+    product.sale_unit === "weight" ? "kg" : entryUnit(product, mode).many
+  })`;
+
+// "3 piezas" / "1 caja" / "1.500 kg" para el botón; vacío si no hay cantidad.
+const entryQtyPhrase = (product, mode, raw) => {
+  const n = parseFloat(raw);
+  if (!(n > 0)) return "";
+  if (product.sale_unit === "weight") return `${fmtKg(n)} kg`;
+  const u = entryUnit(product, mode);
+  return `${n} ${n === 1 ? u.one : u.many}`;
+};
 
 const stockUnit = (p) => {
   if (p.sale_unit === "weight") return "kg";
@@ -555,7 +562,7 @@ const ProductRow = React.memo(
                   <Plus className="h-4 w-4" />
                 </SButton>
               </STooltipTrigger>
-              <STooltipContent>Agregar Stock</STooltipContent>
+              <STooltipContent>Llegó mercancía</STooltipContent>
             </STooltip>
             <SDropdownMenu>
               <SDropdownMenuTrigger asChild>
@@ -569,7 +576,7 @@ const ProductRow = React.memo(
                   onClick={() => onReduceStock(product)}
                 >
                   <Minus className="mr-2 h-4 w-4" />
-                  Reducir Stock
+                  Sacar mercancía
                 </SDropdownMenuItem>
                 <SDropdownMenuSeparator />
                 <SDropdownMenuItem
@@ -1033,7 +1040,7 @@ const Inventory = () => {
       selectedProduct.sale_unit !== "weight" &&
       !/^\d+$/.test(String(stockQuantity).trim())
     ) {
-      setStockQtyError("Cantidad no válida. Solo números enteros.");
+      setStockQtyError("Cantidad no válida. Escribe un número entero.");
       return;
     }
     setStockQtyError("");
@@ -1067,9 +1074,9 @@ const Inventory = () => {
         setSelectedProduct(null);
         fetchProducts();
         if (!stockRegisterExpense) {
-          notify("Stock agregado. No se registró gasto en caja.", "info");
+          notify("Mercancía sumada. La caja no cambió.", "info");
         } else {
-          notify("Stock agregado y gasto registrado.", "success");
+          notify("Mercancía sumada y gasto registrado en la caja.", "success");
         }
       } else {
         notify(result.error, "error");
@@ -1085,7 +1092,7 @@ const Inventory = () => {
       selectedProduct.sale_unit !== "weight" &&
       !/^\d+$/.test(String(stockQuantity).trim())
     ) {
-      setStockQtyError("Cantidad no válida. Solo números enteros.");
+      setStockQtyError("Cantidad no válida. Escribe un número entero.");
       return;
     }
     setStockQtyError("");
@@ -1139,7 +1146,7 @@ const Inventory = () => {
       selectedProduct.sale_unit !== "weight" &&
       !/^\d+$/.test(String(reduceQty).trim())
     ) {
-      setReduceQtyError("Cantidad no válida. Solo números enteros.");
+      setReduceQtyError("Cantidad no válida. Escribe un número entero.");
       return;
     }
     setReduceQtyError("");
@@ -2005,14 +2012,14 @@ const Inventory = () => {
               </span>
               <div className="min-w-0 flex-1">
                 <DialogTitle className="text-lg leading-tight">
-                  Agregar Stock
+                  Llegó mercancía
                 </DialogTitle>
                 {selectedProduct && (
                   <DialogDescription
                     className="block min-w-0 truncate"
                     title={selectedProduct.name}
                   >
-                    Entrada de inventario — {selectedProduct.name}
+                    {selectedProduct.name} · hoy hay {stockDisplay(selectedProduct)}
                   </DialogDescription>
                 )}
               </div>
@@ -2042,11 +2049,12 @@ const Inventory = () => {
                     onChange={setStockUnitMode}
                   />
                   <Label htmlFor="add-stock-qty">
-                    {entryQtyLabel(selectedProduct, stockUnitMode, "Cantidad (pzas)")}
+                    ¿Cuánto llegó?
                   </Label>
                   <Input
                     id="add-stock-qty"
                     type="number"
+                    placeholder={entryQtyLabel(selectedProduct, stockUnitMode, "Cantidad")}
                     min={1}
                     step={selectedProduct.sale_unit === "weight" ? 0.1 : 1}
                     value={stockQuantity}
@@ -2073,7 +2081,7 @@ const Inventory = () => {
 
                 <div className={cn("grid gap-3", expiryOn ? "grid-cols-2" : "grid-cols-1")}>
                   <div className="space-y-1.5">
-                    <Label htmlFor="add-stock-cost">Costo total</Label>
+                    <Label htmlFor="add-stock-cost">¿Cuánto pagaste en total?</Label>
                     <div className="relative">
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                         $
@@ -2095,7 +2103,7 @@ const Inventory = () => {
 
                   {expiryOn && (
                   <div className="space-y-1.5">
-                    <Label>Caducidad</Label>
+                    <Label>¿Tiene caducidad?</Label>
                     <div className="flex items-center gap-1">
                       <Popover open={stockExpiryOpen} onOpenChange={setStockExpiryOpen}>
                         <PopoverTrigger asChild>
@@ -2154,7 +2162,7 @@ const Inventory = () => {
                   )}
                 </div>
                 <p className="-mt-2 text-xs text-muted-foreground">
-                  {expiryOn ? "Ambos opcionales. " : "Opcional. "}Costo vacío = costo del producto × cantidad.
+                  {expiryOn ? "Ambos son opcionales. " : "Opcional. "}Si dejas el costo vacío, se calcula con el último costo del producto.
                 </p>
 
                 <label
@@ -2177,12 +2185,12 @@ const Inventory = () => {
                   />
                   <span className="space-y-0.5">
                     <span className="block text-sm font-bold">
-                      Descontar de la caja (egreso)
+                      Registrar el pago como gasto de la caja
                     </span>
                     <span className="block text-xs leading-snug text-muted-foreground">
                       {stockRegisterExpense
-                        ? "Se registra como compra y descuenta de la caja abierta."
-                        : "No se registra gasto en caja; solo se suma el stock."}
+                        ? "Se resta del efectivo de la caja. Si ya lo sacaste con un retiro, desmárcalo para no contarlo doble."
+                        : "No se registra ningún gasto; la caja no cambia y solo se suma la mercancía."}
                     </span>
                   </span>
                 </label>
@@ -2195,7 +2203,7 @@ const Inventory = () => {
                 </p>
                 <div className="mt-3 space-y-2.5 text-base">
                   <div className="flex items-baseline justify-between">
-                    <span className="text-muted-foreground">Stock actual</span>
+                    <span className="text-muted-foreground">Hoy hay</span>
                     <span className="font-semibold tabular-nums">
                       {selectedProduct.sale_unit === "weight"
                         ? `${fmtKg(selectedProduct.stock)} kg`
@@ -2203,7 +2211,7 @@ const Inventory = () => {
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-muted-foreground">Entrada</span>
+                    <span className="text-muted-foreground">Llega</span>
                     <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                       +{selectedProduct.sale_unit === "weight"
                         ? `${fmtKg(parseFloat(stockQuantity) || 0)} kg`
@@ -2214,7 +2222,7 @@ const Inventory = () => {
 
                 <div className="mt-3 rounded-lg bg-emerald-600 px-3 py-2.5 text-center text-white">
                   <p className="text-xs font-semibold uppercase tracking-wide text-emerald-100">
-                    Quedará en
+                    Quedarán
                   </p>
                   <p className="text-3xl font-bold leading-tight tabular-nums">
                     {selectedProduct.sale_unit === "weight"
@@ -2283,10 +2291,13 @@ const Inventory = () => {
               {addingStock && (
                 <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
               )}
-              {addingStock ? "Agregando..." : (
+              {addingStock ? "Guardando..." : (
                 <>
                   <Plus className="mr-1.5 h-4 w-4" />
-                  Agregar Stock
+                  {selectedProduct &&
+                  entryQtyPhrase(selectedProduct, stockUnitMode, stockQuantity)
+                    ? `Sumar ${entryQtyPhrase(selectedProduct, stockUnitMode, stockQuantity)}`
+                    : "Sumar"}
                 </>
               )}
             </SButton>
@@ -2426,7 +2437,7 @@ const Inventory = () => {
         onOpenChange={(o) => !o && setReduceModalOpen(false)}
       >
         <DialogContent
-          className="max-w-[448px] gap-0 p-0 sm:rounded-xl overflow-hidden"
+          className="max-w-[520px] gap-0 p-0 sm:rounded-xl overflow-hidden"
           onKeyDown={(e) => {
             if (e.key === "Enter" && e.target?.tagName !== "BUTTON")
               confirmRemoveStock();
@@ -2440,14 +2451,14 @@ const Inventory = () => {
                 </span>
                 <div className="min-w-0 flex-1">
                   <DialogTitle className="text-lg leading-tight">
-                    Reducir Stock
+                    Sacar mercancía
                   </DialogTitle>
                   <DialogDescription
                     className="block min-w-0 truncate"
                     title={selectedProduct?.name}
                   >
-                    Salida de inventario —{" "}
                     <strong>{selectedProduct?.name}</strong>
+                    {selectedProduct && ` · hoy hay ${stockDisplay(selectedProduct)}`}
                   </DialogDescription>
                 </div>
                 {selectedProduct && (
@@ -2474,11 +2485,12 @@ const Inventory = () => {
                     onChange={setReduceUnitMode}
                   />
                   <Label htmlFor="reduce-qty">
-                    {entryQtyLabel(selectedProduct, reduceUnitMode, "Cantidad a reducir")}
+                    ¿Cuánto sale?
                   </Label>
                   <Input
                     id="reduce-qty"
                     type="number"
+                    placeholder={entryQtyLabel(selectedProduct, reduceUnitMode, "Cantidad")}
                     min={1}
                     max={
                       stockEntryUnits(selectedProduct).length
@@ -2510,7 +2522,7 @@ const Inventory = () => {
                   )}
                   {reduceQty && reducePiezas > selectedProduct.stock ? (
                     <p className="text-xs font-semibold text-red-600 dark:text-red-400">
-                      Supera el stock disponible ({stockDisplay(selectedProduct)}).
+                      Solo hay {stockDisplay(selectedProduct)}. No puedes sacar más de lo que hay.
                     </p>
                   ) : stockEntryUnits(selectedProduct).length > 0 &&
                     parseFloat(reduceQty) > 0 ? (
@@ -2522,28 +2534,28 @@ const Inventory = () => {
                 </div>
 
                 <div className="rounded-lg border border-border bg-card p-4">
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                  <p className="text-xs font-semibold uppercase tracking-[0.04em] text-muted-foreground">
                     Resultado
                   </p>
                   <div className="mt-2 flex items-stretch gap-2">
-                    <div className="flex-1 rounded-md bg-muted/50 p-2 text-center">
-                      <p className="text-[0.62rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Actual
+                    <div className="flex-1 rounded-md bg-muted/50 p-3 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Hoy hay
                       </p>
-                      <p className="mt-0.5 truncate text-sm font-bold">
+                      <p className="mt-1 truncate text-2xl font-bold tabular-nums">
                         {selectedProduct.sale_unit === "weight"
                           ? `${fmtKg(selectedProduct.stock)} kg`
                           : `${selectedProduct.stock} pz`}
                       </p>
                     </div>
                     <div className="flex items-center text-amber-600">
-                      <Minus className="h-4 w-4" />
+                      <Minus className="h-5 w-5" />
                     </div>
-                    <div className="flex-1 rounded-md bg-amber-500/10 p-2 text-center">
-                      <p className="text-[0.62rem] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                        − Salida
+                    <div className="flex-1 rounded-md bg-amber-500/10 p-3 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                        Sale
                       </p>
-                      <p className="mt-0.5 truncate text-sm font-bold text-amber-700 dark:text-amber-400">
+                      <p className="mt-1 truncate text-2xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
                         {selectedProduct.sale_unit === "weight"
                           ? `${fmtKg(parseFloat(reduceQty) || 0)} kg`
                           : `${
@@ -2556,11 +2568,11 @@ const Inventory = () => {
                       </p>
                     </div>
                     <div className="flex items-center text-amber-600">
-                      <ArrowRight className="h-4 w-4" />
+                      <ArrowRight className="h-5 w-5" />
                     </div>
                     <div
                       className={cn(
-                        "flex-1 rounded-lg p-2 text-center",
+                        "flex-1 rounded-lg p-3 text-center",
                         selectedProduct.stock - reducePiezas <= 0
                           ? "bg-red-600"
                           : selectedProduct.min_stock &&
@@ -2572,17 +2584,17 @@ const Inventory = () => {
                     >
                       <p
                         className={cn(
-                          "text-[0.62rem] font-semibold uppercase tracking-wide",
+                          "text-xs font-semibold uppercase tracking-wide",
                           selectedProduct.stock - reducePiezas <= 0
                             ? "text-red-100"
                             : "text-primary-foreground/80",
                         )}
                       >
-                        Resultante
+                        Quedarán
                       </p>
                       <p
                         className={cn(
-                          "mt-0.5 truncate text-sm font-extrabold",
+                          "mt-1 truncate text-2xl font-extrabold tabular-nums",
                           selectedProduct.stock - reducePiezas <= 0
                             ? "text-white"
                             : "text-primary-foreground",
@@ -2596,15 +2608,15 @@ const Inventory = () => {
                   </div>
                   {isContainerUnit(selectedProduct.sale_unit) &&
                     selectedProduct.box_qty > 0 && (
-                      <div className="mt-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-                        Actual:{" "}
+                      <div className="mt-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                        Hoy hay:{" "}
                         <strong className="text-foreground">
                           {Math.floor(
                             selectedProduct.stock / selectedProduct.box_qty,
                           )}{" "}
                           {unitLabels(selectedProduct.sale_unit).plural}
                         </strong>{" "}
-                        → Resultante:{" "}
+                        → Quedarán:{" "}
                         <strong className="text-amber-600 dark:text-amber-400">
                           {Math.floor(
                             Math.max(0, selectedProduct.stock - reducePiezas) /
@@ -2617,12 +2629,12 @@ const Inventory = () => {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="reduce-note">Motivo (opcional)</Label>
+                  <Label htmlFor="reduce-note">¿Por qué sale? (opcional)</Label>
                   <Input
                     id="reduce-note"
                     value={reduceNote}
                     onChange={(e) => setReduceNote(e.target.value)}
-                    placeholder="Ej: merma, inventario, devolución..."
+                    placeholder="Ej: se echó a perder, caducó, devolución al proveedor"
                   />
                 </div>
               </div>
@@ -2647,17 +2659,20 @@ const Inventory = () => {
                 {removingStock && (
                   <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
                 )}
-                {removingStock ? "Reduciendo..." : (
+                {removingStock ? "Guardando..." : (
                   <>
                     <Minus className="mr-1.5 h-4 w-4" />
-                    Reducir Stock
+                    {selectedProduct &&
+                    entryQtyPhrase(selectedProduct, reduceUnitMode, reduceQty)
+                      ? `Restar ${entryQtyPhrase(selectedProduct, reduceUnitMode, reduceQty)}`
+                      : "Restar"}
                   </>
                 )}
               </SButton>
             </DialogFooter>
             {cashier?.role !== "admin" && (
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                Solo el propietario puede hacer salidas de stock.
+                Solo el propietario puede sacar mercancía.
               </p>
             )}
           </div>

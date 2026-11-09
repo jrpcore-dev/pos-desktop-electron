@@ -838,7 +838,7 @@ function ConfigurationScreen() {
           />
           <ToggleBlock
             title="Caducidades"
-            description="Fecha de caducidad al agregar stock y avisos antes de que venza. Apagado se oculta el campo y no se generan esos avisos."
+            description="Fecha de caducidad cuando llega mercancía y avisos antes de que venza. Apagado se oculta el campo y no se generan esos avisos."
             checked={featureFlags.expiry}
             onCheckedChange={set("expiry")}
           />

@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 export const getStockStatus = (stock, minStock) => {
   const min = minStock || 5;
   if (stock === 0) return { label: "Agotado", tone: "err" };
-  if (stock <= min) return { label: "Stock Bajo", tone: "warn" };
-  return { label: "En Stock", tone: "ok" };
+  if (stock <= min) return { label: "Stock bajo", tone: "warn" };
+  return { label: "En stock", tone: "ok" };
 };
 
 export const StockStatus = React.memo(({ label, tone }) => (

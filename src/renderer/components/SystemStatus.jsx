@@ -103,8 +103,8 @@ const CHANNEL_LABELS = {
   "open-cash-register": "Abrir caja",
   "close-cash-register": "Cerrar caja",
   "register-cash-expense": "Retiro",
-  "add-stock": "Agregar stock",
-  "remove-stock": "Reducir stock",
+  "add-stock": "Llegó mercancía",
+  "remove-stock": "Sacar mercancía",
   "/api/sales": "Venta",
   "/api/auth": "Inicio de sesión",
 };
