@@ -89,6 +89,8 @@ const LOCAL_READ_CHANNELS = new Set([
   "list-sale-devices",
   "find-sales-by-folio",
   "get-suppliers",
+  "get-top-products",
+  "get-daily-sales-week",
 ]);
 const localReady = (db) => {
   const st = replicaEngine.state(db);
@@ -110,9 +112,12 @@ const noteHostSeq = (headers) => {
   const seq = Number(headers && headers.get && headers.get("x-replica-seq"));
   if (Number.isFinite(seq) && seq > latestHostSeq) latestHostSeq = seq;
 };
+// La pantalla no se queda esperando a la réplica: pasado este rato sigue y el
+// cambio llega solo, con su aviso de datos nuevos.
+const WRITE_SETTLE_MS = 1000;
 const settleWrite = async (db) => {
   if (!localReady(db)) return;
-  await replicaLive.waitForSeq(db, latestHostSeq);
+  await replicaLive.waitForSeq(db, latestHostSeq, WRITE_SETTLE_MS);
 };
 
 // ── Operaciones en cola (paso 2 local-first) ────────────────────────────────
@@ -874,23 +879,23 @@ const offlineVerifyPin = (db, id, pin) => {
 };
 
 // POST /api/auth · el PIN se comprueba en el Host y el token resultante
-// queda cifrado en safeStorage (nunca en claro).
-const verifyPin = async (db, id, pin) => {
-  const creds = credentials(db);
-  if (!creds.hostUrl) return offlineVerifyPin(db, id, pin);
+// queda cifrado en safeStorage (nunca en claro). Devuelve null si no hubo
+// respuesta; `isCurrent` descarta el token de un login que ya quedó atrás.
+const hostLogin = async (db, creds, id, pin, timeoutMs, isCurrent = () => true) => {
   let res;
   try {
-    res = await postJson(db, creds, "/api/auth", { id, pin });
+    res = await postJson(db, creds, "/api/auth", { id, pin }, {}, timeoutMs);
   } catch (err) {
-    return offlineVerifyPin(db, id, pin);
+    return null;
   }
-  if (!res.data) return offlineVerifyPin(db, id, pin);
+  if (!res.data) return null;
   if (res.status !== 200 || res.data.success !== true) {
     // 401 aquí es "PIN inválido", NO sesión caducada: no se borra nada.
     const code =
       res.data.code || (res.status === 401 ? "PIN_INVALID" : "HOST_REJECTED");
     return fail(code, res.data.error || "PIN inválido");
   }
+  if (!isCurrent()) return { success: true, cashier: res.data.cashier };
   if (res.data.token) clientLink.saveSessionToken(db, res.data.token);
   // La ventana de gracia rota el token de dispositivo en cada login: si la caja
   // no guarda el nuevo, el Host la rechaza con "no está activado" en todo.
@@ -904,6 +909,38 @@ const verifyPin = async (db, id, pin) => {
     syncPending(db).catch(() => {});
   }
   return { success: true, cashier: res.data.cashier };
+};
+
+const verifyPin = async (db, id, pin) => {
+  const creds = credentials(db);
+  if (!creds.hostUrl) return offlineVerifyPin(db, id, pin);
+  const out = await hostLogin(db, creds, id, pin);
+  return out || offlineVerifyPin(db, id, pin);
+};
+
+// Local-first · el PIN se valida con la copia local y se entra al momento; la
+// sesión del Host se pide en segundo plano. Sólo espera al Host si el PIN no
+// coincide aquí: puede haber cambiado allá y no haber llegado todavía.
+let sessionCashierId = null;
+let loginSeq = 0;
+const loginLocalFirst = async (db, id, pin) => {
+  const creds = credentials(db);
+  if (!creds.hostUrl || !localReady(db)) return verifyPin(db, id, pin);
+  const local = offlineVerifyPin(db, id, pin);
+  if (!local.success) {
+    if (local.code === "PIN_LOCKED" || hostKnownDown(db)) return local;
+    const out = await hostLogin(db, creds, id, pin, SALE_ONLINE_TIMEOUT_MS);
+    return out || local;
+  }
+  // El Host firma cada venta con el dueño del token: el del cajero anterior no
+  // puede seguir vivo mientras llega el nuevo.
+  if (sessionCashierId !== Number(id)) {
+    clientLink.clearSessionToken(db);
+    sessionCashierId = Number(id);
+  }
+  const seq = ++loginSeq;
+  hostLogin(db, credentials(db), id, pin, TIMEOUT_MS, () => seq === loginSeq).catch(() => {});
+  return { success: true, cashier: local.cashier, warning: local.warning, stale_ms: local.stale_ms };
 };
 
 // ── Estado de caja cacheado (para vender sin Host) ──────────────────────────
@@ -928,7 +965,11 @@ const HOST_REQUIRED = (what) =>
 
 // Punto de entrada del guard: el canal entra igual que por IPC y sale traducido.
 const forward = (db, channel, args = []) => {
-  if (channel === "verify-cashier-pin") return verifyPin(db, args[0], args[1]);
+  if (channel === "verify-cashier-pin") {
+    // Recuperar una sesión caducada sí necesita al Host: es justo lo que falta.
+    const mustReachHost = args[2] && args[2].needsHostSession;
+    return mustReachHost ? verifyPin(db, args[0], args[1]) : loginLocalFirst(db, args[0], args[1]);
+  }
   if (channel === "record-sale") {
     return recordSale(db, args[0]).then((r) => {
       // Venta en línea: Caja y Transacciones la reciben por la réplica y se
@@ -1024,6 +1065,10 @@ const forward = (db, channel, args = []) => {
 const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  // Sin Host, una lectura no vale 8 s de espera: falla al momento.
+  if (READ_CHANNEL_RE.test(channel) && hostKnownDown(db)) {
+    return fail("HOST_UNREACHABLE", "El Host no responde");
+  }
   // La cola de operaciones trae su propia llave (la misma en cada reintento).
   const idempotent = !!opts.idempotencyKey || IDEMPOTENT_RPC.has(channel);
   const headers = idempotent
@@ -1080,6 +1125,7 @@ module.exports = {
   rpcCall,
   recordSale,
   verifyPin,
+  loginLocalFirst,
   nextBoxFolio,
   syncPending,
   offlineVerifyPin,

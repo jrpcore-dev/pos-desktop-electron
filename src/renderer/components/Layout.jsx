@@ -368,7 +368,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       setReauthBusy(true);
       setReauthError(null);
       try {
-        const res = await window.api.invoke("verify-cashier-pin", cashier.id, pin);
+        const res = await window.api.invoke("verify-cashier-pin", cashier.id, pin, { needsHostSession: true });
         if (res?.success) {
           setReauthOpen(false);
           // La cola offline, si quedó pendiente por sesión, se reintenta ya.

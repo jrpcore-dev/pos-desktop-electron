@@ -157,6 +157,37 @@ const hostSales = () => host.prepare("SELECT COUNT(*) c FROM sales").get().c;
   const w = await timed(() => replicaLive.waitForSeq(box, 999999, 400));
   check(w.r === false && w.ms < 900, "la espera de la copia respeta su plazo aunque la red esté trabada", `${w.ms.toFixed(0)} ms`);
 
+  console.log("=== H · iniciar sesión sin esperar al Host ===");
+  const clientLink = require(path.join(REPO, "src/main/client-link.js"));
+  const { hashPin } = require(path.join(REPO, "src/main/pins.js"));
+  const second = hashPin("2222");
+  box.prepare("INSERT OR REPLACE INTO cashiers (id, name, role, is_active, pin_hash, pin_salt, pin) VALUES (2, 'Luis', 'cashier', 1, ?, ?, '')").run(second.hash, second.salt);
+  check(!!clientLink.readSessionToken(box), "(hay sesión del primer cajero)");
+  drop = (req) => req.url === "/api/auth";
+  const h = await timed(() => boxRpc.forward(box, "verify-cashier-pin", [2, "2222"]));
+  check(h.r.success === true && h.r.cashier.id === 2, "entra con el Host trabado", JSON.stringify(h.r));
+  check(h.ms < 500, "sin esperar al Host", `${h.ms.toFixed(0)} ms`);
+  check(!clientLink.readSessionToken(box), "la sesión del cajero anterior ya no firma ventas");
+  const bad = await timed(() => boxRpc.forward(box, "verify-cashier-pin", [1, "9999"]));
+  check(bad.r.success === false, "un PIN incorrecto no entra", JSON.stringify(bad.r));
+  check(bad.ms < 2500, "ni deja esperando", `${bad.ms.toFixed(0)} ms`);
+  drop = () => false;
+  const back = await boxRpc.forward(box, "verify-cashier-pin", [1, "1111"]);
+  check(back.success === true, "el cajero original vuelve a entrar", JSON.stringify(back));
+  for (let i = 0; i < 100 && !clientLink.readSessionToken(box); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  check(!!clientLink.readSessionToken(box), "la sesión del Host llega en segundo plano");
+  const must = await boxRpc.forward(box, "verify-cashier-pin", [1, "1111", { needsHostSession: true }]);
+  check(must.success === true && !must.offline, "recuperar sesión sí pasa por el Host", JSON.stringify(must));
+
+  console.log("=== I · sin Host las lecturas no esperan ===");
+  drop = () => true;
+  await boxRpc.rpcCall(box, "get-today-tasks", [], 200);
+  const fast = await timed(() => boxRpc.rpcCall(box, "get-today-tasks", []));
+  check(fast.r.code === "HOST_UNREACHABLE" && fast.ms < 100, "la siguiente lectura falla al momento", `${fast.ms.toFixed(0)} ms ${JSON.stringify(fast.r)}`);
+  drop = () => false;
+
   stop();
   await apiServer.stopServer();
   proxy.close();
