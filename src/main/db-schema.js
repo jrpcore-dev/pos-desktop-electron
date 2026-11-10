@@ -534,6 +534,11 @@ const runMigrations = (db) => {
   // Host le da su id. Los creados en el Host no lo necesitan (queda NULL).
   ensureColumn("customers", "uid", "TEXT");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_uid ON customers(uid)");
+  // Lo mismo para el catálogo que la caja puede crear (catalog-core.js).
+  ensureColumn("categories", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_uid ON categories(uid)");
+  ensureColumn("suppliers", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_uid ON suppliers(uid)");
   ensureColumn("sales", "credit_amount", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid_method", "TEXT");

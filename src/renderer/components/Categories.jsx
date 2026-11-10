@@ -196,16 +196,17 @@ const filtered = useMemo(
     if (isSubmitting) return;
     setIsSubmitting(true);
     try {
-      if (editing) {
-        await window.api.invoke("update-category", editing.id, {
-          name: data.name.trim(),
-          description: data.description?.trim() || "",
-        });
-      } else {
-        await window.api.invoke("add-category", {
-          name: data.name.trim(),
-          description: data.description?.trim() || "",
-        });
+      const payload = {
+        name: data.name.trim(),
+        description: data.description?.trim() || "",
+      };
+      const result = editing
+        ? await window.api.invoke("update-category", editing.id, payload)
+        : await window.api.invoke("add-category", payload);
+      // Nombre repetido u otro rechazo: el diálogo sigue abierto con el motivo.
+      if (result && result.success === false) {
+        setError(result.error || "No se pudo guardar la categoría");
+        return;
       }
       setDialogOpen(false);
       load();

@@ -44,6 +44,8 @@ const nowIso = () => new Date().toISOString();
 //          tienen (creadas aquí, id provisional) o por id.
 const ROW_COLUMNS = Object.freeze({
   customers: ["id", "uid", "name", "phone", "tier_id", "qr_code", "created_at"],
+  categories: ["id", "uid", "name", "description", "created_at"],
+  suppliers: ["id", "uid", "name", "contact", "phone", "email", "address", "delivery_days", "created_at"],
 });
 const rowKey = (row) => (row.uid ? ["uid", row.uid] : ["id", row.id]);
 const writeRow = (db, table, row) => {
@@ -232,6 +234,8 @@ const TRANSIENT = new Set([
   "NOT_APPROVED",
   "NOT_PAIRED",
   "CUSTOMER_PENDING",
+  "CATEGORY_PENDING",
+  "SUPPLIER_PENDING",
 ]);
 
 // Sube en orden. `send(row)` devuelve lo que contestó el Host (el valor del

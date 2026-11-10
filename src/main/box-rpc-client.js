@@ -13,6 +13,7 @@ const clientLink = require("./client-link");
 const dbSchema = require("./db-schema");
 const offlineQueue = require("./offline-queue");
 const customersCore = require("./customers-core");
+const catalogCore = require("./catalog-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
@@ -91,6 +92,7 @@ const LOCAL_READ_CHANNELS = new Set([
   "list-sale-devices",
   "find-sales-by-folio",
   "get-suppliers",
+  "get-categories",
   "get-top-products",
   "get-daily-sales-week",
   // Clientes: la caja tiene su copia y ve al momento lo que crea o edita.
@@ -138,7 +140,52 @@ const parseQty = (product, quantity) => {
   if (product.sale_unit === "weight") return parseFloat(raw);
   return /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
 };
+// Catálogo (categorías, proveedores): crear y editar con las reglas de
+// catalog-core, las mismas que aplica el Host.
+const catalogAdd = (table, noun) => (db, [data = {}]) => {
+  const n = catalogCore.normalize(table, data);
+  if (!n.success) return n;
+  if (catalogCore.nameTaken(db, table, n.values.name)) {
+    return fail("NAME_TAKEN", catalogCore.ENTITIES[table].exists);
+  }
+  const uid = crypto.randomUUID();
+  const after = catalogCore.provisionalRow(db, table, n.values, uid);
+  return {
+    args: [{ ...data, ...n.values, uid }],
+    effect: { rows: [{ table, before: null, after }] },
+    tables: [table],
+    label: `${noun} nuevo · ${n.values.name}`,
+    result: { id: after.id, row: after },
+  };
+};
+const catalogUpdate = (table, noun) => (db, [id, data = {}]) => {
+  const n = catalogCore.normalize(table, data);
+  if (!n.success) return n;
+  const before = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(Number(id));
+  if (!before) return fail(catalogCore.ENTITIES[table].notFound, `${catalogCore.ENTITIES[table].label} no encontrado`);
+  if (catalogCore.nameTaken(db, table, n.values.name, before.id)) {
+    return fail("NAME_TAKEN", catalogCore.ENTITIES[table].exists);
+  }
+  const cols = Object.keys(n.values);
+  const pick = (row) => {
+    const out = { id: row.id, uid: row.uid || undefined };
+    for (const c of cols) out[c] = row[c];
+    return out;
+  };
+  return {
+    args: [before.id, { ...data, ...n.values, uid: before.uid || undefined }],
+    effect: { rows: [{ table, before: pick(before), after: { ...pick(before), ...n.values } }] },
+    tables: [table],
+    label: `${noun} editado · ${n.values.name}`,
+    result: {},
+  };
+};
+
 const QUEUED_OPS = {
+  "add-category": catalogAdd("categories", "Categoría"),
+  "update-category": catalogUpdate("categories", "Categoría"),
+  "add-supplier": catalogAdd("suppliers", "Proveedor"),
+  "update-supplier": catalogUpdate("suppliers", "Proveedor"),
   "add-stock": (db, [payload = {}]) => {
     const product = db
       .prepare("SELECT id, name, sale_unit FROM products WHERE id = ?")
@@ -304,7 +351,7 @@ const syncOps = async (db) => {
     const next = await opQueue.sync(db, send);
     out = { ...next, synced: out.synced + next.synced, conflicts: out.conflicts + next.conflicts };
   }
-  if (out.synced || out.conflicts) opsChanged(["products", "stock_movements", "customers"]);
+  if (out.synced || out.conflicts) opsChanged(["products", "stock_movements", "customers", "categories", "suppliers"]);
   return out;
 };
 
@@ -1046,6 +1093,25 @@ const forward = (db, channel, args = []) => {
   }
   if (QUEUED_OPS[channel] && localReady(db)) {
     return Promise.resolve(enqueueOp(db, channel, args));
+  }
+  // Producto con categoría/proveedor recién creados aquí: primero sube su
+  // alta y la referencia viaja por uid (el Host la traduce a su id).
+  if (channel === "add-product" || channel === "update-product") {
+    const i = channel === "add-product" ? 0 : 1;
+    const data = catalogCore.refsToUid(db, args[i]);
+    if (data !== args[i]) {
+      const next = [...args];
+      next[i] = data;
+      return syncOps(db)
+        .catch(() => {})
+        .then(() => rpcCall(db, channel, next));
+    }
+  }
+  // Borrar es del Host: lo que aún no llega allá no se puede borrar todavía.
+  if ((channel === "delete-category" || channel === "delete-supplier") && Number(args[0]) < 0) {
+    return Promise.resolve(
+      fail("NOT_YET_ON_HOST", "Todavía se está guardando en el Host. Intenta borrarlo en unos segundos."),
+    );
   }
   if (LOCAL_READ_CHANNELS.has(channel) && localReady(db)) {
     const local = runLocal(db, channel, args);

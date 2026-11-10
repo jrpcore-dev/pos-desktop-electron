@@ -178,10 +178,17 @@ const cashRegisterRow = (db, id) =>
   // Gastos sin caja (register_id opcional desde la creación) ya está en HEAD.
   // Entradas de dinero y tipo de salida (cash_in, kind, category) ya está en HEAD.
   // Local-first · clientes (`customers.uid` y su índice) ya está en HEAD.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  // Local-first · catálogo: `categories.uid`, `suppliers.uid` y sus índices
+  // únicos (ALTER ADD COLUMN reescribe el CREATE TABLE: alta Y baja).
+  const DDL_AGREGADO = [
+    /^CREATE TABLE categories \(.*uid TEXT/s,
+    /^CREATE TABLE suppliers \(.*uid TEXT/s,
+    /idx_categories_uid/,
+    /idx_suppliers_uid/,
+  ];
+  const DDL_AGREGADO_TOTAL = 4;
+  const DDL_BORRADO = [/^CREATE TABLE categories \(/, /^CREATE TABLE suppliers \(/];
+  const DDL_BORRADO_TOTAL = 2;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -338,6 +345,9 @@ const cashRegisterRow = (db, id) =>
         : ["+ cash_register_expenses.category|TEXT|nn=0|dflt=null"]),
       // Local-first · clientes creados en una caja.
       ...(colDe(before.cols.customers, "uid") ? [] : ["+ customers.uid|TEXT|nn=0|dflt=null"]),
+      // Local-first · catálogo creado en una caja.
+      ...(colDe(before.cols.categories, "uid") ? [] : ["+ categories.uid|TEXT|nn=0|dflt=null"]),
+      ...(colDe(before.cols.suppliers, "uid") ? [] : ["+ suppliers.uid|TEXT|nn=0|dflt=null"]),
     ];
     // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
     const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)
@@ -416,6 +426,8 @@ const cashRegisterRow = (db, id) =>
       "products.idx_products_active_name",
       // Local-first · clientes creados en una caja.
       "customers.idx_customers_uid",
+      "categories.idx_categories_uid",
+      "suppliers.idx_suppliers_uid",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

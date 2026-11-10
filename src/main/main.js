@@ -329,6 +329,7 @@ const protocol = require("./protocol");
 const discovery = require("./discovery");
 const hostWatcher = require("./host-watcher");
 const customersCore = require("./customers-core");
+const catalogCore = require("./catalog-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -1142,7 +1143,11 @@ ipcMain.handle("check-barcode-exists", async (event, barcode) => {
 const autoMinStock = (stock) =>
   Math.max(1, Math.floor((parseFloat(stock) || 0) * 0.4));
 
-ipcMain.handle("add-product", async (event, product) => {
+ipcMain.handle("add-product", async (event, rawProduct) => {
+  // Categoría o proveedor creados en una caja: llegan por uid.
+  const refs = catalogCore.resolveRefs(db, rawProduct);
+  if (!refs.success) return refs;
+  const product = refs.data;
   const {
     barcode,
     name,
@@ -1253,9 +1258,12 @@ ipcMain.handle("add-product", async (event, product) => {
   }
 });
 
-ipcMain.handle("update-product", async (event, id, product) => {
+ipcMain.handle("update-product", async (event, id, rawProduct) => {
   try {
-    if (!product || !id) return { success: false, error: "Datos inválidos" };
+    if (!rawProduct || !id) return { success: false, error: "Datos inválidos" };
+    const refs = catalogCore.resolveRefs(db, rawProduct);
+    if (!refs.success) return refs;
+    const product = refs.data;
     const {
       barcode,
       name,
@@ -2152,29 +2160,16 @@ ipcMain.handle("get-categories", async () => {
 
 ipcMain.handle("add-category", async (event, data) => {
   try {
-    const info = db
-      .prepare("INSERT INTO categories (name, description) VALUES (?, ?)")
-      .run(data.name, data.description || "");
-    return { success: true, id: info.lastInsertRowid };
+    const r = catalogCore.add(db, "categories", data);
+    return r.success ? { success: true, id: r.id } : r;
   } catch (error) {
-    return {
-      success: false,
-      error:
-        error.code === "SQLITE_CONSTRAINT_UNIQUE"
-          ? "Ya existe una categoría con ese nombre"
-          : error.message,
-    };
+    return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle("update-category", async (event, id, data) => {
   try {
-    db.prepare("UPDATE categories SET name=?, description=? WHERE id=?").run(
-      data.name,
-      data.description || "",
-      id,
-    );
-    return { success: true };
+    return catalogCore.update(db, "categories", id, data);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -2215,19 +2210,8 @@ ipcMain.handle("get-suppliers", async () => {
 
 ipcMain.handle("add-supplier", async (event, data) => {
   try {
-    const info = db
-      .prepare(
-        "INSERT INTO suppliers (name, contact, phone, email, address, delivery_days) VALUES (?, ?, ?, ?, ?, ?)",
-      )
-      .run(
-        data.name,
-        data.contact || "",
-        data.phone || "",
-        data.email || "",
-        data.address || "",
-        data.delivery_days || "",
-      );
-    return { success: true, id: info.lastInsertRowid };
+    const r = catalogCore.add(db, "suppliers", data);
+    return r.success ? { success: true, id: r.id } : r;
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -2235,18 +2219,7 @@ ipcMain.handle("add-supplier", async (event, data) => {
 
 ipcMain.handle("update-supplier", async (event, id, data) => {
   try {
-    db.prepare(
-      "UPDATE suppliers SET name=?, contact=?, phone=?, email=?, address=?, delivery_days=? WHERE id=?",
-    ).run(
-      data.name,
-      data.contact || "",
-      data.phone || "",
-      data.email || "",
-      data.address || "",
-      data.delivery_days || "",
-      id,
-    );
-    return { success: true };
+    return catalogCore.update(db, "suppliers", id, data);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -4000,9 +3973,12 @@ const startLiveReplica = () => {
         } catch (err) {}
       }
       // Lo mismo con clientes creados o editados en la caja que aún no suben.
-      if (tables.includes("customers")) {
+      // Lo mismo con clientes, categorías y proveedores creados o editados en
+      // la caja que aún no suben.
+      for (const table of ["customers", "categories", "suppliers"]) {
+        if (!tables.includes(table)) continue;
         try {
-          boxRpc.reapplyPendingRows(db, "customers");
+          boxRpc.reapplyPendingRows(db, table);
         } catch (err) {}
       }
       emitDbChanged(tables, ids);
