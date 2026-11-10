@@ -18,7 +18,7 @@ import {
   PopoverTrigger,
 } from "./ui/popover";
 import { formatMXTime } from "../utils/dateUtils";
-import { STALE_STRONG_MS, STALE_WARN_MS } from "../lib/replicaThresholds";
+import { Hint } from "./ui/hint";
 import { fmtMoney } from "../utils/format";
 import { cn } from "@/lib/utils";
 
@@ -59,10 +59,10 @@ function Divider() {
 function StateTile({ icon: Icon, label, status, tone, onClick, title, dot = true }) {
   const Tag = onClick ? "button" : "div";
   return (
+    <Hint label={title}>
     <Tag
       type={onClick ? "button" : undefined}
       onClick={onClick}
-      title={title}
       className={cn(
         "flex min-w-0 flex-col rounded-md px-2.5 py-2 text-left",
         onClick &&
@@ -86,6 +86,7 @@ function StateTile({ icon: Icon, label, status, tone, onClick, title, dot = true
         {dot && <Dot tone={tone} />}
       </span>
     </Tag>
+    </Hint>
   );
 }
 
@@ -198,14 +199,15 @@ const openRegister = () => {
 
           {/* Estado del servidor y la báscula, siempre a la vista */}
           <span className="h-4 w-px shrink-0 bg-border" />
-          <span
-            className="flex shrink-0 items-center gap-1.5"
-            title={
+          <Hint
+            side="bottom"
+            label={
               hostStatus
-                ? `Host: ${hostStatus.busy ? "ocupado" : hostStatus.reachable ? "conectado" : "desconectado"}${pendingCount ? ` · ${pendingCount} venta(s) pendiente(s)` : ""}${scaleEnabled ? ` · Báscula: ${scaleConnected ? "conectada" : "desconectada"}` : ""}`
-                : `Servidor: ${serverRunning ? "activo" : "caído"}${scaleEnabled ? ` · Báscula: ${scaleConnected ? "conectada" : "desconectada"}` : ""}`
+                ? `Host ${hostStatus.busy ? "ocupado" : hostStatus.reachable ? "conectado" : "desconectado"}${scaleEnabled ? ` · Báscula ${scaleConnected ? "conectada" : "desconectada"}` : ""}`
+                : `Servidor ${serverRunning ? "activo" : "caído"}${scaleEnabled ? ` · Báscula ${scaleConnected ? "conectada" : "desconectada"}` : ""}`
             }
           >
+          <span className="flex shrink-0 items-center gap-1.5">
             <Wifi
               size={14}
               aria-label={
@@ -233,9 +235,6 @@ const openRegister = () => {
             />
             {scaleEnabled && (
               <span
-                title={
-                  scaleConnected ? "Báscula conectada" : "Báscula desconectada"
-                }
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
                   scaleConnected ? "bg-success" : "bg-muted-foreground/40",
@@ -243,6 +242,7 @@ const openRegister = () => {
               />
             )}
           </span>
+          </Hint>
 
           <span className="h-4 w-px shrink-0 bg-border" />
           <span className="text-[14px] font-semibold whitespace-nowrap tabular-nums">
@@ -316,19 +316,22 @@ const openRegister = () => {
             <div className="p-2">
               {/* Fase 5 · abrir caja requiere al Host: sin él, el botón
                   sólo produciría un error. */}
-              <Button
-                size="sm"
-                className="w-full"
-                onClick={openRegister}
-                disabled={!!hostStatus && hostStatus.reachable === false}
-                title={
+              <Hint
+                label={
                   hostStatus && hostStatus.reachable === false
                     ? "Abrir caja requiere conexión con el Host"
                     : undefined
                 }
               >
-                Abrir caja
-              </Button>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={openRegister}
+                  disabled={!!hostStatus && hostStatus.reachable === false}
+                >
+                  Abrir caja
+                </Button>
+              </Hint>
             </div>
           </>
         )}
@@ -336,28 +339,8 @@ const openRegister = () => {
         <Divider />
 
         <div className="p-1.5">
-          {hostStatus && hostStatus.busy && (
-            <div className="mb-1.5 rounded-md border border-warning/30 bg-warning/[0.08] px-2.5 py-2">
-              <p className="text-[14px] font-semibold text-warning">
-                Host ocupado
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-warning/90">
-                Está importando datos. Puedes vender; los avisos y la
-                sincronización se reanudan solos al terminar.
-              </p>
-            </div>
-          )}
-          {hostStatus && hostStatus.reachable === false && (
-            <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
-              <p className="text-[14px] font-semibold text-destructive">
-                Host desconectado
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">
-                Puedes seguir vendiendo: las ventas se guardan y se suben solas
-                al reconectar. Abrir/cerrar caja y gastos sí requieren Host.
-              </p>
-            </div>
-          )}
+          {/* Sin Host, ventas pendientes y datos viejos tienen sus propios avisos
+              (SyncCenter: indicador en la barra y avisos flotantes). */}
           {!hostStatus && !serverRunning && (
             <div className="mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2">
               <p className="text-[14px] font-semibold text-destructive">
@@ -365,41 +348,6 @@ const openRegister = () => {
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">
                 La app móvil no está conectada. La venta local sigue funcionando.
-              </p>
-            </div>
-          )}
-          {pendingCount > 0 && (
-            <div className="mb-1.5 rounded-md border border-warning/30 bg-warning/[0.07] px-2.5 py-2">
-              <p className="text-[14px] font-semibold text-warning">
-                {pendingCount} venta(s) pendiente(s)
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-warning/90">
-                Están a salvo en esta caja y subirán solas. No cierres la caja
-                hasta que la cola esté vacía.
-              </p>
-            </div>
-          )}
-          {replicaStaleMs != null && replicaStaleMs > STALE_WARN_MS && (
-            <div
-              className={
-                replicaStaleMs > STALE_STRONG_MS
-                  ? "mb-1.5 rounded-md border border-destructive/30 bg-destructive/[0.06] px-2.5 py-2"
-                  : "mb-1.5 rounded-md border border-warning/30 bg-warning/[0.07] px-2.5 py-2"
-              }
-            >
-              <p
-                className={
-                  replicaStaleMs > STALE_STRONG_MS
-                    ? "text-[14px] font-semibold text-destructive"
-                    : "text-[14px] font-semibold text-warning"
-                }
-              >
-                Datos de hace {Math.floor(replicaStaleMs / 3600000)} h{" "}
-                {Math.floor((replicaStaleMs % 3600000) / 60000)} min
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-warning/90">
-                Catálogo y precios pueden estar desactualizados. Se sigue
-                vendiendo; no se bloquea nada.
               </p>
             </div>
           )}

@@ -381,12 +381,8 @@ const processSaleRef = useRef(null);
         }
       }
       lastSaleFolioRef.current = result.folio || null;
-      if (result.offline) {
-        showNotification(
-          "Host sin conexión: la venta quedó guardada y se subirá sola al reconectar.",
-          "warning",
-        );
-      }
+      // Sin Host no se avisa en cada venta: el indicador de la barra y el
+      // aviso flotante de sincronización ya lo dicen una vez.
       if (method === "cash") {
         setWaitingDrawer(true);
       } else {
