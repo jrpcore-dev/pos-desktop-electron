@@ -16,6 +16,7 @@ const customersCore = require("./customers-core");
 const catalogCore = require("./catalog-core");
 const productsCore = require("./products-core");
 const cashCore = require("./cash-core");
+const pricesCore = require("./prices-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
@@ -233,7 +234,87 @@ const cashOp = (kind) => (db, [data = {}]) => {
   };
 };
 
+// Precios especiales por nivel y por cliente · mismas reglas que el Host
+// (prices-core). La pareja es la llave; lo creado aquí viaja por uid.
+const uidIfLocal = (row) => (row && row.id < 0 && row.uid ? row.uid : undefined);
+const ownerRow = (db, name, id) =>
+  name === "customer_prices"
+    ? db.prepare("SELECT id, uid, name FROM customers WHERE id = ?").get(Number(id))
+    : db.prepare("SELECT id, name FROM customer_tiers WHERE id = ?").get(Number(id));
+const pairPrice = (db, name, ownerId, productId) => {
+  const t = pricesCore.TABLES[name];
+  const row = db.prepare(`SELECT price FROM ${name} WHERE ${t.owner} = ? AND product_id = ?`).get(ownerId, productId);
+  return row ? row.price : null;
+};
+const setPairOp = (name) => (db, [ownerId, productId, price]) => {
+  const t = pricesCore.TABLES[name];
+  const value = pricesCore.validPrice(price);
+  if (!value) return fail("INVALID_PRICE", "Precio inválido");
+  const owner = ownerRow(db, name, ownerId);
+  if (!owner) return fail("OWNER_NOT_FOUND", t.notFound);
+  const product = db.prepare("SELECT id, uid, name FROM products WHERE id = ?").get(Number(productId));
+  if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
+  const refs =
+    name === "customer_prices"
+      ? { customerUid: uidIfLocal(owner), productUid: uidIfLocal(product) }
+      : { productUid: uidIfLocal(product) };
+  return {
+    args: [owner.id, product.id, value, refs],
+    effect: {
+      pairs: [
+        {
+          table: name,
+          ownerId: owner.id,
+          ownerUid: owner.uid || undefined,
+          productId: product.id,
+          productUid: product.uid || undefined,
+          before: pairPrice(db, name, owner.id, product.id),
+          after: value,
+        },
+      ],
+    },
+    tables: [name],
+    label: `Precio de ${product.name} para ${owner.name} · ${fmtMoney(value)}`,
+    result: {},
+  };
+};
+const deletePairOp = (name) => (db, [id]) => {
+  const t = pricesCore.TABLES[name];
+  const row = db.prepare(`SELECT * FROM ${name} WHERE id = ?`).get(Number(id));
+  // Ya no está: quitarlo otra vez no es error (igual que en el Host).
+  if (!row) return { args: [id], effect: null, tables: [], label: "Precio quitado", result: {} };
+  const owner = ownerRow(db, name, row[t.owner]) || { id: row[t.owner] };
+  const product = db.prepare("SELECT id, uid, name FROM products WHERE id = ?").get(row.product_id) || { id: row.product_id };
+  const refs =
+    name === "customer_prices"
+      ? { customerId: owner.id, customerUid: uidIfLocal(owner), productId: product.id, productUid: uidIfLocal(product) }
+      : { tierId: owner.id, productId: product.id, productUid: uidIfLocal(product) };
+  return {
+    args: [row.id > 0 ? row.id : null, refs],
+    effect: {
+      pairs: [
+        {
+          table: name,
+          ownerId: owner.id,
+          ownerUid: owner.uid || undefined,
+          productId: product.id,
+          productUid: product.uid || undefined,
+          before: row.price,
+          after: null,
+        },
+      ],
+    },
+    tables: [name],
+    label: `Precio quitado · ${product.name || "producto"}${owner.name ? ` · ${owner.name}` : ""}`,
+    result: {},
+  };
+};
+
 const QUEUED_OPS = {
+  "set-customer-price": setPairOp("customer_prices"),
+  "delete-customer-price": deletePairOp("customer_prices"),
+  "set-tier-price": setPairOp("tier_prices"),
+  "delete-tier-price": deletePairOp("tier_prices"),
   "register-cash-expense": cashOp("out"),
   "register-cash-income": cashOp("in"),
   "add-product": (db, [data = {}]) => {
@@ -488,6 +569,8 @@ const syncOps = async (db) => {
       "suppliers",
       "cash_register",
       "cash_register_expenses",
+      "customer_prices",
+      "tier_prices",
     ]);
   }
   return out;
@@ -1489,6 +1572,7 @@ module.exports = {
   reapplyPendingRows: (db, table) => opQueue.reapplyRows(db, table),
   reapplyPendingPrices: (db) => opQueue.reapplyPrices(db),
   reapplyPendingAdds: (db, table, ids) => opQueue.reapplyAdds(db, table, ids),
+  reapplyPendingPairs: (db) => opQueue.reapplyPairs(db),
   relinkSaleProducts: (db) => salesLocal.relinkProducts(db),
   timingSummary,
   forward,

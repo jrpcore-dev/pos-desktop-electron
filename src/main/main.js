@@ -332,6 +332,7 @@ const customersCore = require("./customers-core");
 const catalogCore = require("./catalog-core");
 const productsCore = require("./products-core");
 const cashCore = require("./cash-core");
+const pricesCore = require("./prices-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -1538,22 +1539,30 @@ ipcMain.handle("get-customer-prices", async (event, customerId) => {
   }
 });
 
-ipcMain.handle("set-customer-price", async (event, customerId, productId, price) => {
+// Precios especiales: reglas en prices-core.js. Desde una caja llegan con
+// `refs` (uid del cliente/producto creados allá; al quitar, la pareja).
+ipcMain.handle("set-customer-price", async (event, customerId, productId, price, refs = {}) => {
   try {
-    db.prepare(
-      `INSERT INTO customer_prices (customer_id, product_id, price) VALUES (?, ?, ?)
-       ON CONFLICT(customer_id, product_id) DO UPDATE SET price = excluded.price`,
-    ).run(customerId, productId, price);
-    return { success: true };
+    return pricesCore.set(db, "customer_prices", {
+      ownerId: customerId,
+      ownerUid: refs && refs.customerUid,
+      productId,
+      productUid: refs && refs.productUid,
+      price,
+    });
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle("delete-customer-price", async (event, id) => {
+ipcMain.handle("delete-customer-price", async (event, id, refs = null) => {
   try {
-    db.prepare("DELETE FROM customer_prices WHERE id = ?").run(id);
-    return { success: true };
+    return pricesCore.remove(
+      db,
+      "customer_prices",
+      id,
+      refs && { ownerId: refs.customerId, ownerUid: refs.customerUid, productId: refs.productId, productUid: refs.productUid },
+    );
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1573,22 +1582,27 @@ ipcMain.handle("get-tier-prices", async (event, tierId) => {
   }
 });
 
-ipcMain.handle("set-tier-price", async (event, tierId, productId, price) => {
+ipcMain.handle("set-tier-price", async (event, tierId, productId, price, refs = {}) => {
   try {
-    db.prepare(
-      `INSERT INTO tier_prices (tier_id, product_id, price) VALUES (?, ?, ?)
-       ON CONFLICT(tier_id, product_id) DO UPDATE SET price = excluded.price`,
-    ).run(tierId, productId, price);
-    return { success: true };
+    return pricesCore.set(db, "tier_prices", {
+      ownerId: tierId,
+      productId,
+      productUid: refs && refs.productUid,
+      price,
+    });
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle("delete-tier-price", async (event, id) => {
+ipcMain.handle("delete-tier-price", async (event, id, refs = null) => {
   try {
-    db.prepare("DELETE FROM tier_prices WHERE id = ?").run(id);
-    return { success: true };
+    return pricesCore.remove(
+      db,
+      "tier_prices",
+      id,
+      refs && { ownerId: refs.tierId, productId: refs.productId, productUid: refs.productUid },
+    );
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -3773,6 +3787,13 @@ const startLiveReplica = () => {
         if (!tables.includes(table)) continue;
         try {
           boxRpc.reapplyPendingRows(db, table);
+        } catch (err) {}
+      }
+      // Precios especiales por nivel y por cliente puestos aquí que aún no
+      // suben (también si cambió el id de un cliente o producto creado aquí).
+      if (["customer_prices", "tier_prices", "customers", "products"].some((t) => tables.includes(t))) {
+        try {
+          boxRpc.reapplyPendingPairs(db);
         } catch (err) {}
       }
       // Totales de la caja: lo retirado o entrado aquí sin subir se vuelve a

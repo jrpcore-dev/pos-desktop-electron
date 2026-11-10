@@ -132,14 +132,49 @@ const applyPrices = (db, list, sign) => {
     else writePrices(db, productId, e.before, true);
   }
 };
+// Precios especiales por pareja (cliente o nivel, producto). El efecto guarda
+// el precio de antes y el de después (null = sin precio). Las filas que pone
+// la caja llevan id negativo; el cliente y el producto se ubican por uid si
+// nacieron aquí (su id provisional cambia al llegar el del Host).
+const PAIR_TABLES = Object.freeze({
+  customer_prices: { owner: "customer_id", ownerTable: "customers", ownerHasUid: true },
+  tier_prices: { owner: "tier_id", ownerTable: "customer_tiers", ownerHasUid: false },
+});
+const pairOwnerOf = (db, t, e) => {
+  if (e.ownerUid && t.ownerHasUid) {
+    const row = db.prepare(`SELECT id FROM ${t.ownerTable} WHERE uid = ?`).get(String(e.ownerUid));
+    if (row) return row.id;
+  }
+  return Number(e.ownerId);
+};
+const writePair = (db, name, t, owner, product, price) => {
+  if (price == null) {
+    db.prepare(`DELETE FROM ${name} WHERE ${t.owner} = ? AND product_id = ?`).run(owner, product);
+    return;
+  }
+  const upd = db.prepare(`UPDATE ${name} SET price = ? WHERE ${t.owner} = ? AND product_id = ?`).run(price, owner, product);
+  if (upd.changes) return;
+  const min = Math.min(0, Number(db.prepare(`SELECT MIN(id) AS m FROM ${name}`).get().m) || 0);
+  db.prepare(`INSERT INTO ${name} (id, ${t.owner}, product_id, price) VALUES (?, ?, ?, ?)`).run(min - 1, owner, product, price);
+};
+const applyPairs = (db, list, sign) => {
+  for (const e of list || []) {
+    const t = PAIR_TABLES[e && e.table];
+    if (!t) continue;
+    writePair(db, e.table, t, pairOwnerOf(db, t, e), productIdOf(db, { productId: e.productId, productUid: e.productUid }), sign > 0 ? e.after : e.before);
+  }
+};
+
 const applyEffect = (db, effect, sign = 1) => {
   const stock = (effect && Array.isArray(effect.stock) && effect.stock) || [];
   const prices = (effect && Array.isArray(effect.prices) && effect.prices) || [];
   const rows = (effect && Array.isArray(effect.rows) && effect.rows) || [];
   const adds = (effect && Array.isArray(effect.adds) && effect.adds) || [];
+  const pairs = (effect && Array.isArray(effect.pairs) && effect.pairs) || [];
   // Aplicar: primero las filas (un producto nuevo debe existir antes de
   // sumarle su stock inicial). Deshacer: al revés.
   if (sign < 0) {
+    applyPairs(db, pairs, sign);
     applyAdds(db, adds, sign);
     applyStock(db, stock, sign);
     applyPrices(db, prices, sign);
@@ -153,6 +188,7 @@ const applyEffect = (db, effect, sign = 1) => {
     applyPrices(db, prices, sign);
     applyStock(db, stock, sign);
     applyAdds(db, adds, sign);
+    applyPairs(db, pairs, sign);
   }
 };
 
@@ -317,6 +353,24 @@ const reapplyAdds = (db, table, ids = null) => {
   return touched;
 };
 
+// Precios especiales: la réplica trajo los del Host (o cambió el id de un
+// cliente/producto creado aquí). Los que puso la caja (id negativo) se quitan
+// y lo que aún no sube se vuelve a aplicar encima, ya con los ids actuales.
+const reapplyPairs = (db) => {
+  const rows = list(db, [STATUS.PENDING, STATUS.NEEDS_AUTH]);
+  let touched = 0;
+  db.transaction(() => {
+    for (const name of Object.keys(PAIR_TABLES)) db.prepare(`DELETE FROM ${name} WHERE id < 0`).run();
+    for (const r of rows) {
+      const pairs = (r.effect && r.effect.pairs) || [];
+      if (!pairs.length) continue;
+      applyPairs(db, pairs, 1);
+      touched += pairs.length;
+    }
+  })();
+  return touched;
+};
+
 // Promos por cantidad: la réplica trajo las del Host. Las que puso la caja
 // (id negativo) se quitan y lo que aún no sube se vuelve a aplicar encima.
 const reapplyPrices = (db) => {
@@ -410,6 +464,7 @@ module.exports = {
   reapplyRows,
   reapplyPrices,
   reapplyAdds,
+  reapplyPairs,
   STATUS,
   OPEN_STATUSES,
   enqueue,
