@@ -541,8 +541,7 @@ const runMigrations = (db) => {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_uid ON suppliers(uid)");
   // Y para productos (products-core.js).
   ensureColumn("products", "uid", "TEXT");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_uid ON products(uid)");
-  ensureColumn("sales", "credit_amount", "REAL DEFAULT 0");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_uid ON products(uid)");  ensureColumn("sales", "credit_amount", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid_method", "TEXT");
   db.exec(`CREATE TABLE IF NOT EXISTS customer_credit_movements (
@@ -948,6 +947,9 @@ const runMigrations = (db) => {
   // Tipo de salida: 'supplier' = pago a proveedor/mercancía, NULL = otro gasto.
   // Las compras desde "Llegó mercancía" se reconocen por product_id.
   ensureColumn("cash_register_expenses", "category", "TEXT");
+  // Local-first · retiros y entradas hechos en una caja (cash-core.js).
+  ensureColumn("cash_register_expenses", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_register_expenses_uid ON cash_register_expenses(uid)");
 
   // 3b · sesiones de caja persistidas: solo hashes, el token nunca en claro.
   db.exec(`

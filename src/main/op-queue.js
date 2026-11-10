@@ -54,7 +54,22 @@ const ROW_COLUMNS = Object.freeze({
     "allow_manual_discount", "promo_fixed_price", "promo_start_date", "promo_end_date", "is_active",
     "sale_unit", "box_qty", "box_price", "pack_qty", "pack_price", "created_at",
   ],
+  // Retiros y entradas de dinero (cash-core). El total de la caja va aparte,
+  // como suma (`adds`).
+  cash_register_expenses: ["id", "uid", "register_id", "amount", "reason", "category", "kind", "status", "created_at"],
 });
+// Totales que se mueven como suma o resta (nunca cantidad exacta): sólo estas
+// columnas, para que nada guardado en la cola pueda nombrar otra.
+const ADD_COLUMNS = Object.freeze({ cash_register: ["expenses", "cash_in"] });
+const applyAdds = (db, list, sign) => {
+  for (const e of list || []) {
+    const cols = ADD_COLUMNS[e && e.table];
+    if (!cols || !cols.includes(e.col)) continue;
+    const delta = Number(e.delta) || 0;
+    if (!delta) continue;
+    db.prepare(`UPDATE ${e.table} SET ${e.col} = COALESCE(${e.col}, 0) + ? WHERE id = ?`).run(sign * delta, Number(e.id));
+  }
+};
 const rowKey = (row) => (row.uid ? ["uid", row.uid] : ["id", row.id]);
 const writeRow = (db, table, row) => {
   const cols = ROW_COLUMNS[table];
@@ -121,9 +136,11 @@ const applyEffect = (db, effect, sign = 1) => {
   const stock = (effect && Array.isArray(effect.stock) && effect.stock) || [];
   const prices = (effect && Array.isArray(effect.prices) && effect.prices) || [];
   const rows = (effect && Array.isArray(effect.rows) && effect.rows) || [];
+  const adds = (effect && Array.isArray(effect.adds) && effect.adds) || [];
   // Aplicar: primero las filas (un producto nuevo debe existir antes de
   // sumarle su stock inicial). Deshacer: al revés.
   if (sign < 0) {
+    applyAdds(db, adds, sign);
     applyStock(db, stock, sign);
     applyPrices(db, prices, sign);
   }
@@ -135,6 +152,7 @@ const applyEffect = (db, effect, sign = 1) => {
   if (sign > 0) {
     applyPrices(db, prices, sign);
     applyStock(db, stock, sign);
+    applyAdds(db, adds, sign);
   }
 };
 
@@ -279,6 +297,26 @@ const reapplyRows = (db, table) => {
   return touched;
 };
 
+// Totales de caja: la réplica trajo la fila del Host, que todavía no incluye
+// los retiros/entradas hechos aquí sin subir. Como el stock: sólo sobre las
+// filas que la réplica reescribió (`ids` null = todas, tras un resync).
+const reapplyAdds = (db, table, ids = null) => {
+  const wanted = ids ? new Set([...ids].map(String)) : null;
+  const rows = list(db, [STATUS.PENDING, STATUS.NEEDS_AUTH]);
+  let touched = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      const adds = ((r.effect && r.effect.adds) || []).filter(
+        (e) => e.table === table && (!wanted || wanted.has(String(e.id))),
+      );
+      if (!adds.length) continue;
+      applyAdds(db, adds, 1);
+      touched += adds.length;
+    }
+  })();
+  return touched;
+};
+
 // Promos por cantidad: la réplica trajo las del Host. Las que puso la caja
 // (id negativo) se quitan y lo que aún no sube se vuelve a aplicar encima.
 const reapplyPrices = (db) => {
@@ -371,6 +409,7 @@ const sync = (db, send) => {
 module.exports = {
   reapplyRows,
   reapplyPrices,
+  reapplyAdds,
   STATUS,
   OPEN_STATUSES,
   enqueue,

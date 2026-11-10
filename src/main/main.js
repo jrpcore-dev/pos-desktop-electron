@@ -331,6 +331,7 @@ const hostWatcher = require("./host-watcher");
 const customersCore = require("./customers-core");
 const catalogCore = require("./catalog-core");
 const productsCore = require("./products-core");
+const cashCore = require("./cash-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -3768,10 +3769,19 @@ const startLiveReplica = () => {
       }
       // Lo mismo con clientes, categorías y proveedores creados o editados en
       // la caja que aún no suben.
-      for (const table of ["customers", "categories", "suppliers"]) {
+      for (const table of ["customers", "categories", "suppliers", "cash_register_expenses"]) {
         if (!tables.includes(table)) continue;
         try {
           boxRpc.reapplyPendingRows(db, table);
+        } catch (err) {}
+      }
+      // Totales de la caja: lo retirado o entrado aquí sin subir se vuelve a
+      // sumar sobre la fila que trajo el Host.
+      if (tables.includes("cash_register")) {
+        try {
+          // Sin resync, sólo las filas que la réplica reescribió (las demás ya
+          // lo tienen sumado): nunca "todas".
+          boxRpc.reapplyPendingAdds(db, "cash_register", meta && meta.resync ? null : (ids && ids.cash_register) || []);
         } catch (err) {}
       }
       emitDbChanged(tables, ids);
@@ -4024,75 +4034,32 @@ ipcMain.handle("is-first-time", async () => {
 
 // ─── CASH REGISTER ──────────────────────────────────────────
 
-ipcMain.handle(
-  "register-cash-expense",
-  async (event, { amount, reason, category, cashierId, role }) => {
-    try {
-      const register = findOpenRegister(cashierId, role);
-      if (!register)
-        return {
-          success: false,
-          error: "No hay caja abierta para registrar gasto",
-        };
-
-      const registerExpense = db.transaction(() => {
-        const newExpenses = (register.expenses || 0) + amount;
-        db.prepare("UPDATE cash_register SET expenses = ? WHERE id = ?").run(
-          newExpenses,
-          register.id,
-        );
-        // category 'supplier' = pago a proveedor/mercancía; NULL = otro gasto.
-        db.prepare(
-          "INSERT INTO cash_register_expenses (register_id, amount, reason, category) VALUES (?, ?, ?, ?)",
-        ).run(register.id, amount, reason, category === "supplier" ? "supplier" : null);
-        return newExpenses;
-      });
-      const newExpenses = registerExpense();
-      emitDbChanged(["cash_register", "cash_register_expenses"], {});
-      return { success: true, expenses: newExpenses };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  },
-);
+// Retiro (gasto) y entrada de dinero: reglas en cash-core.js, las mismas que
+// aplica una caja en su copia. Desde una caja llegan con su `uid` (reenviar
+// no duplica) y la caja abierta cuando se hicieron.
+ipcMain.handle("register-cash-expense", async (event, data = {}) => {
+  try {
+    const r = cashCore.add(db, "out", data || {}, callerDeviceId());
+    if (!r.success) return r;
+    emitDbChanged(["cash_register", "cash_register_expenses"], {});
+    return { success: true, expenses: r.total, id: r.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 
 // Entrada de dinero a la caja abierta (cambio extra, préstamo del dueño…).
 // Suma al efectivo esperado del corte; no es venta ni cuenta como gasto.
-ipcMain.handle(
-  "register-cash-income",
-  async (event, { amount, reason, cashierId, role }) => {
-    try {
-      const value = Number(amount);
-      if (!(value > 0)) return { success: false, error: "Ingresa un monto válido." };
-      // El motivo de una entrada no es obligatorio: sin él queda "Sin motivo",
-      // visible en los movimientos (una entrada no puede causar faltante).
-      const motive = String(reason || "").trim() || "Sin motivo";
-      const register = findOpenRegister(cashierId, role);
-      if (!register)
-        return {
-          success: false,
-          error: "No hay caja abierta para registrar la entrada",
-        };
-
-      const registerIncome = db.transaction(() => {
-        const newCashIn = (register.cash_in || 0) + value;
-        db.prepare("UPDATE cash_register SET cash_in = ? WHERE id = ?").run(
-          newCashIn,
-          register.id,
-        );
-        db.prepare(
-          "INSERT INTO cash_register_expenses (register_id, amount, reason, kind) VALUES (?, ?, ?, 'in')",
-        ).run(register.id, value, motive);
-        return newCashIn;
-      });
-      const cashIn = registerIncome();
-      emitDbChanged(["cash_register", "cash_register_expenses"], {});
-      return { success: true, cashIn };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  },
-);
+ipcMain.handle("register-cash-income", async (event, data = {}) => {
+  try {
+    const r = cashCore.add(db, "in", data || {}, callerDeviceId());
+    if (!r.success) return r;
+    emitDbChanged(["cash_register", "cash_register_expenses"], {});
+    return { success: true, cashIn: r.total, id: r.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 
 // Dinero de una caja por método. Fiado: lo pagado al momento suma a su
 // método como cualquier venta, la parte fiada va aparte (no entra al cajón) y

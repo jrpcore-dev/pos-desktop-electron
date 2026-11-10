@@ -180,10 +180,12 @@ const cashRegisterRow = (db, id) =>
   // Local-first · clientes (`customers.uid` y su índice) ya está en HEAD.
   // Local-first · catálogo (`categories.uid`, `suppliers.uid` y sus índices) ya está en HEAD.
   // Local-first · productos (`products.uid` y su índice) ya está en HEAD.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  // Local-first · retiros y entradas: `cash_register_expenses.uid` y su índice
+  // único (ALTER ADD COLUMN reescribe el CREATE TABLE: alta Y baja).
+  const DDL_AGREGADO = [/^CREATE TABLE cash_register_expenses \(.*uid TEXT/s, /idx_cash_register_expenses_uid/];
+  const DDL_AGREGADO_TOTAL = 2;
+  const DDL_BORRADO = [/^CREATE TABLE cash_register_expenses \(/];
+  const DDL_BORRADO_TOTAL = 1;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -345,6 +347,8 @@ const cashRegisterRow = (db, id) =>
       ...(colDe(before.cols.suppliers, "uid") ? [] : ["+ suppliers.uid|TEXT|nn=0|dflt=null"]),
       // Local-first · productos creados en una caja.
       ...(colDe(before.cols.products, "uid") ? [] : ["+ products.uid|TEXT|nn=0|dflt=null"]),
+      // Local-first · retiros y entradas hechos en una caja.
+      ...(colDe(before.cols.cash_register_expenses, "uid") ? [] : ["+ cash_register_expenses.uid|TEXT|nn=0|dflt=null"]),
     ];
     // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
     const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)
@@ -426,6 +430,7 @@ const cashRegisterRow = (db, id) =>
       "categories.idx_categories_uid",
       "suppliers.idx_suppliers_uid",
       "products.idx_products_uid",
+      "cash_register_expenses.idx_cash_register_expenses_uid",
     ]
       .filter((i) => !before.indexes.includes(i))
       .sort();

@@ -15,6 +15,7 @@ const offlineQueue = require("./offline-queue");
 const customersCore = require("./customers-core");
 const catalogCore = require("./catalog-core");
 const productsCore = require("./products-core");
+const cashCore = require("./cash-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
@@ -195,7 +196,46 @@ const pricesOf = (db, productId) =>
 // La referencia que entiende el Host: un producto creado aquí va por uid.
 const productRef = (row) => (row && row.id < 0 && row.uid ? { productUid: row.uid } : {});
 
+// Retiros y entradas de dinero · mismas reglas que el Host (cash-core). El
+// total de la caja se mueve como suma; la fila lleva uid e id negativo.
+const sqliteNowUtc = () => new Date().toISOString().replace("T", " ").slice(0, 19);
+const fmtMoney = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+const cashOp = (kind) => (db, [data = {}]) => {
+  const n = cashCore.normalize(kind, data);
+  if (!n.success) return n;
+  const deviceId = activation.getSetting(db, "box_device_id") || null;
+  const register = cashCore.registerFor(db, data || {}, deviceId);
+  if (!register) return fail("NO_OPEN_REGISTER", cashCore.KINDS[kind].noRegister);
+  const { col } = cashCore.KINDS[kind];
+  const uid = crypto.randomUUID();
+  const min = Number(db.prepare("SELECT MIN(id) AS m FROM cash_register_expenses").get().m) || 0;
+  const after = {
+    id: Math.min(min, 0) - 1,
+    uid,
+    register_id: register.id,
+    amount: n.amount,
+    reason: n.reason,
+    category: n.category,
+    kind: kind === "in" ? "in" : null,
+    status: null,
+    created_at: sqliteNowUtc(),
+  };
+  const total = (Number(register[col]) || 0) + n.amount;
+  return {
+    args: [{ ...data, amount: n.amount, reason: n.reason, category: n.category, uid, registerId: register.id }],
+    effect: {
+      rows: [{ table: "cash_register_expenses", before: null, after }],
+      adds: [{ table: "cash_register", id: register.id, col, delta: n.amount }],
+    },
+    tables: ["cash_register", "cash_register_expenses"],
+    label: `${kind === "in" ? "Entrada" : "Retiro"} de ${fmtMoney(n.amount)} · ${n.reason || "Sin motivo"}`,
+    result: kind === "in" ? { cashIn: total, id: after.id } : { expenses: total, id: after.id },
+  };
+};
+
 const QUEUED_OPS = {
+  "register-cash-expense": cashOp("out"),
+  "register-cash-income": cashOp("in"),
   "add-product": (db, [data = {}]) => {
     if (!String((data && data.name) || "").trim()) return fail("NAME_REQUIRED", "Nombre requerido");
     if (productsCore.barcodeTaken(db, data.barcode)) return fail("BARCODE_TAKEN", productsCore.BARCODE_TAKEN);
@@ -439,7 +479,16 @@ const syncOps = async (db) => {
     out = { ...next, synced: out.synced + next.synced, conflicts: out.conflicts + next.conflicts };
   }
   if (out.synced || out.conflicts) {
-    opsChanged(["products", "product_prices", "stock_movements", "customers", "categories", "suppliers"]);
+    opsChanged([
+      "products",
+      "product_prices",
+      "stock_movements",
+      "customers",
+      "categories",
+      "suppliers",
+      "cash_register",
+      "cash_register_expenses",
+    ]);
   }
   return out;
 };
@@ -1315,6 +1364,15 @@ const forward = (db, channel, args = []) => {
     return closeWhenQueueEmpty(db).then((blocked) => blocked || rpcCall(db, channel, args));
   }
   if (
+    channel === "delete-cash-expense" &&
+    Number(args[0] && typeof args[0] === "object" ? args[0].expenseId : args[0]) < 0
+  ) {
+    // Cancelar es del Host: un retiro que aún no llega allá no se manda.
+    return Promise.resolve(
+      fail("NOT_YET_ON_HOST", "Este movimiento todavía se está guardando en el Host. Intenta cancelarlo en unos segundos."),
+    );
+  }
+  if (
     channel === "open-cash-register" ||
     channel === "register-cash-expense" ||
     channel === "register-cash-income" ||
@@ -1430,6 +1488,7 @@ module.exports = {
   reapplyPendingOps: (db, productIds) => opQueue.reapplyPending(db, productIds),
   reapplyPendingRows: (db, table) => opQueue.reapplyRows(db, table),
   reapplyPendingPrices: (db) => opQueue.reapplyPrices(db),
+  reapplyPendingAdds: (db, table, ids) => opQueue.reapplyAdds(db, table, ids),
   relinkSaleProducts: (db) => salesLocal.relinkProducts(db),
   timingSummary,
   forward,
