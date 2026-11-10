@@ -181,17 +181,11 @@ const cashRegisterRow = (db, id) =>
   // Local-first · catálogo (`categories.uid`, `suppliers.uid` y sus índices) ya está en HEAD.
   // Local-first · productos (`products.uid` y su índice) ya está en HEAD.
   // Local-first · retiros y entradas (`cash_register_expenses.uid` y su índice) ya está en HEAD.
-  // Local-first · promos y paquetes: `group_promos.uid`, `bundles.uid` y sus
-  // índices únicos (ALTER ADD COLUMN reescribe el CREATE TABLE: alta Y baja).
-  const DDL_AGREGADO = [
-    /^CREATE TABLE group_promos \(.*uid TEXT/s,
-    /^CREATE TABLE bundles \(.*uid TEXT/s,
-    /idx_group_promos_uid/,
-    /idx_bundles_uid/,
-  ];
-  const DDL_AGREGADO_TOTAL = 4;
-  const DDL_BORRADO = [/^CREATE TABLE group_promos \(/, /^CREATE TABLE bundles \(/];
-  const DDL_BORRADO_TOTAL = 2;
+  // Local-first · promos y paquetes (`group_promos.uid`, `bundles.uid` y sus índices) ya está en HEAD.
+  const DDL_AGREGADO = [];
+  const DDL_AGREGADO_TOTAL = 0;
+  const DDL_BORRADO = [];
+  const DDL_BORRADO_TOTAL = 0;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
