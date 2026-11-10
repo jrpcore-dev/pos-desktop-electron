@@ -293,7 +293,8 @@ export default function HostStatusBanner() {
   const staleStrong = stale != null && stale > STALE_STRONG_MS;
   const protocolWarning = String(status.protocolWarning || "").trim();
   // Fase 5 · ventas que esperan PIN: la cola no sube sola hasta un login.
-  const needsAuth = Number(pending.needsAuth) || 0;
+  // Ventas y cambios (clientes, productos, stock) detenidos por la sesión.
+  const needsAuth = (Number(pending.needsAuth) || 0) + (Number(pendingOps.needsAuth) || 0);
   // También por sondeo: si el aviso de inicio llegó antes de montar la pantalla.
   const syncing = !hostDown && (!!sync || status.replica?.state === "downloading");
 
@@ -326,13 +327,13 @@ export default function HostStatusBanner() {
     : busy
       ? "Host ocupado (importando datos) · no es una caída"
       : needsAuth > 0
-        ? `${needsAuth} venta(s) esperan que inicies sesión de nuevo para subir`
+        ? `${needsAuth} venta(s) o cambio(s) esperan que inicies sesión de nuevo para subir`
         : pending.count > 0
           ? `${pending.count} venta(s) pendiente(s) de subir${pending.oldestAgeMs != null ? ` · la más antigua hace ${fmtAge(pending.oldestAgeMs)}` : ""}`
           : pendingOps.count > 0
             ? opsConflicts > 0
-              ? `${opsConflicts} movimiento(s) de inventario rechazado(s) por el Host · revisa Movimientos`
-              : `${pendingOps.count} movimiento(s) de inventario por subir al Host`
+              ? `${opsConflicts} cambio(s) rechazado(s) por el Host · revisa Movimientos`
+              : `${pendingOps.count} cambio(s) hechos en esta caja por subir al Host`
             : staleWarn
               ? `Datos de esta caja actualizados hace ${fmtAge(stale)}`
               : protocolLine;

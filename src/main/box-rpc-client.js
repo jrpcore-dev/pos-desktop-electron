@@ -459,7 +459,25 @@ const setTimingSink = (fn) => {
 };
 const TIMING_KEEP = 200; // últimas muestras por canal
 const timingStats = new Map();
+// Cuánto estuvo trabado el proceso de ESTA caja desde la medición anterior.
+// Un `netMs` alto con `boxLagMs` bajo es la red; con `boxLagMs` alto, la caja.
+let boxLag = null;
+const takeBoxLagMs = () => {
+  try {
+    if (!boxLag) {
+      boxLag = require("perf_hooks").monitorEventLoopDelay({ resolution: 20 });
+      boxLag.enable();
+      return null;
+    }
+    const ms = Math.round(boxLag.max / 1e6);
+    boxLag.reset();
+    return ms;
+  } catch (err) {
+    return null;
+  }
+};
 const recordTiming = (entry) => {
+  entry.boxLagMs = takeBoxLagMs();
   const list = timingStats.get(entry.channel) || [];
   list.push(entry.totalMs);
   if (list.length > TIMING_KEEP) list.shift();
@@ -655,10 +673,26 @@ const safe = (fn, fallback) => {
   }
 };
 
-// 401 del Host = la sesión de PIN ya no sirve: se borra y el renderer la pide.
-const expired = (db, data) => {
-  clientLink.clearSessionToken(db);
+// 401 del Host = la sesión CON LA QUE SE MANDÓ ya no sirve: se borra y el
+// renderer la pide. Sólo si sigue siendo la actual: una respuesta que salió
+// sin sesión (el login local-first aún la estaba pidiendo) o con la del login
+// anterior no puede tirar la que acaba de llegar. Antes la borraba y desde ahí
+// todo pedía "sesión expirada".
+const expired = (db, data, creds = null) => {
+  const sent = creds ? creds.sessionToken || "" : null;
+  if (sent === null || (clientLink.readSessionToken(db) || "") === sent) {
+    clientLink.clearSessionToken(db);
+  }
   return fail("SESSION_EXPIRED", (data && data.error) || "La sesión expiró en el Host");
+};
+
+// Login local-first: se entra al momento y la sesión del Host llega en
+// segundo plano. Lo que salga hacia el Host en ese rato la espera en vez de
+// viajar sin sesión (abrir caja justo después de entrar daba 401).
+let loginInFlight = null;
+const waitForLogin = async (db) => {
+  if (!loginInFlight || clientLink.readSessionToken(db)) return;
+  await loginInFlight;
 };
 
 const unreachable = (err) =>
@@ -795,11 +829,12 @@ const recordSale = async (db, payload = {}) => {
     const provisional = db.prepare("SELECT uid FROM customers WHERE id = ?").get(Number(payload.customerId));
     if (provisional && provisional.uid) payload = { ...payload, customerUid: provisional.uid };
   }
-  const creds = credentials(db);
-  if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  if (!credentials(db).hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
   // Fiado sigue en línea (saldo y límite viven en el Host). Sin copia local
   // completa todavía, el camino de siempre.
   if (payload.paymentMethod !== "credit" && localReady(db)) return recordSaleLocal(db, payload);
+  await waitForLogin(db);
+  const creds = credentials(db);
 
   const signature = sha256(
     canonical({
@@ -849,7 +884,7 @@ const recordSale = async (db, payload = {}) => {
     }
     if (!cres.data) return offlineFail();
     if (cres.status === 401) {
-      expired(db, cres.data);
+      expired(db, cres.data, creds);
       return fail("SESSION_EXPIRED", "La sesión con el Host caducó");
     }
     adoptHostFolioSeq(db, cres.data);
@@ -865,7 +900,7 @@ const recordSale = async (db, payload = {}) => {
       }
       if (!cres.data) return offlineFail();
       if (cres.status === 401) {
-        expired(db, cres.data);
+        expired(db, cres.data, creds);
         return fail("SESSION_EXPIRED", "La sesión con el Host caducó");
       }
       adoptHostFolioSeq(db, cres.data);
@@ -897,7 +932,7 @@ const recordSale = async (db, payload = {}) => {
   if (!res.data) return queueSale();
   if (res.status === 401) {
     // No se pierde: queda en cola y el renderer pedirá el PIN.
-    expired(db, res.data);
+    expired(db, res.data, creds);
     return queueSale();
   }
   adoptHostFolioSeq(db, res.data);
@@ -923,7 +958,7 @@ const recordSale = async (db, payload = {}) => {
     // Respuesta sin JSON o sesión vencida en el reintento: igual que en el
     // primer envío, la venta se encola en vez de perderse.
     if (!res.data || res.status === 401) {
-      if (res.status === 401) expired(db, res.data);
+      if (res.status === 401) expired(db, res.data, creds);
       return queueSale();
     }
     adoptHostFolioSeq(db, res.data);
@@ -938,6 +973,8 @@ const syncPending = async (db) => {
   if (syncInFlight) return syncInFlight;
   // Primero las operaciones: una venta puede usar un cliente creado aquí.
   if (opQueue.countOpen(db) > 0) await syncOps(db).catch(() => {});
+  if (syncInFlight) return syncInFlight;
+  await waitForLogin(db);
   if (syncInFlight) return syncInFlight;
   const creds = credentials(db);
   if (!creds.hostUrl) return { success: false, code: "NO_HOST_LINKED", pending: offlineQueue.countBlocking(db) };
@@ -1096,7 +1133,11 @@ const hostLogin = async (db, creds, id, pin, timeoutMs, isCurrent = () => true) 
 const verifyPin = async (db, id, pin) => {
   const creds = credentials(db);
   if (!creds.hostUrl) return offlineVerifyPin(db, id, pin);
-  const out = await hostLogin(db, creds, id, pin);
+  // Cada login revoca en el Host la sesión anterior de esta caja: si dos se
+  // cruzan (el de fondo y el del aviso de sesión), sólo se guarda el último.
+  const seq = ++loginSeq;
+  sessionCashierId = Number(id);
+  const out = await hostLogin(db, creds, id, pin, TIMEOUT_MS, () => seq === loginSeq);
   return out || offlineVerifyPin(db, id, pin);
 };
 
@@ -1121,7 +1162,11 @@ const loginLocalFirst = async (db, id, pin) => {
     sessionCashierId = Number(id);
   }
   const seq = ++loginSeq;
-  hostLogin(db, credentials(db), id, pin, TIMEOUT_MS, () => seq === loginSeq).catch(() => {});
+  const pending = hostLogin(db, credentials(db), id, pin, TIMEOUT_MS, () => seq === loginSeq).catch(() => {});
+  loginInFlight = pending;
+  pending.finally(() => {
+    if (loginInFlight === pending) loginInFlight = null;
+  });
   return { success: true, cashier: local.cashier, warning: local.warning, stale_ms: local.stale_ms };
 };
 
@@ -1296,12 +1341,13 @@ const forward = (db, channel, args = []) => {
 
 // POST /api/rpc · los canales de la lista blanca del Host (rpc-channels.js).
 const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
-  const creds = credentials(db);
-  if (!creds.hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
+  if (!credentials(db).hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
   // Sin Host, una lectura no vale 8 s de espera: falla al momento.
   if (READ_CHANNEL_RE.test(channel) && hostKnownDown(db)) {
     return fail("HOST_UNREACHABLE", "El Host no responde");
   }
+  await waitForLogin(db);
+  let creds = credentials(db);
   // La cola de operaciones trae su propia llave (la misma en cada reintento).
   const idempotent = !!opts.idempotencyKey || IDEMPOTENT_RPC.has(channel);
   const headers = idempotent
@@ -1326,7 +1372,18 @@ const rpcCall = async (db, channel, args = [], timeoutMs = null, opts = {}) => {
     }
   }
   if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
-  if (res.status === 401) return expired(db, res.data);
+  // Salió con una sesión que ya cambió (llegó la del login nuevo mientras
+  // viajaba): una vez más con la actual antes de pedir el PIN.
+  if (res.status === 401 && (clientLink.readSessionToken(db) || "") !== (creds.sessionToken || "")) {
+    creds = credentials(db);
+    try {
+      res = await postJson(db, creds, "/api/rpc", { channel, args }, headers, timeoutMs || RPC_TIMEOUTS[channel] || TIMEOUT_MS);
+    } catch (err) {
+      return unreachable(err);
+    }
+    if (!res.data) return fail("HOST_UNREACHABLE", "El Host no contestó");
+  }
+  if (res.status === 401) return expired(db, res.data, creds);
   // Vínculo con el Host, no respuesta del negocio: la cola lo reintenta.
   if (res.status === 403 && res.data.needsActivation) {
     return fail("NOT_PAIRED", res.data.error || "El Host no reconoce esta caja");

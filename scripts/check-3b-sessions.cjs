@@ -6,7 +6,8 @@
  *   - en la BD solo vive su sha256 (nunca el token en claro);
  *   - vencida → 401; revocada → 401; 401 ≠ 403;
  *   - mismo contrato para todos los tipos de dispositivo;
- *   - un login nuevo revoca la sesión anterior del mismo (caja, dispositivo);
+ *   - un login nuevo revoca la sesión anterior del mismo (caja, dispositivo)
+ *     en cuanto el token nuevo se usa (no antes: su respuesta puede perderse);
  *   - last_used_at con throttle de 5 min; poda de vencidas al arrancar.
  *
  * Uso:
@@ -128,10 +129,14 @@ const ALL_COLUMNS = () => JSON.stringify(db.prepare("SELECT * FROM box_sessions"
   const M1 = (await login({ "x-device-id": "mobile-1" })).data.token;
   const M2 = (await login({ "x-device-id": "mobile-1" })).data.token;
   check(!!M1 && !!M2 && M1 !== M2, "dos logins del mismo dispositivo → dos tokens distintos");
+  // La respuesta del login nuevo puede perderse en la red: hasta que el token
+  // nuevo se usa, el anterior sigue sirviendo.
   r = await req("GET", "/api/products/search?q=coca", { token: M1 });
-  check(r.status === 401, "el token anterior del móvil queda revocado (401)", String(r.status));
+  check(r.status === 200, "el token anterior sirve mientras el nuevo no se usa (200)", String(r.status));
   r = await req("GET", "/api/products/search?q=coca", { token: M2 });
   check(r.status === 200, "el token nuevo del móvil sigue vivo (200)", String(r.status));
+  r = await req("GET", "/api/products/search?q=coca", { token: M1 });
+  check(r.status === 401, "usado el nuevo, el anterior queda revocado (401)", String(r.status));
   const rowM2 = sessionOf(M2);
   check(rowM2 && rowM2.device_id === "mobile-1" && rowM2.device_type === "mobile",
     "la sesión guarda device_id y device_type", JSON.stringify(rowM2));

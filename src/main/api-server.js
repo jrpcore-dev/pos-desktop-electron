@@ -335,6 +335,14 @@ const startServer = async (
       db.prepare("UPDATE box_sessions SET revoked = 1 WHERE token_hash = ?").run(row.token_hash);
       return res.status(401).json({ success: false, error: "Sesión expirada" });
     }
+    // Primer uso de un token: ahora sí se cierran las sesiones anteriores de
+    // este cajero en este dispositivo (las que se emitieron antes que ésta).
+    if (row.device_id && Number(row.last_used_at) === Number(row.created_at)) {
+      db.prepare(
+        `UPDATE box_sessions SET revoked = 1
+          WHERE cashier_id = ? AND device_id = ? AND revoked = 0 AND created_at < ? AND token_hash <> ?`,
+      ).run(row.cashier_id, row.device_id, row.created_at, row.token_hash);
+    }
     if (!row.last_used_at || now - row.last_used_at >= LAST_USED_THROTTLE_MS) {
       db.prepare("UPDATE box_sessions SET last_used_at = ? WHERE token_hash = ?").run(
         now,
@@ -470,12 +478,10 @@ const startServer = async (
     const token = crypto.randomBytes(32).toString("hex");
     const tokenHash = activation.hashToken(token);
     const devId = req.headers["x-device-id"];
-    if (devId) {
-      // Un login nuevo cierra la sesión anterior de esa misma (caja, dispositivo).
-      db.prepare(
-        "UPDATE box_sessions SET revoked = 1 WHERE cashier_id = ? AND device_id = ? AND revoked = 0",
-      ).run(cashier.id, devId);
-    }
+    // La sesión anterior de este (cajero, dispositivo) ya NO se cierra aquí,
+    // sino cuando el token nuevo se usa por primera vez (requireAuth). Con red
+    // mala la caja pedía login, la respuesta se perdía (TIMEOUT) y el Host ya
+    // había revocado la sesión que la caja seguía usando: todo daba 401.
     let deviceType = (req.body && req.body.deviceType) || null;
     try {
       const paired = devId
