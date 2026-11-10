@@ -17,6 +17,7 @@ const catalogCore = require("./catalog-core");
 const productsCore = require("./products-core");
 const cashCore = require("./cash-core");
 const pricesCore = require("./prices-core");
+const promosCore = require("./promos-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
@@ -310,7 +311,119 @@ const deletePairOp = (name) => (db, [id]) => {
   };
 };
 
+// Promos por categoría/marca y paquetes · mismas reglas que el Host
+// (promos-core). Lo creado aquí (la promo, el paquete, su categoría o sus
+// productos) viaja por uid.
+const pickCols = (row, cols) => {
+  const out = { id: row.id, uid: row.uid || undefined };
+  for (const c of cols) out[c] = row[c];
+  return out;
+};
+const PROMO_COLS = ["name", "scope", "category_id", "brand", "percent", "start_date", "end_date", "is_active"];
+const BUNDLE_COLS = ["name", "price", "start_date", "end_date", "is_active"];
+const saveGroupPromoOp = (db, [promo = {}]) => {
+  const scope = promo && promo.scope === "brand" ? "brand" : "category";
+  const catId = scope === "category" ? parseInt(promo.category_id, 10) || null : null;
+  if (catId && !db.prepare("SELECT 1 FROM categories WHERE id = ?").get(catId)) {
+    return fail("CATEGORY_NOT_FOUND", "Categoría no encontrada");
+  }
+  const n = promosCore.normalizeGroupPromo(promo || {}, catId);
+  if (!n.success) return n;
+  const wire = catalogCore.refsToUid(db, { ...promo, category_id: catId });
+  if (promo.id) {
+    const current = db.prepare("SELECT * FROM group_promos WHERE id = ?").get(Number(promo.id));
+    if (!current) return fail("PROMO_NOT_FOUND", "Promoción no encontrada");
+    const before = pickCols(current, PROMO_COLS);
+    return {
+      args: [{ ...wire, id: current.id, uid: current.uid || undefined }],
+      effect: { rows: [{ table: "group_promos", before, after: { ...before, ...n.values } }] },
+      tables: ["group_promos"],
+      label: `Promoción editada · ${n.values.name || `${n.values.percent}%`}`,
+      result: { id: current.id },
+    };
+  }
+  const uid = crypto.randomUUID();
+  const after = catalogCore.provisionalRow(db, "group_promos", n.values, uid);
+  return {
+    args: [{ ...wire, id: undefined, uid }],
+    effect: { rows: [{ table: "group_promos", before: null, after }] },
+    tables: ["group_promos"],
+    label: `Promoción nueva · ${n.values.name || `${n.values.percent}%`}`,
+    result: { id: after.id },
+  };
+};
+const saveBundleOp = (db, [bundle = {}]) => {
+  const byId = db.prepare("SELECT id, uid FROM products WHERE id = ?");
+  // Los lugares con los ids de ESTA caja (los provisionales también cuentan).
+  const localSlots = (Array.isArray(bundle.slots) ? bundle.slots : [])
+    .map((s) => ({
+      qty: Math.max(1, parseInt(s.qty, 10) || 1),
+      productIds: [...new Set((s.productIds || []).map(Number).filter((n) => n && byId.get(n)))],
+    }))
+    .filter((s) => s.productIds.length > 0);
+  const n = promosCore.normalizeBundle(bundle || {}, localSlots);
+  if (!n.success) return n;
+  const uidOf = (pid) => (pid < 0 ? (byId.get(pid) || {}).uid : undefined);
+  // Hacia el Host: lo creado aquí por uid.
+  const wireSlots = localSlots.map((s) => ({
+    qty: s.qty,
+    productIds: s.productIds.filter((pid) => pid > 0),
+    productUids: s.productIds.filter((pid) => pid < 0).map(uidOf).filter(Boolean),
+  }));
+  const after = promosCore.itemsOf(localSlots).map((it) => ({
+    slot: it.slot,
+    qty: it.qty,
+    productId: it.product_id,
+    productUid: uidOf(it.product_id),
+  }));
+  if (bundle.id) {
+    const current = db.prepare("SELECT * FROM bundles WHERE id = ?").get(Number(bundle.id));
+    if (!current) return fail("BUNDLE_NOT_FOUND", "Paquete no encontrado");
+    const before = pickCols(current, BUNDLE_COLS);
+    const beforeItems = db
+      .prepare("SELECT id, slot, qty, product_id FROM bundle_items WHERE bundle_id = ? ORDER BY id")
+      .all(current.id);
+    return {
+      args: [{ ...bundle, id: current.id, uid: current.uid || undefined, slots: wireSlots }],
+      effect: {
+        rows: [{ table: "bundles", before, after: { ...before, ...n.values } }],
+        items: [{ bundleId: current.id, bundleUid: current.uid || undefined, before: beforeItems, after }],
+      },
+      tables: ["bundles", "bundle_items"],
+      label: `Paquete editado · ${n.values.name}`,
+      result: { id: current.id },
+    };
+  }
+  const uid = crypto.randomUUID();
+  const row = catalogCore.provisionalRow(db, "bundles", n.values, uid);
+  return {
+    args: [{ ...bundle, id: undefined, uid, slots: wireSlots }],
+    effect: {
+      rows: [{ table: "bundles", before: null, after: row }],
+      items: [{ bundleId: row.id, bundleUid: uid, before: [], after }],
+    },
+    tables: ["bundles", "bundle_items"],
+    label: `Paquete nuevo · ${n.values.name}`,
+    result: { id: row.id },
+  };
+};
+const setBundleActiveOp = (db, [id, active]) => {
+  const current = db.prepare("SELECT * FROM bundles WHERE id = ?").get(Number(id));
+  if (!current) return fail("BUNDLE_NOT_FOUND", "Paquete no encontrado");
+  const before = pickCols(current, BUNDLE_COLS);
+  return {
+    args: [current.id, !!active, { uid: current.uid || undefined }],
+    effect: { rows: [{ table: "bundles", before, after: { ...before, is_active: active ? 1 : 0 } }] },
+    tables: ["bundles"],
+    label: `Paquete ${active ? "activado" : "pausado"} · ${current.name}`,
+    result: {},
+  };
+};
+
 const QUEUED_OPS = {
+  "save-group-promo": saveGroupPromoOp,
+  "save-bundle": saveBundleOp,
+  "set-bundle-active": setBundleActiveOp,
   "set-customer-price": setPairOp("customer_prices"),
   "delete-customer-price": deletePairOp("customer_prices"),
   "set-tier-price": setPairOp("tier_prices"),
@@ -571,6 +684,9 @@ const syncOps = async (db) => {
       "cash_register_expenses",
       "customer_prices",
       "tier_prices",
+      "group_promos",
+      "bundles",
+      "bundle_items",
     ]);
   }
   return out;
@@ -1422,7 +1538,7 @@ const forward = (db, channel, args = []) => {
   }
   // Borrar es del Host: lo que aún no llega allá no se puede borrar todavía.
   if (
-    (channel === "delete-category" || channel === "delete-supplier" || channel === "delete-product") &&
+    ["delete-category", "delete-supplier", "delete-product", "delete-group-promo", "delete-bundle"].includes(channel) &&
     Number(args[0]) < 0
   ) {
     return Promise.resolve(
@@ -1573,6 +1689,7 @@ module.exports = {
   reapplyPendingPrices: (db) => opQueue.reapplyPrices(db),
   reapplyPendingAdds: (db, table, ids) => opQueue.reapplyAdds(db, table, ids),
   reapplyPendingPairs: (db) => opQueue.reapplyPairs(db),
+  reapplyPendingBundleItems: (db) => opQueue.reapplyBundleItems(db),
   relinkSaleProducts: (db) => salesLocal.relinkProducts(db),
   timingSummary,
   forward,

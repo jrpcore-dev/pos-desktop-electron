@@ -77,6 +77,7 @@ const CHECKS = [
   { file: "check-box-start.cjs" },
   { file: "check-local-cash.cjs" },
   { file: "check-local-prices.cjs" },
+  { file: "check-local-promos.cjs" },
   { file: "check-pair-notify.cjs" },
   { file: "check-sale-fast.cjs" },
 ];

@@ -57,6 +57,10 @@ const ROW_COLUMNS = Object.freeze({
   // Retiros y entradas de dinero (cash-core). El total de la caja va aparte,
   // como suma (`adds`).
   cash_register_expenses: ["id", "uid", "register_id", "amount", "reason", "category", "kind", "status", "created_at"],
+  // Promos por categoría/marca y paquetes (promos-core). Los productos del
+  // paquete van aparte, como conjunto (`items`).
+  group_promos: ["id", "uid", "name", "scope", "category_id", "brand", "percent", "start_date", "end_date", "is_active", "created_at"],
+  bundles: ["id", "uid", "name", "price", "start_date", "end_date", "is_active", "created_at"],
 });
 // Totales que se mueven como suma o resta (nunca cantidad exacta): sólo estas
 // columnas, para que nada guardado en la cola pueda nombrar otra.
@@ -165,15 +169,46 @@ const applyPairs = (db, list, sign) => {
   }
 };
 
+// Productos de un paquete: el efecto guarda el conjunto de antes y el de
+// después. El paquete y sus productos se ubican por uid si nacieron aquí; las
+// filas que pone la caja llevan id negativo, las de antes vuelven con su id.
+const bundleIdOf = (db, e) => {
+  if (e && e.bundleUid) {
+    const row = db.prepare("SELECT id FROM bundles WHERE uid = ?").get(String(e.bundleUid));
+    if (row) return row.id;
+  }
+  return Number(e && e.bundleId);
+};
+const writeBundleItems = (db, bundleId, list, keepIds) => {
+  db.prepare("DELETE FROM bundle_items WHERE bundle_id = ?").run(bundleId);
+  let next = Math.min(0, Number(db.prepare("SELECT MIN(id) AS m FROM bundle_items").get().m) || 0);
+  const stmt = db.prepare("INSERT INTO bundle_items (id, bundle_id, slot, qty, product_id) VALUES (?, ?, ?, ?, ?)");
+  for (const it of list || []) {
+    const id = keepIds && it.id ? it.id : (next -= 1);
+    const productId = it.productUid || it.productId ? productIdOf(db, it) : Number(it.product_id);
+    stmt.run(id, bundleId, Number(it.slot) || 0, Number(it.qty) || 1, productId);
+  }
+};
+const applyBundleItems = (db, list, sign) => {
+  for (const e of list || []) {
+    const bundleId = bundleIdOf(db, e);
+    if (!db.prepare("SELECT 1 FROM bundles WHERE id = ?").get(bundleId)) continue;
+    if (sign > 0) writeBundleItems(db, bundleId, e.after, false);
+    else writeBundleItems(db, bundleId, e.before, true);
+  }
+};
+
 const applyEffect = (db, effect, sign = 1) => {
   const stock = (effect && Array.isArray(effect.stock) && effect.stock) || [];
   const prices = (effect && Array.isArray(effect.prices) && effect.prices) || [];
   const rows = (effect && Array.isArray(effect.rows) && effect.rows) || [];
   const adds = (effect && Array.isArray(effect.adds) && effect.adds) || [];
   const pairs = (effect && Array.isArray(effect.pairs) && effect.pairs) || [];
+  const items = (effect && Array.isArray(effect.items) && effect.items) || [];
   // Aplicar: primero las filas (un producto nuevo debe existir antes de
   // sumarle su stock inicial). Deshacer: al revés.
   if (sign < 0) {
+    applyBundleItems(db, items, sign);
     applyPairs(db, pairs, sign);
     applyAdds(db, adds, sign);
     applyStock(db, stock, sign);
@@ -189,6 +224,7 @@ const applyEffect = (db, effect, sign = 1) => {
     applyStock(db, stock, sign);
     applyAdds(db, adds, sign);
     applyPairs(db, pairs, sign);
+    applyBundleItems(db, items, sign);
   }
 };
 
@@ -371,6 +407,23 @@ const reapplyPairs = (db) => {
   return touched;
 };
 
+// Productos de paquetes: igual que las promos por cantidad. Lo que puso la
+// caja (id negativo) se quita y lo pendiente se vuelve a aplicar encima.
+const reapplyBundleItems = (db) => {
+  const rows = list(db, [STATUS.PENDING, STATUS.NEEDS_AUTH]);
+  let touched = 0;
+  db.transaction(() => {
+    db.prepare("DELETE FROM bundle_items WHERE id < 0").run();
+    for (const r of rows) {
+      const items = (r.effect && r.effect.items) || [];
+      if (!items.length) continue;
+      applyBundleItems(db, items, 1);
+      touched += items.length;
+    }
+  })();
+  return touched;
+};
+
 // Promos por cantidad: la réplica trajo las del Host. Las que puso la caja
 // (id negativo) se quitan y lo que aún no sube se vuelve a aplicar encima.
 const reapplyPrices = (db) => {
@@ -402,6 +455,8 @@ const TRANSIENT = new Set([
   "CATEGORY_PENDING",
   "SUPPLIER_PENDING",
   "PRODUCT_PENDING",
+  "PROMO_PENDING",
+  "BUNDLE_PENDING",
 ]);
 
 // Sube en orden. `send(row)` devuelve lo que contestó el Host (el valor del
@@ -465,6 +520,7 @@ module.exports = {
   reapplyPrices,
   reapplyAdds,
   reapplyPairs,
+  reapplyBundleItems,
   STATUS,
   OPEN_STATUSES,
   enqueue,

@@ -333,6 +333,7 @@ const catalogCore = require("./catalog-core");
 const productsCore = require("./products-core");
 const cashCore = require("./cash-core");
 const pricesCore = require("./prices-core");
+const promosCore = require("./promos-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -1725,48 +1726,12 @@ ipcMain.handle("get-product-promos", async () => {
   }
 });
 
+// Promos por categoría/marca y paquetes: reglas en promos-core.js, las mismas
+// que aplica una caja en su copia. Desde una caja llegan con su `uid`, y la
+// categoría o los productos creados allá por uid.
 ipcMain.handle("save-group-promo", async (event, promo = {}) => {
   try {
-    const scope = promo.scope === "brand" ? "brand" : "category";
-    const percent = parseFloat(promo.percent);
-    if (!(percent > 0 && percent < 100)) {
-      return { success: false, error: "El descuento debe estar entre 1% y 99%" };
-    }
-    const categoryId = scope === "category" ? parseInt(promo.category_id, 10) || null : null;
-    const brand = scope === "brand" ? String(promo.brand || "").trim() : "";
-    if (scope === "category" && !categoryId) {
-      return { success: false, error: "Elige la categoría" };
-    }
-    if (scope === "brand" && !brand) return { success: false, error: "Elige la marca" };
-    const start = promo.start_date || "";
-    const end = promo.end_date || "";
-    if (start && end && start > end) {
-      return { success: false, error: "La fecha de inicio es posterior a la de fin" };
-    }
-    const values = [
-      String(promo.name || "").trim(),
-      scope,
-      categoryId,
-      brand,
-      percent,
-      start,
-      end,
-      promo.is_active === false || promo.is_active === 0 ? 0 : 1,
-    ];
-    if (promo.id) {
-      db.prepare(
-        `UPDATE group_promos SET name=?, scope=?, category_id=?, brand=?, percent=?,
-           start_date=?, end_date=?, is_active=? WHERE id=?`,
-      ).run(...values, promo.id);
-      return { success: true, id: promo.id };
-    }
-    const info = db
-      .prepare(
-        `INSERT INTO group_promos (name, scope, category_id, brand, percent, start_date, end_date, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(...values);
-    return { success: true, id: info.lastInsertRowid };
+    return promosCore.saveGroupPromo(db, promo || {});
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1781,71 +1746,19 @@ ipcMain.handle("delete-group-promo", async (event, id) => {
   }
 });
 
-// bundle: { id?, name, price, start_date, end_date, is_active,
-//           slots: [{ qty, productIds: [..] }] }
+// bundle: { id?, uid?, name, price, start_date, end_date, is_active,
+//           slots: [{ qty, productIds: [..], productUids: [..] }] }
 ipcMain.handle("save-bundle", async (event, bundle = {}) => {
   try {
-    const name = String(bundle.name || "").trim();
-    const price = parseFloat(bundle.price);
-    const slots = (Array.isArray(bundle.slots) ? bundle.slots : [])
-      .map((s) => ({
-        qty: Math.max(1, parseInt(s.qty, 10) || 1),
-        productIds: [...new Set((s.productIds || []).map(Number).filter((n) => n > 0))],
-      }))
-      .filter((s) => s.productIds.length > 0);
-    if (!name) return { success: false, error: "Ponle nombre al paquete" };
-    if (!(price > 0)) return { success: false, error: "Indica el precio del paquete" };
-    const units = slots.reduce((n, s) => n + s.qty, 0);
-    if (units < 2) {
-      return { success: false, error: "Un paquete lleva al menos 2 productos" };
-    }
-    const seen = new Set();
-    for (const s of slots) {
-      for (const id of s.productIds) {
-        if (seen.has(id)) {
-          return { success: false, error: "Un producto no puede estar en dos lugares del paquete" };
-        }
-        seen.add(id);
-      }
-    }
-    const start = bundle.start_date || "";
-    const end = bundle.end_date || "";
-    if (start && end && start > end) {
-      return { success: false, error: "La fecha de inicio es posterior a la de fin" };
-    }
-    const active = bundle.is_active === false || bundle.is_active === 0 ? 0 : 1;
-    const txn = db.transaction(() => {
-      let id = bundle.id;
-      if (id) {
-        db.prepare(
-          "UPDATE bundles SET name=?, price=?, start_date=?, end_date=?, is_active=? WHERE id=?",
-        ).run(name, price, start, end, active, id);
-        db.prepare("DELETE FROM bundle_items WHERE bundle_id = ?").run(id);
-      } else {
-        id = db
-          .prepare(
-            "INSERT INTO bundles (name, price, start_date, end_date, is_active) VALUES (?, ?, ?, ?, ?)",
-          )
-          .run(name, price, start, end, active).lastInsertRowid;
-      }
-      const ins = db.prepare(
-        "INSERT INTO bundle_items (bundle_id, slot, qty, product_id) VALUES (?, ?, ?, ?)",
-      );
-      slots.forEach((s, i) => {
-        for (const pid of s.productIds) ins.run(id, i, s.qty, pid);
-      });
-      return id;
-    });
-    return { success: true, id: txn() };
+    return promosCore.saveBundle(db, bundle || {});
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle("set-bundle-active", async (event, id, active) => {
+ipcMain.handle("set-bundle-active", async (event, id, active, refs = {}) => {
   try {
-    db.prepare("UPDATE bundles SET is_active = ? WHERE id = ?").run(active ? 1 : 0, id);
-    return { success: true };
+    return promosCore.setBundleActive(db, id, active, refs && refs.uid);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -3783,10 +3696,17 @@ const startLiveReplica = () => {
       }
       // Lo mismo con clientes, categorías y proveedores creados o editados en
       // la caja que aún no suben.
-      for (const table of ["customers", "categories", "suppliers", "cash_register_expenses"]) {
+      for (const table of ["customers", "categories", "suppliers", "cash_register_expenses", "group_promos", "bundles"]) {
         if (!tables.includes(table)) continue;
         try {
           boxRpc.reapplyPendingRows(db, table);
+        } catch (err) {}
+      }
+      // Productos de paquetes puestos aquí que aún no suben (tras las filas: el
+      // paquete provisional tiene que existir).
+      if (["bundles", "bundle_items", "products"].some((t) => tables.includes(t))) {
+        try {
+          boxRpc.reapplyPendingBundleItems(db);
         } catch (err) {}
       }
       // Precios especiales por nivel y por cliente puestos aquí que aún no

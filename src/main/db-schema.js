@@ -848,6 +848,11 @@ const runMigrations = (db) => {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items(bundle_id)`,
   );
+  // Local-first · promos y paquetes creados en una caja (promos-core.js).
+  ensureColumn("group_promos", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_promos_uid ON group_promos(uid)");
+  ensureColumn("bundles", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_bundles_uid ON bundles(uid)");
 
   // Migration: allow_manual_discount (permiso explícito de descuento manual en caja).
   // Separation of concerns: antes, el permiso se infería como
