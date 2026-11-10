@@ -261,12 +261,18 @@ const reapplyPending = (db, productIds = null) => {
 const reapplyRows = (db, table) => {
   const rows = list(db, [STATUS.PENDING, STATUS.NEEDS_AUTH]);
   let touched = 0;
+  // Cada fila en su propio savepoint: una que ya no cabe (otra caja subió un
+  // producto con el mismo código interno; el Host le dará otro al subir) no
+  // impide reaplicar las demás.
+  const one = db.transaction((after) => writeRow(db, table, after));
   db.transaction(() => {
     for (const r of rows) {
       for (const e of (r.effect && r.effect.rows) || []) {
         if (e.table !== table) continue;
-        writeRow(db, table, e.after);
-        touched += 1;
+        try {
+          one(e.after);
+          touched += 1;
+        } catch (err) {}
       }
     }
   })();

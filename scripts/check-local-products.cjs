@@ -11,6 +11,8 @@
  *   D) Fijar el stock a una cantidad exacta sigue necesitando el Host.
  *   E) Código repetido: otra caja se adelantó con el mismo código. El alta
  *      queda en revisión y la venta se liga al producto que ya existe.
+ *   E2) Código interno repetido: el Host le da al que llega después el
+ *      siguiente libre; la venta sigue en su producto, no en el ajeno.
  *   F) Reenviar la misma alta no duplica ni suma dos veces el stock inicial.
  *   G) Borrar un producto que aún no llega al Host: se avisa, no se manda.
  *
@@ -256,6 +258,35 @@ const flush = async () => {
   check(eItem && eItem.product_id === byCode(host, "300")[0].id, "la venta se liga al producto que ya existía", eItem);
   check(byCode(host, "300")[0].stock === 19, "y le descuenta lo vendido");
   check(offlineQueue.list(box, ["conflict", "pending"]).length === 0, "ninguna venta atorada");
+
+  console.log("=== E2 · código interno repetido: el Host le da otro ===");
+  stopLive();
+  await apiServer.stopServer();
+  const code = await boxRpc.forward(box, "get-next-barcode", []);
+  const internal = typeof code === "string" ? code : productsCore.nextInternalBarcode(box);
+  const i = await boxRpc.forward(box, "add-product", [product({ barcode: internal, name: "Tamal", price: 15, stock: 4 })]);
+  check(i.success === true, "(Tamal con código interno, sin Host)");
+  const iUid = box.prepare("SELECT uid FROM products WHERE id = ?").get(i.id).uid;
+  const iSale = await sell(i.id, 1, 15);
+  check(iSale.success === true, "(y vendido)");
+  // Otra caja, también sin red, dio el mismo código a otro producto y subió antes.
+  host.prepare("INSERT INTO products (barcode, name, price, stock, sale_unit, is_active) VALUES (?, 'Atole', 10, 9, 'piece', 1)").run(internal);
+  check((await apiServer.startServer(host, PORT)).success === true, "vuelve el Host");
+  stopLive = startLive();
+  await waitFor(() => replicaLive.liveState(box).state === "connected");
+  await flush();
+  const tamal = byUid(host, iUid)[0];
+  check(tamal && tamal.barcode !== internal && productsCore.isInternalBarcode(tamal.barcode), "el Host le da el siguiente código libre", tamal);
+  check(tamal && tamal.stock === 3, "con su stock: 4 − 1 vendido", tamal);
+  check(host.prepare("SELECT stock FROM products WHERE barcode = ?").get(internal).stock === 9, "el Atole de la otra caja no se toca");
+  const iHostSale = host.prepare("SELECT * FROM sales WHERE folio = ?").get(iSale.folio);
+  const iItem = iHostSale && host.prepare("SELECT * FROM sale_items WHERE sale_id = ?").get(iHostSale.id);
+  check(iItem && tamal && iItem.product_id === tamal.id, "la venta va al Tamal, no al Atole", iItem);
+  check(!opQueue.list(box, ["conflict"]).some((o) => o.label && o.label.includes("Tamal")), "nada en revisión");
+  await waitFor(() => byUid(box, iUid).length === 1 && byUid(box, iUid)[0].id > 0);
+  const tamalBox = byUid(box, iUid)[0];
+  check(tamalBox && tamalBox.barcode === tamal.barcode && tamalBox.stock === 3, "la caja ve el código nuevo y el stock", tamalBox);
+  check(byCode(box, internal).length === 1 && byCode(box, internal)[0].name === "Atole", "y el Atole aparte");
 
   console.log("=== F · reenviar la misma alta ===");
   const before = byUid(host, bUid)[0];

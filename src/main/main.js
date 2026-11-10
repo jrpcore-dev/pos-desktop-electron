@@ -1077,14 +1077,7 @@ ipcMain.handle("get-all-products", async () => {
   return { products: attachPrices(products) };
 });
 
-ipcMain.handle("get-next-barcode", async () => {
-  const { m } = db
-    .prepare(
-      `SELECT MAX(CAST(barcode AS INTEGER)) AS m FROM products WHERE barcode GLOB '2000000[0-9]*'`,
-    )
-    .get();
-  return String(Math.max(m || 0, 2000000000) + 1);
-});
+ipcMain.handle("get-next-barcode", async () => productsCore.nextInternalBarcode(db));
 
 ipcMain.handle("check-barcode-exists", async (event, barcode) => {
   if (!barcode) return { exists: false };

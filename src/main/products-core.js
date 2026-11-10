@@ -21,6 +21,18 @@ const nomarize = (s) =>
 
 const autoMinStock = (stock) => Math.max(1, Math.floor((parseFloat(stock) || 0) * 0.4));
 
+// Código interno que da el sistema a lo que no trae código (get-next-barcode).
+// No está impreso en ningún lado: si dos cajas sin red dieron el mismo, el
+// Host le pone al que llega después el siguiente libre.
+const INTERNAL_BARCODE_RE = /^2000000\d+$/;
+const isInternalBarcode = (code) => INTERNAL_BARCODE_RE.test(String(code || ""));
+const nextInternalBarcode = (db) => {
+  const { m } = db
+    .prepare("SELECT MAX(CAST(barcode AS INTEGER)) AS m FROM products WHERE barcode GLOB '2000000[0-9]*'")
+    .get();
+  return String(Math.max(m || 0, 2000000000) + 1);
+};
+
 const BARCODE_TAKEN = "Ya existe un producto con este código de barras";
 const BARCODE_TAKEN_OTHER = "Ya existe otro producto con este código de barras";
 
@@ -109,7 +121,15 @@ const add = (db, data = {}) => {
   const uid = data.uid ? String(data.uid) : null;
   const mine = findByUid(db, uid);
   if (mine) return { success: true, id: mine.id };
-  const existing = db.prepare("SELECT id, is_active, uid FROM products WHERE barcode = ?").get(data.barcode);
+  let existing = db.prepare("SELECT id, is_active, uid FROM products WHERE barcode = ?").get(data.barcode);
+  let reassigned = false;
+  // Viene de una caja con un código interno que ya usó otra: siguiente libre
+  // (nunca se reactiva un producto ajeno por coincidir en el número).
+  if (existing && uid && isInternalBarcode(data.barcode)) {
+    data = { ...data, barcode: nextInternalBarcode(db) };
+    existing = null;
+    reassigned = true;
+  }
   if (existing && existing.is_active) return fail("BARCODE_TAKEN", BARCODE_TAKEN);
   const v = values(data);
   v.stock = data.stock || 0;
@@ -133,7 +153,7 @@ const add = (db, data = {}) => {
       .run(...Object.values(v), uid);
     const id = Number(info.lastInsertRowid);
     savePrices(db, id, data.prices);
-    return { success: true, id };
+    return reassigned ? { success: true, id, barcode: data.barcode, reassigned: true } : { success: true, id };
   })();
 };
 
@@ -173,6 +193,7 @@ const update = (db, id, data = {}) => {
 // Host · partidas de una venta que vienen de una caja con productos creados
 // allá. Por uid; si el alta se rechazó por código repetido, el código de
 // barras lo liga al producto que ya existe (mismo código = mismo producto).
+// Un código interno no identifica nada fuera del sistema: sólo por uid.
 const resolveCart = (db, cart) => {
   if (!Array.isArray(cart) || !cart.some((it) => it && it.product_uid)) return { success: true, cart };
   const out = [];
@@ -183,7 +204,7 @@ const resolveCart = (db, cart) => {
     }
     const mine = findByUid(db, it.product_uid);
     const byCode =
-      !mine && it.product_barcode
+      !mine && it.product_barcode && !isInternalBarcode(it.product_barcode)
         ? db.prepare("SELECT id FROM products WHERE barcode = ? AND is_active = 1").get(String(it.product_barcode))
         : null;
     const id = (mine && mine.id) || (byCode && byCode.id);
@@ -204,6 +225,8 @@ const barcodeTaken = (db, barcode, exceptId = null) => {
 module.exports = {
   nomarize,
   autoMinStock,
+  isInternalBarcode,
+  nextInternalBarcode,
   PRICE_TIER_TYPES,
   PRICE_TIER_UNITS,
   normalizePrices,
