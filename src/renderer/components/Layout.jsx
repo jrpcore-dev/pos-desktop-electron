@@ -81,6 +81,7 @@ import { ConfirmDialog } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import RouteShellSkeleton from "./RouteShellSkeleton";
 import SystemStatus from "./SystemStatus";
+import SyncCenter, { SyncBellSection, markSyncRead, useSyncSaved } from "./SyncCenter";
 import { Label } from "./ui/label";
 import {
   Select,
@@ -342,6 +343,9 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [insights, setInsights] = useState([]);
   const [insightsUnread, setInsightsUnread] = useState(0);
+  // Avisos de sincronización de la caja que se cerraron: viven en la campana.
+  const syncSaved = useSyncSaved();
+  const syncUnread = syncSaved.filter((n) => n.unread).length;
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [todayTasksCount, setTodayTasksCount] = useState(0);
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -357,11 +361,17 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [reauthBusy, setReauthBusy] = useState(false);
   const [reauthError, setReauthError] = useState(null);
   useEffect(() => {
-    const off = window.api.on("session-expired", () => {
+    const open = () => {
       setReauthError(null);
       setReauthOpen(true);
-    });
-    return off;
+    };
+    const off = window.api.on("session-expired", open);
+    // El aviso flotante "Ingresa tu PIN" también lo abre.
+    window.addEventListener("vendia:reauth", open);
+    return () => {
+      if (typeof off === "function") off();
+      window.removeEventListener("vendia:reauth", open);
+    };
   }, []);
   const handleReauth = useCallback(
     async (pin) => {
@@ -1305,8 +1315,14 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
             </button>
 
             {/* ─── Notificaciones y tareas (solo si hay algo sin leer) ─── */}
-            {(insightsUnread > 0 || todayTasksCount > 0) && (
-              <Popover open={insightsOpen} onOpenChange={setInsightsOpen}>
+            {(insightsUnread > 0 || todayTasksCount > 0 || syncSaved.length > 0) && (
+              <Popover
+                open={insightsOpen}
+                onOpenChange={(v) => {
+                  setInsightsOpen(v);
+                  if (!v) markSyncRead();
+                }}
+              >
                 <Hint label="Avisos y tareas" side="bottom">
                 <PopoverTrigger asChild>
                   <button
@@ -1321,12 +1337,12 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                     className="relative flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted data-[state=open]:text-foreground"
                   >
                     <Bell size={16} />
-                    {insightsUnread > 0 && (
+                    {insightsUnread + syncUnread > 0 && (
                       <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground tabular-nums">
-                        {insightsUnread > 9 ? "9+" : insightsUnread}
+                        {insightsUnread + syncUnread > 9 ? "9+" : insightsUnread + syncUnread}
                       </span>
                     )}
-                    {todayTasksCount > 0 && insightsUnread === 0 && (
+                    {todayTasksCount > 0 && insightsUnread + syncUnread === 0 && (
                       <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-warning-foreground tabular-nums">
                         {todayTasksCount > 9 ? "9+" : todayTasksCount}
                       </span>
@@ -1373,6 +1389,13 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                     </div>
                   </div>
 
+                  <SyncBellSection
+                    onOpenDetail={() => {
+                      setInsightsOpen(false);
+                      markSyncRead();
+                      window.dispatchEvent(new Event("vendia:sync-detail"));
+                    }}
+                  />
                   {insights.length > 0 ? (
                     <div className="max-h-[460px] overflow-y-auto">
                       {[
@@ -1420,7 +1443,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                           </section>
                         ))}
                     </div>
-                  ) : (
+                  ) : syncSaved.length > 0 ? null : (
                     <div className="flex flex-col items-center gap-1.5 px-4 py-8 text-center">
                       <span className="flex size-10 items-center justify-center rounded-full bg-success/12 text-success">
                         <CheckCheck className="size-5" />
@@ -1452,6 +1475,9 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 </PopoverContent>
               </Popover>
             )}
+
+            {/* Caja · sincronización: sólo aparece si hay algo que saber */}
+            <SyncCenter />
 
             {/* Separador visual entre buscador y estado del sistema */}
             <span className="hidden h-5 w-px bg-border md:block" />
