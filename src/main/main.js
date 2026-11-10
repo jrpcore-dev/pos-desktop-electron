@@ -3805,10 +3805,21 @@ ipcMain.handle("replica-sync-now", async (event, opts) => {
         mainWin.webContents.send("replica-progress", payload);
       }
     };
+    // Cada tropiezo queda en el log del equipo con su motivo real.
+    const onRetry = (info) =>
+      appendErrorLog(
+        `[${new Date().toISOString()}] replica/snapshot reintento ${info.attempt} · ${info.table} · ${info.code}: ${info.error}\n---\n`,
+      );
     const result = await replicaEngine.downloadSnapshot(db, {
       ...(opts || {}),
       onProgress,
+      onRetry,
     });
+    if (result && !result.success && result.code !== "NOT_APPROVED") {
+      appendErrorLog(
+        `[${new Date().toISOString()}] replica/snapshot falló · ${result.table || "-"} · ${result.code}: ${result.error}\n---\n`,
+      );
+    }
     if (result && result.success) {
       emitDbChanged(result.tables || [], {});
       // De aquí en adelante la caja sigue sola: los deltas ya no pide nada.

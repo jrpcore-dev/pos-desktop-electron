@@ -18,6 +18,10 @@ const protocol = require("./protocol");
 
 const STAGING_PREFIX = "stg_replica_";
 const DEFAULT_PAGE_SIZE = 2000;
+// Fallos de una página que valen otro intento (red, respuesta cortada, 5xx).
+const PAGE_RETRY_CODES = new Set(["HOST_UNREACHABLE", "HOST_ERROR", "HOST_BAD_RESPONSE"]);
+const PAGE_RETRIES = 3;
+const PAGE_RETRY_MS = 400;
 const RESYNC_AFTER_MS = 24 * 60 * 60 * 1000; // resync completo cada 24 h
 
 const KEYS = Object.freeze({
@@ -78,9 +82,22 @@ const getJson = async (url, { deviceId, token, epoch, timeoutMs = 15000 }) => {
     return { ok: false, code: "HOST_UNREACHABLE", error: `No se pudo contactar al Host: ${err.message}` };
   }
   let data = null;
+  let bodyError = null;
   try {
     data = await res.json();
-  } catch (err) {}
+  } catch (err) {
+    // Cabeceras sí, cuerpo no (conexión cortada a media respuesta, tiempo
+    // agotado al leerlo): el motivo real, no sólo "HTTP 200".
+    bodyError = (err && (err.name === "TimeoutError" ? "tiempo agotado al leer la respuesta" : err.message)) || "cuerpo ilegible";
+  }
+  if (res.ok && !data) {
+    return {
+      ok: false,
+      code: "HOST_BAD_RESPONSE",
+      error: `El Host respondió HTTP ${res.status} pero la respuesta llegó incompleta (${bodyError || "vacía"})`,
+      status: res.status,
+    };
+  }
   // 403 · el cuerpo trae el código real (NOT_APPROVED / SCOPE_MISSING…);
   // NOT_PAIRED queda como respaldo para los 403 sin código. El mensaje del
   // Host viaja igual y ahora además se conserva el scope que faltaba.
@@ -209,7 +226,7 @@ const swap = (db, tables, plan) => {
 
 // Descarga inicial completa. `onProgress({table, done, total, pct})` informa el
 // avance real; el cursor por tabla se persiste, así que se puede reanudar.
-const downloadSnapshot = async (db, opts = {}) => {
+const downloadSnapshotOnce = async (db, opts = {}) => {
   const hostUrl = trimUrl(opts.hostUrl || activation.getSetting(db, clientLink.SETTINGS.HOST_URL));
   if (!hostUrl) return fail("NO_HOST_LINKED", "La caja no tiene Host configurado");
   const deviceId = activation.getSetting(db, clientLink.SETTINGS.BOX_DEVICE_ID);
@@ -240,10 +257,19 @@ const downloadSnapshot = async (db, opts = {}) => {
 
     for (;;) {
       const qs = `table=${encodeURIComponent(table)}&limit=${pageSize}&cursor=${encodeURIComponent(cursor)}`;
-      const r = await getJson(`${hostUrl}/api/replica/snapshot?${qs}${snapshotSeq ? `&snapshot_seq=${snapshotSeq}` : ""}`, {
-        deviceId,
-        token,
-      });
+      const url = `${hostUrl}/api/replica/snapshot?${qs}${snapshotSeq ? `&snapshot_seq=${snapshotSeq}` : ""}`;
+      // Pedir la misma página otra vez no cambia nada (va por cursor): un
+      // tropiezo de red se reintenta solo en vez de parar la descarga.
+      let r = await getJson(url, { deviceId, token });
+      for (let attempt = 1; !r.ok && PAGE_RETRY_CODES.has(r.code) && attempt <= PAGE_RETRIES; attempt++) {
+        if (typeof opts.onRetry === "function") {
+          try {
+            opts.onRetry({ table, attempt, code: r.code, error: r.error });
+          } catch (err) {}
+        }
+        await new Promise((ok) => setTimeout(ok, PAGE_RETRY_MS * attempt));
+        r = await getJson(url, { deviceId, token });
+      }
       if (!r.ok) {
         setState(db, { [KEYS.STATE]: "error", [KEYS.ERROR]: r.code });
         return fail(r.code, r.error, { table, scopeRequired: r.scopeRequired });
@@ -316,6 +342,21 @@ const downloadSnapshot = async (db, opts = {}) => {
     db.pragma("foreign_keys = ON");
   }
   return { success: true, ...state(db) };
+};
+
+// Una sola descarga a la vez por base: dos en paralelo (la pantalla de
+// vinculación se vuelve a montar mientras la primera sigue) compartían el
+// staging y los cursores y la copia acababa con filas repetidas
+// ("UNIQUE constraint failed"). La segunda se suma a la que ya va.
+const downloadsInFlight = new WeakMap();
+const downloadSnapshot = (db, opts = {}) => {
+  const running = downloadsInFlight.get(db);
+  if (running) return running;
+  const p = downloadSnapshotOnce(db, opts).finally(() => {
+    if (downloadsInFlight.get(db) === p) downloadsInFlight.delete(db);
+  });
+  downloadsInFlight.set(db, p);
+  return p;
 };
 
 // Aplica un lote de cambios del Host (filas completas). Devuelve qué cambió
