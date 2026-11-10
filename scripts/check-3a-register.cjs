@@ -178,17 +178,11 @@ const cashRegisterRow = (db, id) =>
   // Gastos sin caja (register_id opcional desde la creación) ya está en HEAD.
   // Entradas de dinero y tipo de salida (cash_in, kind, category) ya está en HEAD.
   // Local-first · clientes (`customers.uid` y su índice) ya está en HEAD.
-  // Local-first · catálogo: `categories.uid`, `suppliers.uid` y sus índices
-  // únicos (ALTER ADD COLUMN reescribe el CREATE TABLE: alta Y baja).
-  const DDL_AGREGADO = [
-    /^CREATE TABLE categories \(.*uid TEXT/s,
-    /^CREATE TABLE suppliers \(.*uid TEXT/s,
-    /idx_categories_uid/,
-    /idx_suppliers_uid/,
-  ];
-  const DDL_AGREGADO_TOTAL = 4;
-  const DDL_BORRADO = [/^CREATE TABLE categories \(/, /^CREATE TABLE suppliers \(/];
-  const DDL_BORRADO_TOTAL = 2;
+  // Local-first · catálogo (`categories.uid`, `suppliers.uid` y sus índices) ya está en HEAD.
+  const DDL_AGREGADO = [];
+  const DDL_AGREGADO_TOTAL = 0;
+  const DDL_BORRADO = [];
+  const DDL_BORRADO_TOTAL = 0;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
