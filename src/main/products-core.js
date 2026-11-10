@@ -169,8 +169,15 @@ const update = (db, id, data = {}) => {
   if (!current) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
   // stock omitido = el usuario no lo tocó: se conserva el actual (no pisa
   // ventas hechas mientras el formulario estaba abierto).
+  // `stock_delta`: un producto creado en una caja, editado allá con un stock
+  // exacto, viaja como diferencia (ahí nadie más pudo venderlo).
   const parsedStock = parseFloat(data.stock);
-  const newStock = Number.isFinite(parsedStock) ? parsedStock : current.stock;
+  const delta = parseFloat(data.stock_delta);
+  const newStock = Number.isFinite(delta)
+    ? (Number(current.stock) || 0) + delta
+    : Number.isFinite(parsedStock)
+      ? parsedStock
+      : current.stock;
   const diff = newStock - (Number(current.stock) || 0);
   const v = values(data, current);
   v.stock = newStock;

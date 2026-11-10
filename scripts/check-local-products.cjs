@@ -288,6 +288,35 @@ const flush = async () => {
   check(tamalBox && tamalBox.barcode === tamal.barcode && tamalBox.stock === 3, "la caja ve el código nuevo y el stock", tamalBox);
   check(byCode(box, internal).length === 1 && byCode(box, internal)[0].name === "Atole", "y el Atole aparte");
 
+  console.log("=== H · editar el stock de un producto recién creado ===");
+  stopLive();
+  await apiServer.stopServer();
+  const h = await boxRpc.forward(box, "add-product", [product({ barcode: "800", name: "Nieve", price: 25, stock: 5 })]);
+  const hUid = box.prepare("SELECT uid FROM products WHERE id = ?").get(h.id).uid;
+  const hEdit = await boxRpc.forward(box, "update-product", [h.id, product({ barcode: "800", name: "Nieve", price: 25, stock: 8 })]);
+  check(hEdit.success === true, "sin Host: se puede fijar su stock (sólo existe aquí)", hEdit);
+  check(box.prepare("SELECT stock FROM products WHERE id = ?").get(h.id).stock === 8, "la caja ya ve 8");
+  const hSale = await sell(h.id, 1, 25);
+  check(hSale.success === true, "(se vende 1)");
+  check((await apiServer.startServer(host, PORT)).success === true, "vuelve el Host");
+  stopLive = startLive();
+  await waitFor(() => replicaLive.liveState(box).state === "connected");
+  await flush();
+  await waitFor(() => byUid(host, hUid)[0]?.stock === 7);
+  check(byUid(host, hUid)[0]?.stock === 7, "el Host queda en 8 − 1 = 7 (viajó como diferencia)", byUid(host, hUid)[0]);
+  await waitFor(() => byUid(box, hUid)[0]?.id > 0 && byUid(box, hUid)[0]?.stock === 7);
+  check(byUid(box, hUid)[0]?.stock === 7, "y la caja también", byUid(box, hUid)[0]);
+  // La pantalla sigue con el id provisional aunque la réplica ya lo cambió.
+  const stale = await boxRpc.forward(box, "update-product", [h.id, product({ barcode: "800", name: "Nieve de limón", price: 26 })]);
+  check(stale.success === true, "editar con el id viejo de la pantalla también funciona", stale);
+  const staleStock = await boxRpc.forward(box, "add-stock", [{ productId: h.id, quantity: "2", cashierId: 1 }]);
+  check(staleStock.success === true, "y sumarle stock", staleStock);
+  await flush();
+  await waitFor(() => byUid(host, hUid)[0]?.stock === 9 && byUid(host, hUid)[0]?.name === "Nieve de limón");
+  check(byUid(host, hUid)[0]?.stock === 9 && byUid(host, hUid)[0]?.name === "Nieve de limón", "llegan al producto correcto en el Host", byUid(host, hUid)[0]);
+  const hostOnly = await boxRpc.forward(box, "update-product", [1, product({ barcode: "001", name: "Leche entera", price: 9, stock: 40 })]);
+  check(hostOnly.success === true && host.prepare("SELECT stock FROM products WHERE id = 1").get().stock === 40, "un producto del Host con stock exacto sigue yendo al Host", hostOnly);
+
   console.log("=== F · reenviar la misma alta ===");
   const before = byUid(host, bUid)[0];
   const again = productsCore.add(host, { ...product({ barcode: "200", stock: 5 }), uid: bUid });

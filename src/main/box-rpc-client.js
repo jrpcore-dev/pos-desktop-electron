@@ -197,6 +197,34 @@ const pricesOf = (db, productId) =>
   db.prepare("SELECT id, type, qty, price, unit FROM product_prices WHERE product_id = ? ORDER BY id").all(productId);
 // La referencia que entiende el Host: un producto creado aquí va por uid.
 const productRef = (row) => (row && row.id < 0 && row.uid ? { productUid: row.uid } : {});
+// La fila actual de un producto. Una pantalla puede seguir con el id
+// provisional (negativo) cuando la réplica ya lo cambió por el del Host: se
+// ubica por el uid de su alta.
+const uidOfProvisional = (db, id) => {
+  if (!(Number(id) < 0)) return null;
+  // El más reciente: un id provisional se vuelve a usar cuando el anterior ya
+  // se cambió por el del Host.
+  for (const op of opQueue.list(db).reverse()) {
+    if (op.channel !== "add-product") continue;
+    const after = op.effect && op.effect.rows && op.effect.rows[0] && op.effect.rows[0].after;
+    if (after && Number(after.id) === Number(id) && after.uid) return after.uid;
+  }
+  return null;
+};
+const localProduct = (db, id) => {
+  const row = db.prepare("SELECT * FROM products WHERE id = ?").get(Number(id));
+  if (row) return row;
+  const uid = uidOfProvisional(db, id);
+  return uid ? db.prepare("SELECT * FROM products WHERE uid = ?").get(uid) || null : null;
+};
+// Creado aquí y su alta todavía no sube: sólo esta caja lo tiene.
+const onlyHere = (db, row) => {
+  if (!row || !row.uid) return false;
+  if (row.id < 0) return true;
+  return opQueue
+    .list(db, [opQueue.STATUS.PENDING, opQueue.STATUS.SYNCING, opQueue.STATUS.NEEDS_AUTH])
+    .some((op) => op.channel === "add-product" && op.args && op.args[0] && op.args[0].uid === row.uid);
+};
 
 // Retiros y entradas de dinero · mismas reglas que el Host (cash-core). El
 // total de la caja se mueve como suma; la fila lleva uid e id negativo.
@@ -470,22 +498,29 @@ const QUEUED_OPS = {
     };
   },
   // Sólo sin `stock` (forward manda al Host la edición con cantidad exacta).
+  // Sin `stock`, o con stock exacto en un producto creado aquí que el Host aún
+  // no tiene (ese stock viaja como diferencia: nadie más pudo venderlo).
   "update-product": (db, [id, data = {}]) => {
     if (!data || !String(data.name || "").trim()) return fail("NAME_REQUIRED", "Nombre requerido");
-    const current = db.prepare("SELECT * FROM products WHERE id = ?").get(Number(id));
+    const current = localProduct(db, id);
     if (!current) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
     if (productsCore.barcodeTaken(db, data.barcode, current.id)) {
       return fail("BARCODE_TAKEN", productsCore.BARCODE_TAKEN_OTHER);
     }
     const before = pickProduct(current);
+    const hasStock = "stock" in data && Number.isFinite(parseFloat(data.stock));
+    const delta = hasStock ? parseFloat(data.stock) - (Number(current.stock) || 0) : 0;
+    const newStock = hasStock ? parseFloat(data.stock) : current.stock;
     const v = {
       ...productsCore.values(data, current),
-      min_stock: productsCore.minStockFor(data, current.stock),
+      min_stock: productsCore.minStockFor(data, newStock),
       is_active: data.is_active !== undefined ? data.is_active : 1,
     };
+    const { stock: _exact, ...wire } = catalogCore.refsToUid(db, data);
     return {
-      args: [current.id, { ...catalogCore.refsToUid(db, data), uid: current.uid || undefined }],
+      args: [current.id, { ...wire, ...(delta ? { stock_delta: delta } : {}), uid: current.uid || undefined }],
       effect: {
+        ...(delta ? { stock: [{ productId: current.id, productUid: current.uid || undefined, delta }] } : {}),
         rows: [{ table: "products", before, after: { ...before, ...v } }],
         prices: [
           {
@@ -506,9 +541,7 @@ const QUEUED_OPS = {
   "add-supplier": catalogAdd("suppliers", "Proveedor"),
   "update-supplier": catalogUpdate("suppliers", "Proveedor"),
   "add-stock": (db, [payload = {}]) => {
-    const product = db
-      .prepare("SELECT id, uid, name, sale_unit FROM products WHERE id = ?")
-      .get(payload.productId);
+    const product = localProduct(db, payload.productId);
     if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
     const qty = parseQty(product, payload.quantity);
     if (!Number.isFinite(qty) || qty <= 0) {
@@ -518,7 +551,7 @@ const QUEUED_OPS = {
       );
     }
     return {
-      args: [{ ...payload, ...productRef(product) }],
+      args: [{ ...payload, productId: product.id, ...productRef(product) }],
       effect: { stock: [{ productId: product.id, ...productRef(product), delta: qty }] },
       label: `Entrada de ${qty} · ${product.name}`,
       result: { productName: product.name },
@@ -528,9 +561,7 @@ const QUEUED_OPS = {
     if (payload.role !== "admin") {
       return fail("FORBIDDEN", "Solo el propietario puede hacer salidas de stock");
     }
-    const product = db
-      .prepare("SELECT id, uid, name, stock, sale_unit FROM products WHERE id = ?")
-      .get(payload.productId);
+    const product = localProduct(db, payload.productId);
     if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
     const qty = parseQty(product, payload.quantity);
     if (!Number.isFinite(qty) || qty <= 0) {
@@ -545,7 +576,7 @@ const QUEUED_OPS = {
       });
     }
     return {
-      args: [{ ...payload, ...productRef(product) }],
+      args: [{ ...payload, productId: product.id, ...productRef(product) }],
       effect: { stock: [{ productId: product.id, ...productRef(product), delta: -qty }] },
       label: `Salida de ${qty} · ${product.name}`,
       result: {},
@@ -1538,8 +1569,12 @@ const forward = (db, channel, args = []) => {
   }
   // Editar un producto fijando su stock a una cantidad exacta es del Host (una
   // cantidad exacta pisaría lo que otra caja vendió): va en línea.
+  // Excepción: un producto creado aquí que el Host aún no tiene. Nadie más
+  // pudo venderlo, así que su stock exacto se manda como diferencia (cola).
+  const editedHere =
+    channel === "update-product" && localReady(db) && onlyHere(db, localProduct(db, args[0]));
   const exactStock =
-    channel === "update-product" && !!args[1] && typeof args[1] === "object" && "stock" in args[1];
+    channel === "update-product" && !editedHere && !!args[1] && typeof args[1] === "object" && "stock" in args[1];
   if (QUEUED_OPS[channel] && localReady(db) && !exactStock) {
     return Promise.resolve(enqueueOp(db, channel, args));
   }
