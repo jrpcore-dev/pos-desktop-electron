@@ -61,6 +61,7 @@ import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { fileToProductImage } from "../utils/productImage";
 import { fmtMoney } from "../utils/format";
 import { useCashier } from "../contexts/CashierContext";
+import { useToast } from "./ToastProvider";
 
 const productSchema = z.object({
   barcode: z.string().optional(),
@@ -638,6 +639,7 @@ const AddProductModal = ({
 }) => {
   const isCatalogMode = !!catalogProduct && !editProduct;
   const { cashier } = useCashier() || {};
+  const notify = useToast();
   const [suppliers, setSuppliers] = useState([]);
   const [categories, setCategories] = useState([]);
   const [submitError, setSubmitError] = useState("");
@@ -1248,6 +1250,20 @@ const AddProductModal = ({
       }
 
       if (result.success) {
+        // Confirmación visible: antes el modal sólo se cerraba.
+        const label = String(productData.name || "").trim() || "Producto";
+        if (notify) {
+          notify(
+            isCatalogMode
+              ? `${label} activado desde el catálogo`
+              : editProduct
+                ? `${label} actualizado`
+                : result.overwritten
+                  ? `${label} reactivado`
+                  : `${label} agregado al inventario`,
+            "success",
+          );
+        }
         onProductAdded();
         handleClose();
       } else {

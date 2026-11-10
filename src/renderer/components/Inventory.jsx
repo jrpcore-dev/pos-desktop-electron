@@ -937,9 +937,10 @@ const Inventory = () => {
     }
   };
 
+  // El aviso de guardado lo da AddProductModal (con nombre y si fue alta o
+  // edición), en todas las pantallas que lo abren.
   const handleProductAdded = () => {
     fetchProducts();
-    notify("Producto guardado correctamente.", "success");
   };
 
   const handleViewDetails = useCallback((product) => {
