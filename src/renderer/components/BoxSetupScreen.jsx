@@ -318,12 +318,15 @@ const BoxSetupScreen = ({ settings, onRefresh, onFinished, className }) => {
   // Aprobada → la descarga arranca sola, una sola vez. Si el Host la pierde
   // a mitad (NOT_APPROVED), `startedRef` se rearma y el sondeo vuelve a
   // dispararla cuando vuelva a haber luz verde.
+  // Si toca la escena de "aprobada", la descarga espera a que termine: antes
+  // corría detrás y al salir la escena ya iba en 100 %.
   useEffect(() => {
     if (!paired || canSell || startedRef.current) return;
     if (!link?.approved) return;
+    if (celebrating || (sawPendingRef.current && !celebratedRef.current)) return;
     startedRef.current = true;
     sync();
-  }, [paired, canSell, link, sync]);
+  }, [paired, canSell, link, sync, celebrating]);
 
   useEffect(() => {
     if (!link) return;

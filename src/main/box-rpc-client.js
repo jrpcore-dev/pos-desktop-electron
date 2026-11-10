@@ -1172,6 +1172,7 @@ const loginLocalFirst = async (db, id, pin) => {
 
 // ── Estado de caja cacheado (para vender sin Host) ──────────────────────────
 const REGISTER_CACHE_KEY = "last_register_snapshot";
+const TAECEL_CATALOG_KEY = "taecel_catalog_last";
 const cacheRegister = (db, result) => {
   if (result && result.success && result.register) {
     activation.setSetting(db, REGISTER_CACHE_KEY, JSON.stringify(result.register));
@@ -1230,6 +1231,24 @@ const forward = (db, channel, args = []) => {
       // Venta en línea: Caja y Transacciones la reciben por la réplica y se
       // refrescan solas. Va en segundo plano: el cobro no espera a la copia.
       if (r && r.success && !r.pending) settleWrite(db).catch(() => {});
+      return r;
+    });
+  }
+  // Catálogo de Taecel (compañías y montos): la caja guarda el último que le
+  // dio el Host y lo enseña si el Host no contesta o pide sesión. Recargar
+  // sigue siendo del Host; esto sólo evita la pantalla vacía.
+  if (channel === "taecel:get-catalog") {
+    return rpcCall(db, channel, args).then((r) => {
+      if (r && r.ok) {
+        try {
+          activation.setSetting(db, TAECEL_CATALOG_KEY, JSON.stringify(r));
+        } catch (err) {}
+        return r;
+      }
+      try {
+        const saved = JSON.parse(activation.getSetting(db, TAECEL_CATALOG_KEY) || "null");
+        if (saved && saved.ok) return { ...saved, stale: true, staleReason: (r && (r.error || r.code)) || null };
+      } catch (err) {}
       return r;
     });
   }

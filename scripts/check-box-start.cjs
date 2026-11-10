@@ -11,6 +11,7 @@
  *   D) Un 401 de una petición vieja no borra la sesión nueva.
  *   E) Un login que el Host procesó pero cuya respuesta se perdió (TIMEOUT)
  *      no revoca la sesión que la caja sigue usando.
+ *   F) Catálogo de Taecel: si el Host no contesta, se enseña el último bueno.
  *
  * Uso:
  *   ELECTRON_RUN_AS_NODE=1 node_modules\electron\dist\electron.exe scripts\check-box-start.cjs
@@ -63,6 +64,7 @@ for (let i = 1; i <= 30; i++) {
 activation.registerPairing(host, { deviceId: "box-a", deviceName: "Caja 2", token: "tok-a", deviceType: "desktop_box", approved: 1 });
 activation.approveDevice(host, "box-a");
 host.prepare("UPDATE paired_devices SET device_code = 'A' WHERE device_id = 'box-a'").run();
+ipcRegistry.set("taecel:get-catalog", () => ({ ok: true, operators: [{ id: 1, name: "Telcel" }] }));
 let opened = 0;
 ipcRegistry.set("open-cash-register", () => {
   opened += 1;
@@ -140,6 +142,14 @@ global.fetch = async (url, opts) => {
   check(lost && lost.success === true, "(el Host emitió otra sesión que la caja no recibió)");
   const still = await boxRpc.forward(box, "open-cash-register", [{ cashierId: 1, initialCash: 100 }]);
   check(still && still.success === true, "la sesión que tiene la caja sigue sirviendo", still);
+
+  console.log("=== F · catálogo de Taecel sin Host ===");
+  const cat = await boxRpc.forward(box, "taecel:get-catalog", [{ force: false }]);
+  check(cat && cat.ok === true && !cat.stale, "con Host: el catálogo del Host", cat);
+  await apiServer.stopServer();
+  const off = await boxRpc.forward(box, "taecel:get-catalog", [{ force: false }]);
+  check(off && off.ok === true && off.stale === true && off.operators.length === 1, "sin Host: el último que se vio", off);
+  check((await apiServer.startServer(host, PORT)).success === true, "(vuelve el Host)");
 
   await apiServer.stopServer();
   console.log(`\n=== arranque de la caja: ${pass} PASS / ${fail} FAIL ===`);
