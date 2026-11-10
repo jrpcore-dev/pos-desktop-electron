@@ -42,6 +42,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm";
+import { Hint } from "@/components/ui/hint";
 import { useCashier } from "../contexts/CashierContext";
 import AdminUnlock from "./AdminUnlock";
 import {
@@ -933,9 +934,14 @@ function ConfigurationScreen() {
 
   const handleSetActivation = async (enabled) => {
     if (enabled) {
-      const ok = window.confirm(
-        "Al activar la seguridad, los nuevos teléfonos necesitarán el código de activación para emparejar la app. Los dispositivos que ya están en uso se emparejarán solos durante los próximos 7 días (período de gracia). ¿Deseas continuar?"
-      );
+      const ok = await ask({
+        title: "Activar seguridad de dispositivos",
+        description:
+          "Los teléfonos nuevos necesitarán el código de activación para emparejar la app. Los que ya están en uso se emparejarán solos durante los próximos 7 días (período de gracia).",
+        confirmLabel: "Activar",
+        variant: "default",
+        iconColor: "warning",
+      });
       if (!ok) return;
     }
     const res = await window.api.invoke("set-activation-enabled", enabled);
@@ -964,9 +970,14 @@ function ConfigurationScreen() {
 
   const handleRotateCode = async () => {
     if (
-      !window.confirm(
-        "Generar un código nuevo invalida el actual. Los dispositivos ya emparejados seguirán funcionando; solo los no emparejados necesitarán el nuevo código. ¿Deseas continuar?"
-      )
+      !(await ask({
+        title: "Generar un código nuevo",
+        description:
+          "El código actual deja de servir. Los dispositivos ya emparejados siguen funcionando; sólo los nuevos necesitarán el código nuevo.",
+        confirmLabel: "Generar código",
+        variant: "default",
+        iconColor: "warning",
+      }))
     )
       return;
     const res = await window.api.invoke("rotate-activation-code");
@@ -980,6 +991,14 @@ function ConfigurationScreen() {
 
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [revoking, setRevoking] = useState(false);
+  // Confirmar con el diálogo de la app (antes: window.confirm del sistema).
+  // `await ask({...})` → true al confirmar, false al cancelar o cerrar.
+  const [asking, setAsking] = useState(null);
+  const ask = (opts) => new Promise((resolve) => setAsking({ ...opts, resolve }));
+  const answer = (value) => {
+    if (asking) asking.resolve(value);
+    setAsking(null);
+  };
   const handleRevokeDevice = async () => {
     const deviceId = revokeTarget?.deviceId;
     if (!deviceId) return;
@@ -1048,9 +1067,11 @@ function ConfigurationScreen() {
 
   const handleRejectDevice = async (deviceId) => {
     if (
-      !window.confirm(
-        "¿Rechazar este dispositivo? No podrá usar el sistema hasta volver a emparejarse."
-      )
+      !(await ask({
+        title: "Rechazar dispositivo",
+        description: "No podrá usar el sistema hasta volver a emparejarse con el código de activación.",
+        confirmLabel: "Rechazar",
+      }))
     )
       return;
     const res = await window.api.invoke("reject-device", deviceId);
@@ -1065,11 +1086,15 @@ function ConfigurationScreen() {
   const handleSetActivationGrace = async (mode) => {
     const isExpire = mode === "expire";
     if (
-      !window.confirm(
-        isExpire
-          ? "Solo pruebas: marcar como vencido el período de gracia. A partir de ahora, todo teléfono no emparejado pedirá el código. ¿Continuar?"
-          : "Solo pruebas: restablecer el período de gracia a 7 días completos a partir de ahora. ¿Continuar?"
-      )
+      !(await ask({
+        title: isExpire ? "Vencer el período de gracia" : "Reiniciar el período de gracia",
+        description: isExpire
+          ? "Sólo pruebas: a partir de ahora, todo teléfono no emparejado pedirá el código."
+          : "Sólo pruebas: el período de gracia vuelve a 7 días completos a partir de ahora.",
+        confirmLabel: "Continuar",
+        variant: "default",
+        iconColor: "warning",
+      }))
     )
       return;
     const res = await window.api.invoke("set-activation-grace", mode);
@@ -1549,15 +1574,11 @@ function ConfigurationScreen() {
               >
                 Copiar
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleRotateCode}
-                title="Generar un código nuevo"
-              >
-                Regenerar
-              </Button>
+              <Hint label="Generar un código nuevo">
+                <Button type="button" variant="ghost" size="sm" onClick={handleRotateCode}>
+                  Regenerar
+                </Button>
+              </Hint>
             </div>
           </div>
         )}
@@ -1697,28 +1718,30 @@ function ConfigurationScreen() {
                             ) : (
                               <div className="flex shrink-0 items-center gap-0.5">
                                 {isBox && (
+                                  <Hint label="Renombrar">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      aria-label={`Renombrar ${d.deviceName}`}
+                                      onClick={() => handleRenameDevice(d.deviceId, d.deviceName)}
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                  </Hint>
+                                )}
+                                <Hint label="Revocar">
                                   <Button
                                     type="button"
                                     variant="ghost"
                                     size="icon-sm"
-                                    aria-label={`Renombrar ${d.deviceName}`}
-                                    title="Renombrar"
-                                    onClick={() => handleRenameDevice(d.deviceId, d.deviceName)}
+                                    aria-label={`Revocar ${d.deviceName}`}
+                                    className="text-destructive hover:text-destructive"
+                                    onClick={() => setRevokeTarget(d)}
                                   >
-                                    <Pencil className="h-4 w-4" />
+                                    <Trash2 className="h-4 w-4" />
                                   </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  aria-label={`Revocar ${d.deviceName}`}
-                                  title="Revocar"
-                                  className="text-destructive hover:text-destructive"
-                                  onClick={() => setRevokeTarget(d)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+                                </Hint>
                               </div>
                             )}
                           </li>
@@ -2024,19 +2047,16 @@ function ConfigurationScreen() {
                   )}
                   Recargar
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleTestPrint}
-                  disabled={testingPrint}
-                  title="Envía este ticket real a la impresora seleccionada con el ancho y el modo de impresión elegidos."
-                >
-                  {testingPrint ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Printer className="h-4 w-4" />
-                  )}
-                  Imprimir prueba
-                </Button>
+                <Hint label="Envía este ticket real a la impresora seleccionada con el ancho y el modo de impresión elegidos.">
+                  <Button variant="outline" onClick={handleTestPrint} disabled={testingPrint}>
+                    {testingPrint ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Printer className="h-4 w-4" />
+                    )}
+                    Imprimir prueba
+                  </Button>
+                </Hint>
               </div>
             </div>
           </FieldRow>
@@ -2346,6 +2366,17 @@ function ConfigurationScreen() {
             loading={revoking}
             onCancel={() => setRevokeTarget(null)}
             onConfirm={handleRevokeDevice}
+          />
+          <ConfirmDialog
+            open={!!asking}
+            onOpenChange={(o) => !o && answer(false)}
+            title={asking?.title}
+            description={asking?.description}
+            confirmLabel={asking?.confirmLabel}
+            variant={asking?.variant || "destructive"}
+            iconColor={asking?.iconColor || "error"}
+            onCancel={() => answer(false)}
+            onConfirm={() => answer(true)}
           />
           <ConfirmDialog
             open={!!pendingTab}

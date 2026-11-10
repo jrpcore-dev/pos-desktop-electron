@@ -33,6 +33,7 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
+import { Hint } from "./ui/hint";
 import { fmtMoney, fmtMoneyAbs } from "../utils/format";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { prepareTicketLogo } from "../utils/logo";
@@ -175,14 +176,16 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
       </TableCell>
       <TableCell className="px-4 py-3">
         <div className="flex justify-center">
-          <Button
-            variant="outline"
-            size="icon"
-            title="Ver detalle"
-            onClick={() => onOpenDetail(sale.id)}
-          >
-            <Eye className="h-4 w-4" />
-          </Button>
+          <Hint label="Ver detalle">
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Ver detalle de la venta"
+              onClick={() => onOpenDetail(sale.id)}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          </Hint>
         </div>
       </TableCell>
     </TableRow>
