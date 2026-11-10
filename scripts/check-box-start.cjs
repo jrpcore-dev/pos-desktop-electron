@@ -147,8 +147,14 @@ global.fetch = async (url, opts) => {
   const cat = await boxRpc.forward(box, "taecel:get-catalog", [{ force: false }]);
   check(cat && cat.ok === true && !cat.stale, "con Host: el catálogo del Host", cat);
   await apiServer.stopServer();
+  const tOff = performance.now();
   const off = await boxRpc.forward(box, "taecel:get-catalog", [{ force: false }]);
-  check(off && off.ok === true && off.stale === true && off.operators.length === 1, "sin Host: el último que se vio", off);
+  const offMs = performance.now() - tOff;
+  check(off && off.ok === true && off.operators.length === 1, "sin Host: el último que se vio", off);
+  check(offMs < 100, "al momento, sin esperar a la red (pesa ~1.6 MB)", `${offMs.toFixed(0)} ms`);
+  // Forzar (botón "Actualizar catálogo") sí va al Host; sin Host cae al guardado.
+  const forced = await boxRpc.forward(box, "taecel:get-catalog", [{ force: true }]);
+  check(forced && forced.ok === true && forced.stale === true, "forzado sin Host: el guardado, marcado como viejo", forced);
   check((await apiServer.startServer(host, PORT)).success === true, "(vuelve el Host)");
 
   await apiServer.stopServer();

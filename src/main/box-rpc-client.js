@@ -1421,6 +1421,10 @@ const loginLocalFirst = async (db, id, pin) => {
 // ── Estado de caja cacheado (para vender sin Host) ──────────────────────────
 const REGISTER_CACHE_KEY = "last_register_snapshot";
 const TAECEL_CATALOG_KEY = "taecel_catalog_last";
+const TAECEL_CATALOG_AT_KEY = "taecel_catalog_last_at";
+// Se renueva por detrás si el guardado tiene más de esto.
+const TAECEL_CATALOG_FRESH_MS = 30 * 60 * 1000;
+let taecelCatalogInFlight = null;
 const cacheRegister = (db, result) => {
   if (result && result.success && result.register) {
     activation.setSetting(db, REGISTER_CACHE_KEY, JSON.stringify(result.register));
@@ -1485,19 +1489,46 @@ const forward = (db, channel, args = []) => {
   // Catálogo de Taecel (compañías y montos): la caja guarda el último que le
   // dio el Host y lo enseña si el Host no contesta o pide sesión. Recargar
   // sigue siendo del Host; esto sólo evita la pantalla vacía.
+  // Pesa ~1.6 MB: con el que ya tiene y es reciente se contesta al momento y
+  // se renueva por detrás (en la Caja 2 bajarlo tardaba hasta 28 s).
   if (channel === "taecel:get-catalog") {
-    return rpcCall(db, channel, args).then((r) => {
-      if (r && r.ok) {
-        try {
-          activation.setSetting(db, TAECEL_CATALOG_KEY, JSON.stringify(r));
-        } catch (err) {}
-        return r;
-      }
+    const readSaved = () => {
       try {
         const saved = JSON.parse(activation.getSetting(db, TAECEL_CATALOG_KEY) || "null");
-        if (saved && saved.ok) return { ...saved, stale: true, staleReason: (r && (r.error || r.code)) || null };
-      } catch (err) {}
-      return r;
+        return saved && saved.ok ? saved : null;
+      } catch (err) {
+        return null;
+      }
+    };
+    const fetchFresh = () => {
+      if (!taecelCatalogInFlight) {
+        taecelCatalogInFlight = rpcCall(db, channel, args)
+          .then((r) => {
+            if (r && r.ok) {
+              try {
+                activation.setSetting(db, TAECEL_CATALOG_KEY, JSON.stringify(r));
+                activation.setSetting(db, TAECEL_CATALOG_AT_KEY, String(Date.now()));
+              } catch (err) {}
+            }
+            return r;
+          })
+          .finally(() => {
+            taecelCatalogInFlight = null;
+          });
+      }
+      return taecelCatalogInFlight;
+    };
+    const saved = readSaved();
+    const savedAt = Number(activation.getSetting(db, TAECEL_CATALOG_AT_KEY) || 0);
+    const force = !!(args[0] && args[0].force);
+    if (saved && !force) {
+      if (Date.now() - savedAt > TAECEL_CATALOG_FRESH_MS) fetchFresh().catch(() => {});
+      return Promise.resolve(saved);
+    }
+    return fetchFresh().then((r) => {
+      if (r && r.ok) return r;
+      const fallback = readSaved();
+      return fallback ? { ...fallback, stale: true, staleReason: (r && (r.error || r.code)) || null } : r;
     });
   }
   if (channel === "touch-customer" && localReady(db)) {
