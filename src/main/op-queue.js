@@ -46,6 +46,14 @@ const ROW_COLUMNS = Object.freeze({
   customers: ["id", "uid", "name", "phone", "tier_id", "qr_code", "created_at"],
   categories: ["id", "uid", "name", "description", "created_at"],
   suppliers: ["id", "uid", "name", "contact", "phone", "email", "address", "delivery_days", "created_at"],
+  // Sin `stock`: viaja aparte como delta (el inicial de un alta también), así
+  // reaplicar la fila nunca pisa lo vendido aquí.
+  products: [
+    "id", "uid", "barcode", "name", "search_name", "brand", "price", "category_id", "supplier_id",
+    "expiry_date", "image_path", "cost_price", "min_stock", "discount_percent", "has_discount",
+    "allow_manual_discount", "promo_fixed_price", "promo_start_date", "promo_end_date", "is_active",
+    "sale_unit", "box_qty", "box_price", "pack_qty", "pack_price", "created_at",
+  ],
 });
 const rowKey = (row) => (row.uid ? ["uid", row.uid] : ["id", row.id]);
 const writeRow = (db, table, row) => {
@@ -73,18 +81,60 @@ const removeRow = (db, table, row) => {
   const [keyCol, keyVal] = rowKey(row);
   db.prepare(`DELETE FROM ${table} WHERE ${keyCol} = ?`).run(keyVal);
 };
-const applyEffect = (db, effect, sign = 1) => {
-  const list = (effect && Array.isArray(effect.stock) && effect.stock) || [];
-  const stmt = db.prepare("UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?");
-  for (const e of list) {
-    const delta = Number(e.delta) || 0;
-    if (delta) stmt.run(sign * delta, Number(e.productId));
+// Producto de un efecto: por uid si nació en una caja (su id provisional
+// cambia cuando llega el del Host), si no por id.
+const productIdOf = (db, e) => {
+  if (e && e.productUid) {
+    const row = db.prepare("SELECT id FROM products WHERE uid = ?").get(String(e.productUid));
+    if (row) return row.id;
   }
+  return Number(e && e.productId);
+};
+const applyStock = (db, list, sign) => {
+  const stmt = db.prepare("UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?");
+  for (const e of list || []) {
+    const delta = Number(e.delta) || 0;
+    if (delta) stmt.run(sign * delta, productIdOf(db, e));
+  }
+};
+// Promos por cantidad de un producto: el efecto guarda la lista completa de
+// antes y de después. Las filas que pone la caja llevan id negativo (nunca
+// chocan con las del Host); las de antes vuelven con su id.
+const writePrices = (db, productId, list, keepIds) => {
+  db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(productId);
+  let next = Math.min(0, Number(db.prepare("SELECT MIN(id) AS m FROM product_prices").get().m) || 0);
+  const stmt = db.prepare("INSERT INTO product_prices (id, product_id, type, qty, price, unit) VALUES (?, ?, ?, ?, ?, ?)");
+  for (const p of list || []) {
+    const id = keepIds && p.id ? p.id : (next -= 1);
+    stmt.run(id, productId, p.type, p.qty, p.price, p.unit || "piece");
+  }
+};
+const applyPrices = (db, list, sign) => {
+  for (const e of list || []) {
+    const productId = productIdOf(db, e);
+    if (!db.prepare("SELECT 1 FROM products WHERE id = ?").get(productId)) continue;
+    if (sign > 0) writePrices(db, productId, e.after, false);
+    else writePrices(db, productId, e.before, true);
+  }
+};
+const applyEffect = (db, effect, sign = 1) => {
+  const stock = (effect && Array.isArray(effect.stock) && effect.stock) || [];
+  const prices = (effect && Array.isArray(effect.prices) && effect.prices) || [];
   const rows = (effect && Array.isArray(effect.rows) && effect.rows) || [];
+  // Aplicar: primero las filas (un producto nuevo debe existir antes de
+  // sumarle su stock inicial). Deshacer: al revés.
+  if (sign < 0) {
+    applyStock(db, stock, sign);
+    applyPrices(db, prices, sign);
+  }
   for (const r of sign > 0 ? rows : [...rows].reverse()) {
     if (sign > 0) writeRow(db, r.table, r.after);
     else if (r.before) writeRow(db, r.table, r.before);
     else removeRow(db, r.table, r.after);
+  }
+  if (sign > 0) {
+    applyPrices(db, prices, sign);
+    applyStock(db, stock, sign);
   }
 };
 
@@ -196,10 +246,10 @@ const reapplyPending = (db, productIds = null) => {
   db.transaction(() => {
     for (const r of rows) {
       const stock = ((r.effect && r.effect.stock) || []).filter(
-        (e) => !wanted || wanted.has(String(e.productId)),
+        (e) => !wanted || wanted.has(String(productIdOf(db, e))),
       );
       if (!stock.length) continue;
-      applyEffect(db, { stock }, 1);
+      applyStock(db, stock, 1);
       touched += stock.length;
     }
   })();
@@ -223,6 +273,23 @@ const reapplyRows = (db, table) => {
   return touched;
 };
 
+// Promos por cantidad: la réplica trajo las del Host. Las que puso la caja
+// (id negativo) se quitan y lo que aún no sube se vuelve a aplicar encima.
+const reapplyPrices = (db) => {
+  const rows = list(db, [STATUS.PENDING, STATUS.NEEDS_AUTH]);
+  let touched = 0;
+  db.transaction(() => {
+    db.prepare("DELETE FROM product_prices WHERE id < 0").run();
+    for (const r of rows) {
+      const prices = (r.effect && r.effect.prices) || [];
+      if (!prices.length) continue;
+      applyPrices(db, prices, 1);
+      touched += prices.length;
+    }
+  })();
+  return touched;
+};
+
 // Fallos de red: se reintenta más tarde sin marcar nada.
 // Lo mismo si el Host aún no aprueba o ya no reconoce esta caja: la operación
 // es válida, sólo falta el vínculo. No es un rechazo: deshacerla la perdería.
@@ -236,6 +303,7 @@ const TRANSIENT = new Set([
   "CUSTOMER_PENDING",
   "CATEGORY_PENDING",
   "SUPPLIER_PENDING",
+  "PRODUCT_PENDING",
 ]);
 
 // Sube en orden. `send(row)` devuelve lo que contestó el Host (el valor del
@@ -296,6 +364,7 @@ const sync = (db, send) => {
 
 module.exports = {
   reapplyRows,
+  reapplyPrices,
   STATUS,
   OPEN_STATUSES,
   enqueue,

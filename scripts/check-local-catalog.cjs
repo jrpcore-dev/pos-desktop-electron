@@ -31,6 +31,7 @@ const replicaEngine = require(path.join(REPO, "src/main/replica-engine.js"));
 const replicaLive = require(path.join(REPO, "src/main/replica-live.js"));
 const ipcRegistry = require(path.join(REPO, "src/main/ipc-registry.js"));
 const catalogCore = require(path.join(REPO, "src/main/catalog-core.js"));
+const productsCore = require(path.join(REPO, "src/main/products-core.js"));
 const { hashPin } = require(path.join(REPO, "src/main/pins.js"));
 
 const TMP = path.join(os.tmpdir(), "opencode", `check-lcat-${process.pid}`);
@@ -75,15 +76,10 @@ ipcRegistry.set("add-supplier", (e, data) => {
   return r.success ? { success: true, id: r.id } : r;
 });
 ipcRegistry.set("update-supplier", (e, id, data) => catalogCore.update(host, "suppliers", id, data));
-// add-product mínimo con la misma traducción de referencias que main.js.
+// add-product igual que main.js: traducción de referencias + products-core.
 ipcRegistry.set("add-product", (e, raw) => {
   const refs = catalogCore.resolveRefs(host, raw);
-  if (!refs.success) return refs;
-  const d = refs.data;
-  const info = host
-    .prepare("INSERT INTO products (barcode, name, price, stock, sale_unit, is_active, category_id, supplier_id) VALUES (?, ?, ?, 0, 'piece', 1, ?, ?)")
-    .run(d.barcode, d.name, d.price, d.category_id || null, d.supplier_id || null);
-  return { success: true, id: Number(info.lastInsertRowid) };
+  return refs.success ? productsCore.add(host, refs.data) : refs;
 });
 
 // ── Caja ─────────────────────────────────────────────────────────────────────
@@ -156,6 +152,7 @@ const startLive = () =>
   check((await apiServer.startServer(host, PORT)).success === true, "vuelve el Host");
   const prod = await boxRpc.forward(box, "add-product", [{ barcode: "777", name: "Papas", price: 15, category_id: snacks.id, supplier_id: b.id }]);
   check(prod && prod.success === true, "el producto se guarda", prod);
+  await boxRpc.syncOps(box); // el producto va por la cola, detrás de su categoría
   const hostProd = host.prepare("SELECT category_id, supplier_id FROM products WHERE barcode = '777'").get();
   const hostSnacks = byUid(host, "categories", snacks.row.uid)[0];
   const hostLala = byUid(host, "suppliers", b.row.uid)[0];

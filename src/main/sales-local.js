@@ -26,11 +26,23 @@ const sqliteTime = (iso) => {
 
 // Escribe UNA venta de la cola en la copia local. Debe correr dentro de una
 // transacción (quien llama la abre): si una regla falla, no queda nada.
+// Partidas con producto creado en la caja: su id provisional cambia cuando la
+// réplica trae el del Host; el uid dice cuál es ahora.
+const localCart = (db, cart) => {
+  if (!Array.isArray(cart) || !cart.some((it) => it && it.product_uid)) return cart;
+  const byUid = db.prepare("SELECT id FROM products WHERE uid = ?");
+  return cart.map((it) => {
+    if (!it || !it.product_uid) return it;
+    const row = byUid.get(String(it.product_uid));
+    return row ? { ...it, id: row.id } : it;
+  });
+};
+
 const writeLocalSale = (db, row, deviceId) => {
   const p = row.payload || {};
   const customerId = Number(p.customerId);
   const out = salesCore.createSaleTx(db, {
-    cart: p.cart,
+    cart: localCart(db, p.cart),
     total: Number(p.total),
     paymentMethod: p.paymentMethod,
     discountTotal: p.discountTotal,
@@ -110,6 +122,30 @@ const reapplyStock = (db, productIds) => {
   return rows.length;
 };
 
+// La réplica cambió un producto creado aquí (id provisional) por el del Host:
+// las partidas de ventas aún sin subir pasan al id nuevo, para que su stock se
+// vuelva a descontar sobre él. Devuelve los ids que recibieron partidas.
+const relinkProducts = (db) => {
+  const moved = new Set();
+  const byUid = db.prepare("SELECT id FROM products WHERE uid = ?");
+  const move = db.prepare(
+    `UPDATE sale_items SET product_id = ?
+      WHERE product_id = ? AND sale_id IN (SELECT id FROM sales WHERE folio = ? AND id < 0)`,
+  );
+  db.transaction(() => {
+    const S = offlineQueue.STATUS;
+    for (const row of offlineQueue.list(db, [S.PENDING, S.SYNCING, S.NEEDS_AUTH, S.CONFLICT])) {
+      for (const it of (row.payload && row.payload.cart) || []) {
+        if (!it || !it.product_uid || !(Number(it.id) < 0)) continue;
+        const now = byUid.get(String(it.product_uid));
+        if (!now || now.id === Number(it.id)) continue;
+        if (move.run(now.id, Number(it.id), row.folio).changes) moved.add(String(now.id));
+      }
+    }
+  })();
+  return moved;
+};
+
 // El cajero quitó una venta antes de que subiera: se borra de la copia local y
 // su stock vuelve.
 const removeLocalSale = (db, folio) =>
@@ -174,6 +210,7 @@ module.exports = {
   writeLocalSale,
   rematerialize,
   dropOrphanItems,
+  relinkProducts,
   reapplyStock,
   removeLocalSale,
   markPending,

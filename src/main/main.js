@@ -330,6 +330,7 @@ const discovery = require("./discovery");
 const hostWatcher = require("./host-watcher");
 const customersCore = require("./customers-core");
 const catalogCore = require("./catalog-core");
+const productsCore = require("./products-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -795,35 +796,9 @@ app.on("second-instance", () => {
 // ─── PRODUCTS ───────────────────────────────────────────────
 
 // Promos por cantidad de un producto (ver db-schema: product_prices).
-const PRICE_TIER_TYPES = ["mayoreo", "combo", "llevapaga", "piezan"];
-const PRICE_TIER_UNITS = ["piece", "box", "pack", "weight"];
+const { PRICE_TIER_TYPES, PRICE_TIER_UNITS } = productsCore;
 
-const savePrices = (productId, prices) => {
-  const txn = db.transaction(() => {
-    db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(
-      productId,
-    );
-    const stmt = db.prepare(
-      "INSERT INTO product_prices (product_id, type, qty, price, unit) VALUES (?, ?, ?, ?, ?)",
-    );
-    for (const p of prices || []) {
-      const type = PRICE_TIER_TYPES.includes(p.type) ? p.type : "combo";
-      const unit = PRICE_TIER_UNITS.includes(p.unit) ? p.unit : "piece";
-      // Por kilo la cantidad admite decimales ("desde 2.5 kg").
-      const qty =
-        unit === "weight" ? parseFloat(p.qty) || 0 : parseInt(p.qty, 10) || 0;
-      const price = parseFloat(p.price) || 0;
-      if (!(qty > 0) || !(price > 0)) continue;
-      // lleva `qty`, paga `price` unidades enteras: 3×2 sí, 2×3 no.
-      if (type === "llevapaga" && !(Number.isInteger(price) && price < qty)) continue;
-      // cada `qty`-ésima unidad con `price`% menos.
-      if (type === "piezan" && !(qty >= 2 && price <= 100)) continue;
-      if ((type === "llevapaga" || type === "piezan") && unit === "weight") continue;
-      stmt.run(productId, type, qty, price, unit);
-    }
-  });
-  txn();
-};
+const savePrices = (productId, prices) => productsCore.savePrices(db, productId, prices);
 
 const attachPrices = (products) => {
   if (!products || !products.length) return products;
@@ -1144,116 +1119,14 @@ const autoMinStock = (stock) =>
   Math.max(1, Math.floor((parseFloat(stock) || 0) * 0.4));
 
 ipcMain.handle("add-product", async (event, rawProduct) => {
-  // Categoría o proveedor creados en una caja: llegan por uid.
-  const refs = catalogCore.resolveRefs(db, rawProduct);
-  if (!refs.success) return refs;
-  const product = refs.data;
-  const {
-    barcode,
-    name,
-    brand,
-    price,
-    stock,
-    category_id,
-    supplier_id,
-    expiry_date,
-    image_path,
-    cost_price,
-    min_stock,
-    discount_percent,
-    has_discount,
-    allow_manual_discount,
-    promo_fixed_price,
-    promo_start_date,
-    promo_end_date,
-    sale_unit,
-    box_qty,
-    box_price,
-    pack_qty,
-    pack_price,
-    prices,
-  } = product;
   try {
-    const existing = db
-      .prepare("SELECT id, is_active FROM products WHERE barcode = ?")
-      .get(barcode);
-    if (existing && existing.is_active)
-      return {
-        success: false,
-        error: "Ya existe un producto con este código de barras",
-      };
-
-    const minStock =
-      parseFloat(min_stock) > 0 ? parseFloat(min_stock) : autoMinStock(stock);
-
-    if (existing) {
-      const stmt = db.prepare(`UPDATE products SET
-        name=?, search_name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
-        expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, allow_manual_discount=?, promo_fixed_price=?, promo_start_date=?, promo_end_date=?, is_active=1, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
-        WHERE id=?`);
-      stmt.run(
-        name,
-        nomarize(name),
-        brand,
-        price,
-        stock || 0,
-        category_id || null,
-        supplier_id || null,
-        expiry_date || null,
-        image_path || null,
-        cost_price || 0,
-        minStock,
-        discount_percent || 0,
-        has_discount ? 1 : 0,
-        allow_manual_discount ? 1 : 0,
-        promo_fixed_price || 0,
-        promo_start_date || "",
-        promo_end_date || "",
-        sale_unit || "piece",
-        box_qty || 0,
-        box_price || 0,
-        pack_qty || 0,
-        pack_price || 0,
-        existing.id,
-      );
-      savePrices(existing.id, prices);
-      return { success: true, id: existing.id, overwritten: true };
-    }
-
-    const stmt = db.prepare(`INSERT INTO products
-      (barcode, name, search_name, brand, price, stock, category_id, supplier_id, expiry_date, image_path, cost_price, min_stock, discount_percent, has_discount, allow_manual_discount, promo_fixed_price, promo_start_date, promo_end_date, sale_unit, box_qty, box_price, pack_qty, pack_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const info = stmt.run(
-      barcode,
-      name,
-      nomarize(name),
-      brand,
-      price,
-      stock || 0,
-      category_id || null,
-      supplier_id || null,
-      expiry_date || null,
-      image_path || null,
-      cost_price || 0,
-      minStock,
-      discount_percent || 0,
-      has_discount ? 1 : 0,
-      allow_manual_discount ? 1 : 0,
-      promo_fixed_price || 0,
-      promo_start_date || "",
-      promo_end_date || "",
-      sale_unit || "piece",
-      box_qty || 0,
-      box_price || 0,
-      pack_qty || 0,
-      pack_price || 0,
-    );
-    savePrices(info.lastInsertRowid, prices);
-    return { success: true, id: info.lastInsertRowid };
+    // Categoría o proveedor creados en una caja: llegan por uid.
+    const refs = catalogCore.resolveRefs(db, rawProduct);
+    if (!refs.success) return refs;
+    return productsCore.add(db, refs.data);
   } catch (error) {
     let msg = error.message;
-    if (error.code === "SQLITE_CONSTRAINT_UNIQUE")
-      msg = "Ya existe un producto con este código de barras";
+    if (error.code === "SQLITE_CONSTRAINT_UNIQUE") msg = productsCore.BARCODE_TAKEN;
     return { success: false, error: msg };
   }
 });
@@ -1263,107 +1136,7 @@ ipcMain.handle("update-product", async (event, id, rawProduct) => {
     if (!rawProduct || !id) return { success: false, error: "Datos inválidos" };
     const refs = catalogCore.resolveRefs(db, rawProduct);
     if (!refs.success) return refs;
-    const product = refs.data;
-    const {
-      barcode,
-      name,
-      brand,
-      price,
-      stock,
-      category_id,
-      supplier_id,
-      expiry_date,
-      image_path,
-      cost_price,
-      min_stock,
-discount_percent,
-    has_discount,
-    allow_manual_discount,
-    promo_fixed_price,
-    promo_start_date,
-    promo_end_date,
-    is_active,
-      sale_unit,
-      box_qty,
-      box_price,
-      pack_qty,
-      pack_price,
-      prices,
-      cashier_id,
-    } = product;
-
-    const dup = db
-      .prepare("SELECT id FROM products WHERE barcode = ? AND id != ?")
-      .get(barcode, id);
-    if (dup)
-      return {
-        success: false,
-        error: "Ya existe otro producto con este código de barras",
-      };
-
-    const current = db
-      .prepare("SELECT stock, expiry_date, image_path FROM products WHERE id = ?")
-      .get(id);
-    if (!current) return { success: false, error: "Producto no encontrado" };
-    // Campos que el formulario no envía se conservan (antes se borraban la
-    // imagen y la caducidad en cada edición).
-    const keep = (key, value) =>
-      key in product ? value || null : current[key] ?? null;
-    // stock omitido = el usuario no lo tocó: se conserva el actual (no pisa
-    // ventas hechas mientras el formulario estaba abierto).
-    const parsedStock = parseFloat(stock);
-    const newStock = Number.isFinite(parsedStock) ? parsedStock : current.stock;
-    const diff = newStock - (Number(current.stock) || 0);
-
-    const stmt = db.prepare(`UPDATE products SET
-      barcode=?, name=?, search_name=?, brand=?, price=?, stock=?, category_id=?, supplier_id=?,
-      expiry_date=?, image_path=?, cost_price=?, min_stock=?, discount_percent=?, has_discount=?, allow_manual_discount=?, promo_fixed_price=?, promo_start_date=?, promo_end_date=?, is_active=?, sale_unit=?, box_qty=?, box_price=?, pack_qty=?, pack_price=?
-      WHERE id=?`);
-    const run = db.transaction(() => {
-    const info = stmt.run(
-      barcode || "",
-      name,
-      nomarize(name),
-      brand,
-      price,
-      newStock,
-      category_id || null,
-      supplier_id || null,
-      keep("expiry_date", expiry_date),
-      keep("image_path", image_path),
-      cost_price || 0,
-      parseFloat(min_stock) > 0 ? parseFloat(min_stock) : autoMinStock(newStock),
-      discount_percent || 0,
-      has_discount ? 1 : 0,
-      allow_manual_discount ? 1 : 0,
-      promo_fixed_price || 0,
-      promo_start_date || "",
-      promo_end_date || "",
-      is_active !== undefined ? is_active : 1,
-      sale_unit || "piece",
-      box_qty || 0,
-      box_price || 0,
-      pack_qty || 0,
-      pack_price || 0,
-      id,
-    );
-    if (diff !== 0) {
-      db.prepare(
-        "INSERT INTO stock_movements (product_id, type, quantity, notes, cashier_id) VALUES (?, ?, ?, ?, ?)",
-      ).run(
-        id,
-        diff > 0 ? "in" : "out",
-        Math.abs(diff),
-        "Ajuste al editar producto",
-        cashier_id || null,
-      );
-    }
-    savePrices(id, prices);
-    return info.changes;
-    });
-    return run() > 0
-      ? { success: true }
-      : { success: false, error: "Producto no encontrado" };
+    return productsCore.update(db, id, refs.data);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -2257,7 +2030,8 @@ ipcMain.handle(
   async (
     event,
     {
-      productId,
+      productId: rawProductId,
+      productUid,
       quantity,
       cost,
       cashierId,
@@ -2267,6 +2041,11 @@ ipcMain.handle(
       expiryDate,
     },
   ) => {
+    // Producto creado en una caja: llega por uid hasta que el Host le da id.
+    const productId = productsCore.resolveId(db, rawProductId, productUid);
+    if (!productId) {
+      return { success: false, code: "PRODUCT_PENDING", error: "El producto nuevo aún no llega al Host" };
+    }
     const txn = db.transaction(() => {
       const product = db
         .prepare(
@@ -2539,12 +2318,17 @@ ipcMain.handle(
 
 ipcMain.handle(
   "remove-stock",
-  async (event, { productId, quantity, notes, role, cashierId }) => {
+  async (event, { productId: rawProductId, productUid, quantity, notes, role, cashierId }) => {
     if (!role || role !== "admin") {
       return {
         success: false,
         error: "Solo el propietario puede hacer salidas de stock",
       };
+    }
+    // Producto creado en una caja: llega por uid hasta que el Host le da id.
+    const productId = productsCore.resolveId(db, rawProductId, productUid);
+    if (!productId) {
+      return { success: false, code: "PRODUCT_PENDING", error: "El producto nuevo aún no llega al Host" };
     }
     const txn = db.transaction(() => {
       const product = db
@@ -3953,6 +3737,18 @@ const startLiveReplica = () => {
     // Paso 2 · la réplica pisa productos con la fila del Host: lo que la cola
     // aún no subió se vuelve a aplicar encima antes de avisar a las pantallas.
     onChanged: (tables, ids, meta) => {
+      // Productos creados o editados aquí que aún no suben (fila y promos por
+      // cantidad): primero, porque una venta reescrita puede usarlos.
+      if (tables.includes("products")) {
+        try {
+          boxRpc.reapplyPendingRows(db, "products");
+        } catch (err) {}
+      }
+      if (tables.includes("products") || tables.includes("product_prices")) {
+        try {
+          boxRpc.reapplyPendingPrices(db);
+        } catch (err) {}
+      }
       // Ventas hechas aquí que el Host aún no confirma: un resync vació la
       // tabla y se vuelven a escribir (eso ya descuenta su stock); en un
       // cambio normal se quitan las que el Host ya sustituyó y su stock se
@@ -3962,7 +3758,12 @@ const startLiveReplica = () => {
           boxRpc.rematerializeSales(db, (m) => console.warn(m));
         } else {
           if (tables.includes("sales") || tables.includes("sale_items")) boxRpc.dropOrphanSaleItems(db);
-          if (tables.includes("products") && ids && ids.products) boxRpc.reapplyPendingSales(db, ids.products);
+          if (tables.includes("products") && ids && ids.products) {
+            // Un producto creado aquí ya llegó con el id del Host: sus partidas
+            // pendientes pasan a ese id antes de volver a descontar.
+            const moved = boxRpc.relinkSaleProducts(db);
+            boxRpc.reapplyPendingSales(db, [...ids.products, ...moved]);
+          }
         }
       } catch (err) {
         console.warn("[sales-local]", err && err.message);
@@ -3972,7 +3773,6 @@ const startLiveReplica = () => {
           boxRpc.reapplyPendingOps(db, meta && meta.resync ? null : ids && ids.products);
         } catch (err) {}
       }
-      // Lo mismo con clientes creados o editados en la caja que aún no suben.
       // Lo mismo con clientes, categorías y proveedores creados o editados en
       // la caja que aún no suben.
       for (const table of ["customers", "categories", "suppliers"]) {

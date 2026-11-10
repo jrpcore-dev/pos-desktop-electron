@@ -4,6 +4,7 @@ const { verifyPin } = require("./pins");
 const activation = require("./activation");
 const scopeDefs = require("./scopes");
 const salesCore = require("./sales-core");
+const productsCore = require("./products-core");
 const dbSchema = require("./db-schema");
 const protocol = require("./protocol");
 const backupService = require("./backup-service");
@@ -1303,6 +1304,17 @@ const startServer = async (
       }
       rawCid = byUid.id;
     }
+    // Productos creados en una caja: igual que el cliente, por uid. La huella
+    // se calcula con el carrito tal como lo mandó la caja (un reintento da la
+    // misma); lo traducido sólo va a la venta.
+    const cartRes = productsCore.resolveCart(db, body.cart);
+    if (!cartRes.success) {
+      return res.status(409).json({
+        success: false,
+        code: "PRODUCT_PENDING",
+        error: "Un producto de esta venta todavía no llega al Host",
+      });
+    }
     let cidHash;
     if (rawCid === null || rawCid === undefined) cidHash = undefined;
     else cidHash = rawCid;
@@ -1322,7 +1334,7 @@ const startServer = async (
       ...(cidHash !== undefined ? { customer_id: cidHash } : {}),
     };
     const payload = {
-      cart: body.cart,
+      cart: cartRes.cart,
       total: body.total,
       paymentMethod: body.paymentMethod,
       discountTotal: body.discountTotal,

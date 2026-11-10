@@ -73,6 +73,7 @@ const CHECKS = [
   { file: "check-host-relocate.cjs" },
   { file: "check-local-customers.cjs" },
   { file: "check-local-catalog.cjs" },
+  { file: "check-local-products.cjs" },
   { file: "check-pair-notify.cjs" },
   { file: "check-sale-fast.cjs" },
 ];

@@ -14,6 +14,7 @@ const dbSchema = require("./db-schema");
 const offlineQueue = require("./offline-queue");
 const customersCore = require("./customers-core");
 const catalogCore = require("./catalog-core");
+const productsCore = require("./products-core");
 const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
@@ -181,14 +182,98 @@ const catalogUpdate = (table, noun) => (db, [id, data = {}]) => {
   };
 };
 
+// Productos · mismas columnas que escribe el Host (products-core). El stock
+// nunca viaja como cantidad exacta: el inicial es un delta y editar no lo toca.
+const PRODUCT_COLS = Object.keys(productsCore.values({}));
+const pickProduct = (row) => {
+  const out = { id: row.id, uid: row.uid || undefined, min_stock: row.min_stock, is_active: row.is_active };
+  for (const c of PRODUCT_COLS) out[c] = row[c];
+  return out;
+};
+const pricesOf = (db, productId) =>
+  db.prepare("SELECT id, type, qty, price, unit FROM product_prices WHERE product_id = ? ORDER BY id").all(productId);
+// La referencia que entiende el Host: un producto creado aquí va por uid.
+const productRef = (row) => (row && row.id < 0 && row.uid ? { productUid: row.uid } : {});
+
 const QUEUED_OPS = {
+  "add-product": (db, [data = {}]) => {
+    if (!String((data && data.name) || "").trim()) return fail("NAME_REQUIRED", "Nombre requerido");
+    if (productsCore.barcodeTaken(db, data.barcode)) return fail("BARCODE_TAKEN", productsCore.BARCODE_TAKEN);
+    const initial = parseFloat(data.stock) || 0;
+    const v = { ...productsCore.values(data), min_stock: productsCore.minStockFor(data, data.stock), is_active: 1 };
+    const prices = productsCore.normalizePrices(data.prices);
+    const args = [catalogCore.refsToUid(db, data)];
+    // Mismo código de un producto dado de baja: el Host lo reactiva con el
+    // stock que se capture; aquí se llega al mismo número con un delta.
+    const old = db.prepare("SELECT * FROM products WHERE barcode = ?").get(data.barcode);
+    if (old) {
+      const before = pickProduct(old);
+      return {
+        args,
+        effect: {
+          rows: [{ table: "products", before, after: { ...before, ...v } }],
+          prices: [{ productId: old.id, before: pricesOf(db, old.id), after: prices }],
+          stock: [{ productId: old.id, delta: initial - (Number(old.stock) || 0) }],
+        },
+        tables: ["products", "product_prices"],
+        label: `Producto reactivado · ${v.name}`,
+        result: { id: old.id, overwritten: true },
+      };
+    }
+    const uid = crypto.randomUUID();
+    const after = catalogCore.provisionalRow(db, "products", v, uid);
+    args[0] = { ...args[0], uid };
+    return {
+      args,
+      effect: {
+        rows: [{ table: "products", before: null, after }],
+        prices: [{ productId: after.id, productUid: uid, before: [], after: prices }],
+        stock: initial ? [{ productId: after.id, productUid: uid, delta: initial }] : [],
+      },
+      tables: ["products", "product_prices"],
+      label: `Producto nuevo · ${v.name}`,
+      result: { id: after.id },
+    };
+  },
+  // Sólo sin `stock` (forward manda al Host la edición con cantidad exacta).
+  "update-product": (db, [id, data = {}]) => {
+    if (!data || !String(data.name || "").trim()) return fail("NAME_REQUIRED", "Nombre requerido");
+    const current = db.prepare("SELECT * FROM products WHERE id = ?").get(Number(id));
+    if (!current) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
+    if (productsCore.barcodeTaken(db, data.barcode, current.id)) {
+      return fail("BARCODE_TAKEN", productsCore.BARCODE_TAKEN_OTHER);
+    }
+    const before = pickProduct(current);
+    const v = {
+      ...productsCore.values(data, current),
+      min_stock: productsCore.minStockFor(data, current.stock),
+      is_active: data.is_active !== undefined ? data.is_active : 1,
+    };
+    return {
+      args: [current.id, { ...catalogCore.refsToUid(db, data), uid: current.uid || undefined }],
+      effect: {
+        rows: [{ table: "products", before, after: { ...before, ...v } }],
+        prices: [
+          {
+            productId: current.id,
+            productUid: current.uid || undefined,
+            before: pricesOf(db, current.id),
+            after: productsCore.normalizePrices(data.prices),
+          },
+        ],
+      },
+      tables: ["products", "product_prices"],
+      label: `Producto editado · ${v.name}`,
+      result: {},
+    };
+  },
   "add-category": catalogAdd("categories", "Categoría"),
   "update-category": catalogUpdate("categories", "Categoría"),
   "add-supplier": catalogAdd("suppliers", "Proveedor"),
   "update-supplier": catalogUpdate("suppliers", "Proveedor"),
   "add-stock": (db, [payload = {}]) => {
     const product = db
-      .prepare("SELECT id, name, sale_unit FROM products WHERE id = ?")
+      .prepare("SELECT id, uid, name, sale_unit FROM products WHERE id = ?")
       .get(payload.productId);
     if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
     const qty = parseQty(product, payload.quantity);
@@ -199,7 +284,8 @@ const QUEUED_OPS = {
       );
     }
     return {
-      effect: { stock: [{ productId: product.id, delta: qty }] },
+      args: [{ ...payload, ...productRef(product) }],
+      effect: { stock: [{ productId: product.id, ...productRef(product), delta: qty }] },
       label: `Entrada de ${qty} · ${product.name}`,
       result: { productName: product.name },
     };
@@ -209,7 +295,7 @@ const QUEUED_OPS = {
       return fail("FORBIDDEN", "Solo el propietario puede hacer salidas de stock");
     }
     const product = db
-      .prepare("SELECT id, name, stock, sale_unit FROM products WHERE id = ?")
+      .prepare("SELECT id, uid, name, stock, sale_unit FROM products WHERE id = ?")
       .get(payload.productId);
     if (!product) return fail("PRODUCT_NOT_FOUND", "Producto no encontrado");
     const qty = parseQty(product, payload.quantity);
@@ -225,7 +311,8 @@ const QUEUED_OPS = {
       });
     }
     return {
-      effect: { stock: [{ productId: product.id, delta: -qty }] },
+      args: [{ ...payload, ...productRef(product) }],
+      effect: { stock: [{ productId: product.id, ...productRef(product), delta: -qty }] },
       label: `Salida de ${qty} · ${product.name}`,
       result: {},
     };
@@ -351,7 +438,9 @@ const syncOps = async (db) => {
     const next = await opQueue.sync(db, send);
     out = { ...next, synced: out.synced + next.synced, conflicts: out.conflicts + next.conflicts };
   }
-  if (out.synced || out.conflicts) opsChanged(["products", "stock_movements", "customers", "categories", "suppliers"]);
+  if (out.synced || out.conflicts) {
+    opsChanged(["products", "product_prices", "stock_movements", "customers", "categories", "suppliers"]);
+  }
   return out;
 };
 
@@ -689,6 +778,19 @@ const recordSaleLocal = (db, payload) => {
 // POST /api/sales · la venta viaja con Idempotency-Key; el cajero que la firma
 // lo decide el token de sesión, no el payload (3a.i).
 const recordSale = async (db, payload = {}) => {
+  // Producto creado aquí que el Host aún no conoce: la partida lleva su uid
+  // (y su código, por si el Host ya tenía ese código con otro producto).
+  if (Array.isArray(payload.cart) && payload.cart.some((it) => it && Number(it.id) < 0)) {
+    const byId = db.prepare("SELECT uid, barcode FROM products WHERE id = ?");
+    payload = {
+      ...payload,
+      cart: payload.cart.map((it) => {
+        if (!it || !(Number(it.id) < 0) || it.product_uid) return it;
+        const row = byId.get(Number(it.id));
+        return row && row.uid ? { ...it, product_uid: row.uid, product_barcode: row.barcode } : it;
+      }),
+    };
+  }
   if (Number(payload.customerId) < 0) {
     const provisional = db.prepare("SELECT uid FROM customers WHERE id = ?").get(Number(payload.customerId));
     if (provisional && provisional.uid) payload = { ...payload, customerUid: provisional.uid };
@@ -773,7 +875,7 @@ const recordSale = async (db, payload = {}) => {
   }
   // Cliente creado en la caja que el Host aún no conoce: la venta va a la cola
   // con su uid y sube después del alta (syncPending sube antes las operaciones).
-  if (payload.customerUid) {
+  if (payload.customerUid || (Array.isArray(payload.cart) && payload.cart.some((it) => it && it.product_uid))) {
     const queued = queueSale();
     syncPending(db).catch(() => {});
     return queued;
@@ -1091,24 +1193,42 @@ const forward = (db, channel, args = []) => {
     if (Number(args[0]) > 0) rpcCall(db, channel, args).catch(() => {});
     return Promise.resolve(local || { success: true });
   }
-  if (QUEUED_OPS[channel] && localReady(db)) {
+  // Editar un producto fijando su stock a una cantidad exacta es del Host (una
+  // cantidad exacta pisaría lo que otra caja vendió): va en línea.
+  const exactStock =
+    channel === "update-product" && !!args[1] && typeof args[1] === "object" && "stock" in args[1];
+  if (QUEUED_OPS[channel] && localReady(db) && !exactStock) {
     return Promise.resolve(enqueueOp(db, channel, args));
   }
-  // Producto con categoría/proveedor recién creados aquí: primero sube su
-  // alta y la referencia viaja por uid (el Host la traduce a su id).
+  // En línea con referencias a lo creado aquí (categoría, proveedor, el propio
+  // producto): primero sube lo que está en cola y viaja por uid.
   if (channel === "add-product" || channel === "update-product") {
     const i = channel === "add-product" ? 0 : 1;
-    const data = catalogCore.refsToUid(db, args[i]);
-    if (data !== args[i]) {
-      const next = [...args];
-      next[i] = data;
-      return syncOps(db)
-        .catch(() => {})
-        .then(() => rpcCall(db, channel, next));
+    let data = catalogCore.refsToUid(db, args[i]);
+    if (exactStock && Number(args[0]) < 0) {
+      const row = db.prepare("SELECT uid FROM products WHERE id = ?").get(Number(args[0]));
+      if (row && row.uid) data = { ...data, uid: row.uid };
     }
+    const next = [...args];
+    next[i] = data;
+    const call =
+      data !== args[i]
+        ? syncOps(db)
+            .catch(() => {})
+            .then(() => rpcCall(db, channel, next))
+        : rpcCall(db, channel, args);
+    return call.then((r) => {
+      if (exactStock && r && r.code === "HOST_UNREACHABLE") {
+        return HOST_REQUIRED("Cambiar el stock a una cantidad exacta");
+      }
+      return r;
+    });
   }
   // Borrar es del Host: lo que aún no llega allá no se puede borrar todavía.
-  if ((channel === "delete-category" || channel === "delete-supplier") && Number(args[0]) < 0) {
+  if (
+    (channel === "delete-category" || channel === "delete-supplier" || channel === "delete-product") &&
+    Number(args[0]) < 0
+  ) {
     return Promise.resolve(
       fail("NOT_YET_ON_HOST", "Todavía se está guardando en el Host. Intenta borrarlo en unos segundos."),
     );
@@ -1233,6 +1353,8 @@ module.exports = {
   },
   reapplyPendingOps: (db, productIds) => opQueue.reapplyPending(db, productIds),
   reapplyPendingRows: (db, table) => opQueue.reapplyRows(db, table),
+  reapplyPendingPrices: (db) => opQueue.reapplyPrices(db),
+  relinkSaleProducts: (db) => salesLocal.relinkProducts(db),
   timingSummary,
   forward,
   rpcCall,

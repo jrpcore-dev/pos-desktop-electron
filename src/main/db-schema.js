@@ -539,6 +539,9 @@ const runMigrations = (db) => {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_uid ON categories(uid)");
   ensureColumn("suppliers", "uid", "TEXT");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_uid ON suppliers(uid)");
+  // Y para productos (products-core.js).
+  ensureColumn("products", "uid", "TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_uid ON products(uid)");
   ensureColumn("sales", "credit_amount", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid", "REAL DEFAULT 0");
   ensureColumn("sales", "credit_paid_method", "TEXT");

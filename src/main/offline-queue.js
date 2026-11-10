@@ -247,9 +247,9 @@ const absorbIntoHost = (db, rows, deviceId) => {
   return { absorbed, kept };
 };
 
-// CUSTOMER_PENDING: la venta usa un cliente creado en la caja que todavía no
-// sube; se reintenta, no es un rechazo.
-const TRANSIENT = new Set(["HOST_UNREACHABLE", "NO_HOST_LINKED", "HOST_ERROR", "CUSTOMER_PENDING"]);
+// CUSTOMER_PENDING / PRODUCT_PENDING: la venta usa un cliente o un producto
+// creado en la caja que todavía no sube; se reintenta, no es un rechazo.
+const TRANSIENT = new Set(["HOST_UNREACHABLE", "NO_HOST_LINKED", "HOST_ERROR", "CUSTOMER_PENDING", "PRODUCT_PENDING"]);
 
 // Sube la cola en orden. `send(row)` debe devolver el JSON del Host con
 // `{success:true|false, code?}`. Nunca lanza: un throw se trata como red caída.
