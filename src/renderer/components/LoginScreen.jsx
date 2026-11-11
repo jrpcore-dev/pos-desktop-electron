@@ -299,6 +299,16 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
         </section>
       </div>
 
+      {/* Marca del sistema, fuera de la tarjeta: nombre y firma, sin logo ni versión. */}
+      <div className="mt-7 flex flex-col items-center gap-1.5 text-center">
+        <span className="text-2xl font-bold leading-none tracking-tight text-foreground">Vendia</span>
+        <span className="flex items-center gap-2 text-[11px] font-medium uppercase leading-none tracking-[0.18em] text-muted-foreground">
+          <span className="h-px w-5 bg-border" aria-hidden="true" />
+          Powered by <span className="font-bold text-foreground/80">JRP Core</span>
+          <span className="h-px w-5 bg-border" aria-hidden="true" />
+        </span>
+      </div>
+
       {isFirstTime && (
         <button
           type="button"
