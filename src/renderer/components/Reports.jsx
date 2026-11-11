@@ -99,6 +99,7 @@ import {
 import { printDocument } from "../utils/printPdf";
 
 import PageHeader from "./PageHeader";
+import { MovementView, PurchaseSuggestions } from "./ReportsExtras";
 
 const MONTH_NAMES = [
   "Enero",
@@ -209,6 +210,19 @@ const prevRangeOf = (startDate, endDate) => {
   const prevStart = new Date(prevEnd);
   prevStart.setDate(prevStart.getDate() - (spanDays - 1));
   return { start: toDateStr(prevStart), end: toDateStr(prevEnd) };
+};
+
+// Con qué se compara: "la semana pasada", "ayer"… según el largo del periodo.
+const prevPeriodLabel = (startDate, endDate) => {
+  if (!startDate || !endDate) return { long: "el periodo anterior", short: "periodo anterior" };
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const [ey, em, ed] = endDate.split("-").map(Number);
+  const span = Math.round((new Date(ey, em - 1, ed) - new Date(sy, sm - 1, sd)) / 86400000) + 1;
+  const lastOfMonth = new Date(ey, em, 0).getDate();
+  if (span === 1) return { long: "el día anterior", short: "día anterior" };
+  if (span === 7) return { long: "la semana pasada", short: "semana pasada" };
+  if (sd === 1 && sy === ey && sm === em && ed === lastOfMonth) return { long: "el mes pasado", short: "mes pasado" };
+  return { long: "el periodo anterior", short: "periodo anterior" };
 };
 
 const peakHourOf = (sales) => {
@@ -407,11 +421,16 @@ const ChartsSection = React.memo(function ChartsSection({
   trendData,
   hourly,
   topProducts,
-  prodChartMode,
-  setProdChartMode,
   topLoading,
   onWeekClick,
+  startDate,
+  endDate,
+  deviceFilter,
+  prevLabel,
 }) {
+  // Tarjeta de productos: "Más vendidos" (como siempre) o "Movimiento" (día
+  // por día contra el periodo anterior). Es otra vista, no reemplaza.
+  const [prodView, setProdView] = React.useState("top");
   const pieData = [...(summary.byMethod || [])]
     .sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0))
     .map((m, i) => ({
@@ -424,28 +443,6 @@ const ChartsSection = React.memo(function ChartsSection({
   const prodRows = topProducts.slice(0, 10);
   const hasTrend = trendData.length > 0;
 
-  const totalUnits = topProducts.reduce((a, p) => a + (p.total_sold || 0), 0);
-
-  const productDonut = (() => {
-    if (totalUnits <= 0) return [];
-    const rows = topProducts.slice(0, 6).map((p, i) => ({
-      name: p.name,
-      value: p.total_sold || 0,
-      pct: ((p.total_sold || 0) / totalUnits) * 100,
-      fill: CHART_PALETTE[i % CHART_PALETTE.length],
-    }));
-    const rest = topProducts
-      .slice(6)
-      .reduce((a, p) => a + (p.total_sold || 0), 0);
-    if (rest > 0)
-      rows.push({
-        name: "Otros productos",
-        value: rest,
-        pct: (rest / totalUnits) * 100,
-        fill: CHART_PALETTE[6 % CHART_PALETTE.length],
-      });
-    return rows;
-  })();
 
   const catData = (() => {
     const map = {};
@@ -467,7 +464,7 @@ const ChartsSection = React.memo(function ChartsSection({
       {/* Tendencia */}
       <Card wash className={cn(CARD_RADIUS, "min-w-0 lg:col-span-2")}>
         <CardHeader className="pb-0">
-          <CardTitle className="text-sm">Tendencia de ventas</CardTitle>
+          <CardTitle className="text-[15px]">Tendencia de ventas</CardTitle>
           <CardDescription className="text-xs">
             {chartMode === "semanal" ? "Ventas por día de la semana" : "Ventas por semana del mes"}
           </CardDescription>
@@ -501,7 +498,7 @@ const ChartsSection = React.memo(function ChartsSection({
                   <XAxis dataKey="label" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} />
                   <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} width={46} />
                   <ReTooltip content={ChartTooltip} />
-                  <Area type="monotone" dataKey="ventas" name="Ventas" stroke={C.primary} strokeWidth={2.5} fill="url(#gradVentas)" />
+                  <Area type="monotone" dataKey="ventas" name="Ventas" stroke={C.primary} strokeWidth={2.5} fill="url(#gradVentas)" activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--card))" }} animationDuration={800} animationEasing="ease-out" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -518,7 +515,7 @@ const ChartsSection = React.memo(function ChartsSection({
       {/* Ventas por hora del día */}
       <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
-          <CardTitle className="text-sm">Ventas por hora del día</CardTitle>
+          <CardTitle className="text-[15px]">Ventas por hora del día</CardTitle>
           <CardDescription className="text-xs">
             Concentración de ventas por hora (hora de México)
           </CardDescription>
@@ -546,6 +543,12 @@ const ChartsSection = React.memo(function ChartsSection({
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourly} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                  <defs>
+                    <linearGradient id="rpHourGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(var(--chart-2))" />
+                      <stop offset="100%" stopColor="hsl(var(--chart-1))" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis
                     dataKey="hour"
@@ -568,9 +571,9 @@ const ChartsSection = React.memo(function ChartsSection({
                     content={<ChartTooltip />}
                     cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
                   />
-                  <Bar dataKey="count" name="Ventas" radius={[4, 4, 0, 0]} maxBarSize={26}>
+                  <Bar dataKey="count" name="Ventas" radius={[6, 6, 0, 0]} maxBarSize={26} animationDuration={700} animationEasing="ease-out">
                     {hourly.map((d) => (
-                      <Cell key={d.hour} fill={d.count > 0 ? C.primary : "hsl(var(--border))"} />
+                      <Cell key={d.hour} fill={d.count > 0 ? "url(#rpHourGrad)" : "hsl(var(--border))"} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -583,7 +586,7 @@ const ChartsSection = React.memo(function ChartsSection({
       {/* Distribución por método */}
       <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
-          <CardTitle className="text-sm">Distribución por método de pago</CardTitle>
+          <CardTitle className="text-[15px]">Distribución por método de pago</CardTitle>
           <CardDescription className="text-xs">
             Desglose de ingresos del período
           </CardDescription>
@@ -611,6 +614,7 @@ const ChartsSection = React.memo(function ChartsSection({
                       outerRadius={86}
                       paddingAngle={2}
                       strokeWidth={2}
+                      animationDuration={700}
                       stroke="hsl(var(--card))"
                     >
                       {pieData.map((p, i) => (
@@ -663,7 +667,7 @@ const ChartsSection = React.memo(function ChartsSection({
       {/* Comparativa Ingresos vs Gastos vs Ganancia */}
       <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
-          <CardTitle className="text-sm">Ingresos vs gastos vs ganancia</CardTitle>
+          <CardTitle className="text-[15px]">Ingresos vs gastos vs ganancia</CardTitle>
           <CardDescription className="text-xs">
             Comparativa apilada del período · haz clic en una semana para profundizar
           </CardDescription>
@@ -683,6 +687,12 @@ const ChartsSection = React.memo(function ChartsSection({
             >
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="rpIncomeGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(var(--chart-2))" />
+                      <stop offset="100%" stopColor="hsl(var(--chart-1))" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis dataKey="label" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} />
                   <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} width={46} />
@@ -690,8 +700,10 @@ const ChartsSection = React.memo(function ChartsSection({
                   <Bar
                     dataKey="ventas"
                     name="Ingresos"
-                    fill={C.primary}
-                    radius={[4, 4, 0, 0]}
+                    fill="url(#rpIncomeGrad)"
+                    radius={[6, 6, 0, 0]}
+                    animationDuration={700}
+                    animationEasing="ease-out"
                     maxBarSize={36}
                     onClick={(d) => d?.weekStart && onWeekClick(d.weekStart)}
                     style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
@@ -700,12 +712,15 @@ const ChartsSection = React.memo(function ChartsSection({
                     dataKey="gastos"
                     name="Gastos"
                     fill={C.destructive}
-                    radius={[4, 4, 0, 0]}
+                    fillOpacity={0.85}
+                    radius={[6, 6, 0, 0]}
+                    animationDuration={700}
+                    animationEasing="ease-out"
                     maxBarSize={36}
                     onClick={(d) => d?.weekStart && onWeekClick(d.weekStart)}
                     style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
                   />
-                  <Line type="monotone" dataKey="utilidad" name="Ganancia" stroke={C.warning} strokeWidth={2.5} dot={false} />
+                  <Line type="monotone" dataKey="utilidad" name="Ganancia" stroke={C.warning} strokeWidth={2.5} dot={false} animationDuration={900} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -730,41 +745,46 @@ const ChartsSection = React.memo(function ChartsSection({
         </CardContent>
       </Card>
 
-      {/* Top productos */}
-      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
-        <CardHeader className="flex-row items-start justify-between pb-0">
+      {/* Productos: Más vendidos | Movimiento */}
+      <Card wash className={cn(CARD_RADIUS, "min-w-0", prodView === "movement" && "lg:col-span-2")}>
+        <CardHeader className="flex-row flex-wrap items-start justify-between gap-2 pb-0">
           <div>
             <div className="flex items-center gap-2">
-              <CardTitle className="text-sm">Productos más vendidos</CardTitle>
-              <Badge
-                variant="outline"
-                className="border-border/60 text-[11px] font-medium text-muted-foreground"
-              >
-                Histórico
-              </Badge>
+              <CardTitle className="text-[15px]">Productos</CardTitle>
             </div>
             <CardDescription className="text-xs">
-              Ranking histórico de unidades vendidas
+              {prodView === "top"
+                ? "Unidades vendidas en el periodo"
+                : `Cómo se vendió cada producto día por día, contra ${prevLabel.long}`}
             </CardDescription>
           </div>
-          <Tabs value={prodChartMode} onValueChange={setProdChartMode}>
-            <TabsList className="h-7">
-              <TabsTrigger value="barras" className="px-2 text-[11px]">Barras</TabsTrigger>
-              <TabsTrigger value="pastel" className="px-2 text-[11px]">Pastel</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <div className="flex items-center gap-2">
+            <Tabs value={prodView} onValueChange={setProdView}>
+              <TabsList className="h-8">
+                <TabsTrigger value="top" className="px-2.5 text-xs font-semibold">Más vendidos</TabsTrigger>
+                <TabsTrigger value="movement" className="px-2.5 text-xs font-semibold">Movimiento</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
         </CardHeader>
-        <CardContent key={String(topLoading)} className="pt-2 vt-reveal">
-          {topLoading ? (
+        <CardContent key={String(topLoading) + prodView} className="pt-3 vt-reveal">
+          {prodView === "movement" ? (
+            <MovementView
+              startDate={startDate}
+              endDate={endDate}
+              deviceId={deviceFilter}
+              periodLabel={prevLabel.long}
+            />
+          ) : topLoading ? (
             <div className="space-y-2 p-3">
               {[0, 1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-7 w-full" />
               ))}
             </div>
-          ) : prodRows.length > 0 && prodChartMode === "barras" ? (
+          ) : prodRows.length > 0 ? (
             <div
               role="img"
-              aria-label="Top 10 de productos más vendidos en unidades (histórico)"
+              aria-label="Top 10 de productos más vendidos en unidades del periodo"
               className="h-[220px] w-full"
             >
               <ResponsiveContainer width="100%" height="100%">
@@ -773,6 +793,12 @@ const ChartsSection = React.memo(function ChartsSection({
                   layout="vertical"
                   margin={{ top: 4, right: 28, bottom: 0, left: 8 }}
                 >
+                  <defs>
+                    <linearGradient id="rpTopGrad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="hsl(var(--chart-1))" />
+                      <stop offset="100%" stopColor="hsl(var(--chart-2))" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
                   <XAxis type="number" fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} tickFormatter={(v) => fmtUnits(v)} />
                   <YAxis
@@ -787,71 +813,26 @@ const ChartsSection = React.memo(function ChartsSection({
                       v.length > 22 ? `${v.slice(0, 21)}…` : v
                     }
                   />
-                  <ReTooltip content={UnitTooltip} />
-                  <Bar dataKey="total_sold" name="Unidades" radius={[0, 4, 4, 0]} maxBarSize={18}>
-                    {prodRows.map((p, i) => (
-                      <Cell key={p.id} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />
-                    ))}
-                  </Bar>
+                  <ReTooltip content={UnitTooltip} cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} />
+                  <Bar dataKey="total_sold" name="Unidades" fill="url(#rpTopGrad)" radius={[0, 6, 6, 0]} maxBarSize={18} animationDuration={700} animationEasing="ease-out" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          ) : prodChartMode === "pastel" && productDonut.length > 0 ? (
-            <>
-              <div
-                role="img"
-                aria-label="Participación de los productos más vendidos en unidades (histórico)"
-                className="relative h-[220px] w-full"
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={productDonut} dataKey="value" nameKey="name" innerRadius={64} outerRadius={86} paddingAngle={2} strokeWidth={2} stroke="hsl(var(--card))">
-                      {productDonut.map((p, i) => (
-                        <Cell key={i} fill={p.fill} />
-                      ))}
-                    </Pie>
-                    <ReTooltip content={UnitTooltip} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Unidades</p>
-                  <p className="text-base font-bold tabular-nums text-foreground">{totalUnits.toLocaleString("es-MX")}</p>
-                </div>
-              </div>
-              <div className="mt-1 grid gap-1.5">
-                {productDonut.map((p) => (
-                  <div key={p.name} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 px-2.5 py-1.5 text-xs">
-                    <span className="inline-flex min-w-0 items-center gap-2 font-semibold text-foreground">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.fill }} />
-                      <span className="truncate">{p.name}</span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2.5">
-                      <span className="tabular-nums text-muted-foreground">{p.value.toLocaleString("es-MX")} uds</span>
-                      <span className="font-bold tabular-nums">{p.pct.toFixed(1)}%</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </>
           ) : (
-            <EmptyState icon={<ShoppingCart className="h-6 w-6" />} title="Sin productos" description="Aún no hay ventas registradas" />
+            <EmptyState icon={<ShoppingCart className="h-6 w-6" />} title="Sin productos" description="No hay ventas en este periodo" />
           )}
         </CardContent>
       </Card>
+      {/* Lista de compra sugerida (compacta) */}
+      <PurchaseSuggestions className="min-w-0 lg:col-span-2" />
       {/* Unidades vendidas por categoría */}
       <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="pb-0">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-sm">Unidades vendidas por categoría</CardTitle>
-            <Badge
-              variant="outline"
-              className="border-border/60 text-[11px] font-medium text-muted-foreground"
-            >
-              Histórico
-            </Badge>
+            <CardTitle className="text-[15px]">Unidades vendidas por categoría</CardTitle>
           </div>
           <CardDescription className="text-xs">
-            Suma de unidades de los productos más vendidos
+            Unidades vendidas en el periodo, por categoría
           </CardDescription>
         </CardHeader>
         <CardContent key={String(topLoading)} className="pt-2 vt-reveal">
@@ -864,11 +845,17 @@ const ChartsSection = React.memo(function ChartsSection({
           ) : catData.length > 0 ? (
             <div
               role="img"
-              aria-label="Unidades vendidas por categoría (histórico)"
+              aria-label="Unidades vendidas por categoría en el periodo"
               className="h-[220px] w-full"
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={catData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="rpCatGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(var(--chart-2))" />
+                      <stop offset="100%" stopColor="hsl(var(--chart-1))" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis
                     dataKey="name"
@@ -882,12 +869,8 @@ const ChartsSection = React.memo(function ChartsSection({
                     height={catData.length > 4 ? 52 : 28}
                   />
                   <YAxis fontSize={11} tick={{ fill: C.muted }} tickLine={false} axisLine={false} width={34} />
-                  <ReTooltip content={UnitTooltip} />
-                  <Bar dataKey="value" name="Unidades" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                    {catData.map((c, i) => (
-                      <Cell key={i} fill={c.fill} />
-                    ))}
-                  </Bar>
+                  <ReTooltip content={UnitTooltip} cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} />
+                  <Bar dataKey="value" name="Unidades" fill="url(#rpCatGrad)" radius={[6, 6, 0, 0]} maxBarSize={40} animationDuration={700} animationEasing="ease-out" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -902,7 +885,7 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
       <Card wash className={cn(CARD_RADIUS, "min-w-0 overflow-hidden")}>
         <CardHeader className="border-b bg-muted/20 pb-3">
-          <CardTitle className="text-sm">Gastos por tipo</CardTitle>
+          <CardTitle className="text-[15px]">Gastos por tipo</CardTitle>
         </CardHeader>
         <CardContent key={String(loading)} className="p-0 vt-reveal">
           {loading ? (
@@ -1067,7 +1050,6 @@ const Reports = () => {
   const [dayLoading, setDayLoading] = useState(false);
 
   // Gráficas
-  const [prodChartMode, setProdChartMode] = useState("barras");
   const [chartMode, setChartMode] = useState("semanal");
   const [chartRefDate, setChartRefDate] = useState(() => new Date());
   const [trendData, setTrendData] = useState([]);
@@ -1081,6 +1063,7 @@ const Reports = () => {
   const [freshData, setFreshData] = useState(false);
   // Bloque 5 · filtro por caja. "all" = consolidado; "__host__" = ventas del Host.
   const [deviceFilter, setDeviceFilter] = useState("all");
+  const prevLabel = React.useMemo(() => prevPeriodLabel(startDate, endDate), [startDate, endDate]);
   const [devices, setDevices] = useState([]);
   const [hasHostSales, setHasHostSales] = useState(false);
   const [hostName, setHostName] = useState("Caja 1");
@@ -1188,15 +1171,18 @@ const Reports = () => {
     fetchSummary();
   }, [fetchSummary]);
 
-  // ─── PRODUCTOS MÁS VENDIDOS (all-time) ────────────────────
+  // ─── PRODUCTOS MÁS VENDIDOS (del periodo elegido) ─────────
   const fetchTopProducts = useCallback(async () => {
+    if (!startDate || !endDate) return;
     setTopLoading(true);
     const res = await window.api.invoke("get-top-products", {
       deviceId: deviceFilter,
+      startDate,
+      endDate,
     });
     setTopProducts(Array.isArray(res) ? res : []);
     setTopLoading(false);
-  }, [deviceFilter]);
+  }, [deviceFilter, startDate, endDate]);
 
   useEffect(() => {
     fetchTopProducts();
@@ -1911,7 +1897,7 @@ const Reports = () => {
             label="Ventas totales"
             value={fmtMoney(summary.salesTotal)}
             delta={pctOf(summary.salesTotal, summary.prevSales)}
-            caption={`vs. ${fmtMoney(summary.prevSales)}`}
+            caption={`vs. ${prevLabel.short}: ${fmtMoney(summary.prevSales)}`}
           />
           <StatCard
             className={CARD_RADIUS}
@@ -1924,7 +1910,7 @@ const Reports = () => {
               summary.profit,
               summary.prevSales - summary.prevExpenses
             )}
-            caption={`vs. ${fmtMoney(summary.prevSales - summary.prevExpenses)}`}
+            caption={`vs. ${prevLabel.short}: ${fmtMoney(summary.prevSales - summary.prevExpenses)}`}
           />
           <StatCard
             className={CARD_RADIUS}
@@ -1937,7 +1923,7 @@ const Reports = () => {
               summary.avgTicket,
               summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0
             )}
-            caption={`vs. ${fmtMoney(summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0)}`}
+            caption={`vs. ${prevLabel.short}: ${fmtMoney(summary.prevCount > 0 ? summary.prevSales / summary.prevCount : 0)}`}
           />
           <StatCard
             className={CARD_RADIUS}
@@ -1947,7 +1933,7 @@ const Reports = () => {
             label="Transacciones"
             value={String(summary.salesCount)}
             delta={pctOf(summary.salesCount, summary.prevCount)}
-            caption={`vs. ${summary.prevCount} ventas`}
+            caption={`vs. ${prevLabel.short}: ${summary.prevCount} ventas`}
           />
         </section>
 
@@ -2053,10 +2039,12 @@ const Reports = () => {
           trendData={trendData}
           hourly={hourly}
           topProducts={topProducts}
-          prodChartMode={prodChartMode}
-          setProdChartMode={setProdChartMode}
           topLoading={topLoading}
           onWeekClick={onWeekClick}
+          startDate={startDate}
+          endDate={endDate}
+          deviceFilter={deviceFilter}
+          prevLabel={prevLabel}
         />
 
 

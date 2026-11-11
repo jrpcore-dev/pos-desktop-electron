@@ -336,6 +336,7 @@ const productsCore = require("./products-core");
 const cashCore = require("./cash-core");
 const pricesCore = require("./prices-core");
 const promosCore = require("./promos-core");
+const reportsCore = require("./reports-core");
 const replicaEngine = require("./replica-engine");
 const replicaLive = require("./replica-live");
 
@@ -1849,9 +1850,29 @@ ipcMain.handle("get-products-by-ids", async (event, ids) => {
   }
 });
 
-ipcMain.handle("get-top-products", async (event, { deviceId } = {}) => {
+// Sin fechas: histórico (la terminal de venta). Con `startDate`/`endDate`
+// (fechas de México): sólo lo vendido en ese periodo, como el resto de Reportes.
+ipcMain.handle("get-top-products", async (event, { deviceId, startDate, endDate } = {}) => {
   try {
     const dev = deviceWhere(deviceId, "s");
+    if (startDate && endDate) {
+      const { start } = toUTCDateRange(startDate);
+      const { end } = toUTCDateRange(endDate);
+      return db
+        .prepare(
+          `SELECT p.*, c.name as category_name, SUM(si.quantity) as total_sold
+             FROM sale_items si
+             JOIN sales s ON si.sale_id = s.id
+             JOIN products p ON p.id = si.product_id
+             LEFT JOIN categories c ON p.category_id = c.id
+            WHERE s.created_at >= ? AND s.created_at < ?
+              AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}
+            GROUP BY p.id
+            ORDER BY total_sold DESC
+            LIMIT 20`,
+        )
+        .all(start, end, ...dev.args);
+    }
     return db
       .prepare(
         `
@@ -1873,6 +1894,38 @@ ipcMain.handle("get-top-products", async (event, { deviceId } = {}) => {
       .all(...dev.args);
   } catch (error) {
     return [];
+  }
+});
+
+// Reportes · movimiento de un producto por día (contra el periodo anterior) y
+// lista de compra sugerida. Reglas en reports-core.js.
+ipcMain.handle("get-product-movement", async (event, { startDate, endDate, productId, deviceId } = {}) => {
+  try {
+    return reportsCore.productMovement(db, { startDate, endDate, productId, dev: deviceWhere(deviceId, "s") });
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+// Abre WhatsApp con un texto ya escrito (p. ej. la lista de compra para el
+// proveedor). Sólo wa.me con un número de 10–13 dígitos; sin número, WhatsApp
+// deja elegir el contacto. Nada más se puede abrir por aquí.
+ipcMain.handle("open-whatsapp", async (event, { phone, text } = {}) => {
+  try {
+    let digits = String(phone || "").replace(/\D/g, "");
+    if (digits.length === 10) digits = `52${digits}`; // número de México sin lada de país
+    const target = digits.length >= 11 && digits.length <= 13 ? digits : "";
+    const body = encodeURIComponent(String(text || "").slice(0, 4000));
+    await shell.openExternal(`https://wa.me/${target}?text=${body}`);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+ipcMain.handle("get-purchase-suggestions", async (event, { limit } = {}) => {
+  try {
+    return reportsCore.purchaseSuggestions(db, { limit: Number(limit) || null });
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });
 

@@ -62,6 +62,7 @@ const CLASSIFICATION_BASE = {
   // ── SYSTEM: dispositivo/app, siempre permitido ──────────────────────────
   "log-error": SCOPES.SYSTEM,
   "print-pdf": SCOPES.SYSTEM,
+  "open-whatsapp": SCOPES.SYSTEM,
   "print-receipt": SCOPES.SYSTEM,
   "print-escpos-test": SCOPES.SYSTEM,
   "open-cash-drawer": SCOPES.SYSTEM,
@@ -147,6 +148,8 @@ const CLASSIFICATION_BASE = {
   "get-recent-customers": SCOPES.HOST_READ,
   "get-setting": SCOPES.HOST_READ,
   "get-tier-prices": SCOPES.HOST_READ,
+  "get-product-movement": SCOPES.HOST_READ,
+  "get-purchase-suggestions": SCOPES.HOST_READ,
   "get-tiers": SCOPES.HOST_READ,
   "search-customers": SCOPES.HOST_READ,
   "search-products": SCOPES.HOST_READ,
