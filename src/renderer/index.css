@@ -353,6 +353,85 @@ body {
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
+/* ─── Pantalla de carga: el rayo de Vendia (BrandLoader.jsx) ─────────────────
+   1) las piezas llegan de tres lados y encajan (una vez, ~1.1 s);
+   2) el rayo queda como silueta y su color lo llena de abajo hacia arriba,
+      con un brillo, en bucle mientras dure la carga.
+   Colores del ícono: claro = vendia-icon-claro (hoja azul marino);
+   oscuro = el ícono original (hoja blanca). */
+:root {
+  --vl-up-a: #5079e6;
+  --vl-up-b: #2f56c4;
+  --vl-lo-b: #213f99;
+  --vl-blade-a: #25386b;
+  --vl-blade-b: #0f1a36;
+}
+.dark {
+  --vl-up-a: #5e8bf7;
+  --vl-up-b: #3664de;
+  --vl-lo-b: #2348b0;
+  --vl-blade-a: #ffffff;
+  --vl-blade-b: #c5cfe2;
+}
+.vl-bolt .vl-up,
+.vl-bolt .vl-lo,
+.vl-bolt .vl-blade {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.vl-bolt .vl-up { animation: vl-fly-up 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.vl-bolt .vl-lo { animation: vl-fly-lo 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 0.1s both; }
+.vl-bolt .vl-blade { animation: vl-fly-blade 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 0.2s both; }
+.vl-bolt .vl-pieces { animation: vl-ghost 0.35s ease-out 1.45s forwards; }
+.vl-bolt .vl-fill { animation: vl-charge 1.8s cubic-bezier(0.55, 0.1, 0.35, 1) 1.45s infinite both; }
+.vl-bolt .vl-shine { animation: vl-shine 1.8s ease-in-out 1.45s infinite both; }
+.vl-wrap { animation: vl-snap 0.45s ease-out 1.05s both; }
+@keyframes vl-fly-up {
+  from { opacity: 0; transform: translate(-110px, -80px) rotate(-30deg); }
+  20% { opacity: 1; }
+  to { opacity: 1; transform: translate(0, 0) rotate(0); }
+}
+@keyframes vl-fly-lo {
+  from { opacity: 0; transform: translate(-20px, 130px) rotate(25deg); }
+  20% { opacity: 1; }
+  to { opacity: 1; transform: translate(0, 0) rotate(0); }
+}
+@keyframes vl-fly-blade {
+  from { opacity: 0; transform: translate(140px, -50px) rotate(35deg); }
+  20% { opacity: 1; }
+  to { opacity: 1; transform: translate(0, 0) rotate(0); }
+}
+@keyframes vl-snap {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.1); }
+  70% { transform: scale(0.98); }
+  100% { transform: scale(1); }
+}
+@keyframes vl-ghost { to { opacity: 0.14; } }
+@keyframes vl-charge {
+  0% { transform: translateY(400px); }
+  65%, 100% { transform: translateY(0); }
+}
+@keyframes vl-shine {
+  0%, 60% { transform: translateX(-220px) rotate(18deg); opacity: 0; }
+  66% { opacity: 1; }
+  92%, 100% { transform: translateX(420px) rotate(18deg); opacity: 0; }
+}
+@keyframes vl-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vl-bolt .vl-up,
+  .vl-bolt .vl-lo,
+  .vl-bolt .vl-blade,
+  .vl-bolt .vl-pieces,
+  .vl-wrap { animation: none; }
+  .vl-bolt .vl-fill,
+  .vl-bolt .vl-shine { display: none; }
+  .vl-bolt { animation: vl-breathe 2s ease-in-out infinite; }
+}
+
 /* Aviso flotante de sincronización que se va solo: la barra de abajo se vacía. */
 @keyframes sync-notice-timer {
   from { transform: scaleX(1); }

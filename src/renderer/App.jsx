@@ -8,7 +8,7 @@ import BoxSetupScreen from "./components/BoxSetupScreen";
 import BoxWelcome from "./components/BoxWelcome";
 import Catalog from "./components/Catalog";
 import ToastProvider from "./components/ToastProvider";
-import { Spinner } from "./components/ui/spinner";
+import BrandLoader from "./components/BrandLoader";
 import { routeAfterLogin } from "./lib/sessionReturn";
 
 const Layout = React.lazy(() => import("./components/Layout"));
@@ -234,14 +234,8 @@ const AppInner = () => {
     navigate(routeAfterLogin(cashier));
   };
 
-  const loadingScreen = (
-    <div className="fixed inset-0 z-[9999] flex h-full w-full items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <Spinner size={40} className="text-brand" />
-        <p className="text-sm font-medium text-muted-foreground">Cargando...</p>
-      </div>
-    </div>
-  );
+  // El rayo de Vendia que se arma y se carga (sólo si tarda más de 0.5 s).
+  const loadingScreen = <BrandLoader />;
 
   // B7 · la caja corta ANTES que todo lo demás. Mientras no esté sincronizada
   // no hay catálogo propio ni cajeros propios, así que ni el asistente de
