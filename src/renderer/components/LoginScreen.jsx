@@ -6,7 +6,6 @@ import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
 import { InitialsAvatar } from "./ui/initials-avatar";
 import { cn } from "@/lib/utils";
-import vendiaIcon from "../assets/icon-vendia.svg";
 import { VendiaBolt } from "./TicketPrinter";
 
 // Hora y fecha del panel de marca (zona de la tienda).
@@ -167,8 +166,8 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
         <section className="flex flex-col p-8 sm:p-12">
           {selectedId === null ? (
             <div key="users" className="fade-in flex flex-1 flex-col">
-              <h2 className="text-3xl font-semibold tracking-tight text-foreground">Bienvenido</h2>
-              <p className="mt-1.5 text-base text-muted-foreground">Selecciona tu usuario para continuar</p>
+              <h2 className="text-center text-5xl font-bold tracking-tight text-foreground">Bienvenido</h2>
+              <p className="mt-2 text-center text-base text-muted-foreground">Selecciona tu usuario para continuar</p>
 
               <div className="-mx-2 mt-8 max-h-[400px] flex-1 space-y-1.5 overflow-y-auto px-2">
                 {usersLoading
@@ -298,15 +297,6 @@ const LoginScreen = ({ onLogin, isFirstTime, onConvertToBox }) => {
             </div>
           )}
         </section>
-      </div>
-
-      {/* Marca del sistema, fuera de la tarjeta. */}
-      <div className="mt-6 flex items-center gap-3">
-        <img src={vendiaIcon} alt="" className="size-12 drop-shadow-md" />
-        <div className="flex flex-col gap-1">
-          <span className="text-2xl font-bold leading-none tracking-tight text-foreground">Vendia</span>
-          <span className="text-xs leading-none text-muted-foreground">Powered by JRP Core v2.0</span>
-        </div>
       </div>
 
       {isFirstTime && (
