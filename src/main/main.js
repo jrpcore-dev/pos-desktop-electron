@@ -65,6 +65,8 @@ ipcScopes.installIpcScopeGuard({
       // Bloque 4 · la sesión del Host caducó: el renderer abre el ReauthModal
       // sin desmontar la venta en curso (el carrito sigue en React).
       if (result && result.code === "SESSION_EXPIRED") notifySessionExpired();
+      // Caja · actualización programada "al cerrar caja".
+      if (channel === "close-cash-register" && result && result.success) installIfScheduled();
       return result;
     }),
 });
@@ -356,8 +358,11 @@ const setupAutoUpdater = () => {
   autoUpdater.autoDownload = false; // Solo descarga si el usuario hace clic
   autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on("update-available", (info) => {
-    sendUpdateStatus({ status: "available", version: info && info.version });
+  autoUpdater.on("update-available", async (info) => {
+    const version = info && info.version;
+    // Caja: si el Host va más atrás, se avisa en vez de ofrecer la descarga.
+    const hostBehind = await hostVersionBehind(version);
+    sendUpdateStatus({ status: "available", version, ...(hostBehind ? { hostBehind } : {}) });
   });
   autoUpdater.on("download-progress", (p) => {
     sendUpdateStatus({
@@ -403,6 +408,9 @@ ipcMain.handle("update:download", async () => {
   if (!app.isPackaged) {
     return { success: false, error: "No disponible en desarrollo" };
   }
+  if (updateState && updateState.hostBehind) {
+    return { success: false, code: "HOST_BEHIND", error: "Primero actualiza el Host" };
+  }
   try {
     updateDownloading = true;
     await autoUpdater.downloadUpdate();
@@ -425,6 +433,51 @@ ipcMain.handle("update:install", () => {
   }
   return { success: false, error: "No hay actualización descargada" };
 });
+
+// "Actualizar al cerrar caja": queda programada y se instala sola tras el corte
+// (en el Host o en la caja). Con `false` se quita la programación.
+let updateOnClose = false;
+ipcMain.handle("update:schedule-on-close", (event, on = true) => {
+  if (!updateState || updateState.status !== "downloaded") {
+    return { success: false, error: "No hay actualización descargada" };
+  }
+  updateOnClose = !!on;
+  sendUpdateStatus({ ...updateState, scheduled: updateOnClose });
+  return { success: true, scheduled: updateOnClose };
+});
+const installIfScheduled = () => {
+  if (!updateOnClose || !updateState || updateState.status !== "downloaded") return;
+  updateOnClose = false;
+  // Un momento para que la pantalla muestre el corte cerrado.
+  setTimeout(() => {
+    try {
+      autoUpdater.quitAndInstall();
+    } catch (err) {}
+  }, 2500);
+};
+
+// En una caja: la versión nueva no puede quedar por delante del Host (el
+// protocolo lo exige). Devuelve la versión del Host si va más atrás.
+const semverParts = (v) => String(v || "").replace(/^v/, "").split(/[.-]/).slice(0, 3).map((n) => parseInt(n, 10) || 0);
+const semverGt = (a, b) => {
+  const x = semverParts(a);
+  const y = semverParts(b);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+};
+const hostVersionBehind = async (version) => {
+  if (deviceRole !== ipcScopes.ROLES.CLIENT || !version) return null;
+  try {
+    const url = String(activation.getSetting(db, clientLink.SETTINGS.HOST_URL) || "").replace(/\/+$/, "");
+    if (!url) return null;
+    const res = await fetch(`${url}/api/activation/info`, { signal: AbortSignal.timeout(4000) });
+    const info = await res.json();
+    const hostVersion = info && info.app_version;
+    return hostVersion && semverGt(version, hostVersion) ? hostVersion : null;
+  } catch (err) {
+    return null;
+  }
+};
 
 ipcMain.handle("update:get-state", () => updateState || { status: "idle" });
 
@@ -4215,6 +4268,9 @@ ipcMain.handle(
       if (deviceRole === ipcScopes.ROLES.HOST) {
         runHostBackup("close").catch(() => {});
       }
+      // Actualización programada "al cerrar caja": sólo si cerró la caja de
+      // ESTE equipo (no la de una caja que llamó por la red).
+      if (!rpcContext.inCallContext()) installIfScheduled();
       return {
         success: true,
         expectedClose,

@@ -180,6 +180,7 @@ export const invoke = [
   "update:download",
   "update:get-state",
   "update:install",
+  "update:schedule-on-close",
   "verify-admin-pin",
   "verify-cashier-pin"
 ];

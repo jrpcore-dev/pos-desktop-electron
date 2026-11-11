@@ -71,6 +71,7 @@ const CLASSIFICATION_BASE = {
   "update:download": SCOPES.SYSTEM,
   "update:get-state": SCOPES.SYSTEM,
   "update:install": SCOPES.SYSTEM,
+  "update:schedule-on-close": SCOPES.SYSTEM,
   "select-catalog-file": SCOPES.SYSTEM,
   "select-import-file": SCOPES.SYSTEM,
   "connect-scale": SCOPES.SYSTEM,

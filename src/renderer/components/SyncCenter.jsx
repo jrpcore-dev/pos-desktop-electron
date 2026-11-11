@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { Check, KeyRound, RefreshCw, TriangleAlert, WifiOff, X } from "lucide-react";
+import { Check, KeyRound, MonitorSmartphone, RefreshCw, RotateCw, ShoppingCart, TriangleAlert, WifiOff, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,19 @@ const EYEBROW = {
   destructive: "text-destructive",
   brand: "text-primary dark:text-chart-2",
 };
-const ICONS = { host: WifiOff, upload: RefreshCw, ok: Check, pin: KeyRound, review: TriangleAlert, stale: TriangleAlert, protocol: TriangleAlert };
+const ICONS = {
+  host: WifiOff,
+  upload: RefreshCw,
+  ok: Check,
+  pin: KeyRound,
+  review: TriangleAlert,
+  stale: TriangleAlert,
+  protocol: TriangleAlert,
+  // Actualización de la app (UpdateButton).
+  update: RotateCw,
+  "update-sale": ShoppingCart,
+  "update-host": MonitorSmartphone,
+};
 
 // ── Aviso flotante ──────────────────────────────────────────────────────────
 function NoticeCard({ n, onAction }) {
@@ -90,10 +102,15 @@ function NoticeCard({ n, onAction }) {
             </>
           )}
           {n.action && (
-            <div className="mt-3 flex items-center gap-3">
-              <Button size="sm" onClick={() => onAction(n)}>
+            <div className="mt-3 flex items-center gap-2">
+              <Button size="sm" onClick={() => (n.onAction ? n.onAction() : onAction(n))}>
                 {n.action}
               </Button>
+              {n.secondary && (
+                <Button size="sm" variant="outline" onClick={() => n.onSecondary && n.onSecondary()}>
+                  {n.secondary}
+                </Button>
+              )}
               {n.dismissLabel && (
                 <button
                   type="button"
@@ -397,7 +414,17 @@ export default function SyncCenter() {
     return () => window.removeEventListener("vendia:sync-detail", open);
   }, [openDetail]);
 
-  if (!isClient) return null;
+  // Los avisos flotantes también sirven en el Host (p. ej. la actualización);
+  // el indicador y el detalle son sólo de la caja.
+  const floatingLayer = createPortal(
+    <div className="pointer-events-none fixed bottom-6 right-6 z-[1250] flex flex-col-reverse items-end gap-3">
+      {floating.map((n) => (
+        <NoticeCard key={n.id} n={n} onAction={onAction} />
+      ))}
+    </div>,
+    document.body,
+  );
+  if (!isClient) return floatingLayer;
 
   // Estado del indicador (nada si todo va bien).
   const uploading = catchingUp && toUpload > 0;
@@ -432,14 +459,7 @@ export default function SyncCenter() {
         </button>
       )}
 
-      {createPortal(
-        <div className="pointer-events-none fixed bottom-6 right-6 z-[1250] flex flex-col-reverse items-end gap-3">
-          {floating.map((n) => (
-            <NoticeCard key={n.id} n={n} onAction={onAction} />
-          ))}
-        </div>,
-        document.body,
-      )}
+      {floatingLayer}
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-xl overflow-hidden p-0">

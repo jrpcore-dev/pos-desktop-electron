@@ -29,6 +29,7 @@ import CreditSaleDialog from "./CreditSaleDialog";
 import { useFeatures } from "../lib/useFeatures";
 import { useCartSide } from "../utils/cartSide";
 import { useMultiCart } from "./cart/useMultiCart";
+import { setOpenItems } from "../lib/saleInProgress";
 import { Button as ShadButton } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import { Spinner } from "./ui/spinner";
@@ -153,6 +154,12 @@ const SalesTerminal = () => {
     switchCart,
     cancelCart,
   } = useMultiCart();
+  // Productos en los tickets abiertos (todas las pestañas): la actualización no
+  // reinicia mientras haya alguno. Al salir de la terminal se pierden, igual.
+  useEffect(() => {
+    setOpenItems(carts.reduce((n, c) => n + ((c.items && c.items.length) || 0), 0));
+  }, [carts]);
+  useEffect(() => () => setOpenItems(0), []);
   const lastRegisterWarnRef = useRef(0);
   // Bloque 5 · folio real de la última venta (el que devuelve el Host o la
   // cola offline). Solo cambia DE DÓNDE sale el número del ticket.

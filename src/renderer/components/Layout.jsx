@@ -1478,6 +1478,8 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
             {/* Caja · sincronización: sólo aparece si hay algo que saber */}
             <SyncCenter />
+            {/* Versión nueva de la app: sólo aparece si la hay */}
+            <UpdateButton />
 
             {/* Separador visual entre buscador y estado del sistema */}
             <span className="hidden h-5 w-px bg-border md:block" />
@@ -1499,7 +1501,6 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 onOpenScale={scaleEnabled ? handleOpenScaleDialog : undefined}
                 onOpenTasks={() => setTaskDialogOpen(true)}
               />
-              <UpdateButton />
             </div>
           </div>
         </header>
