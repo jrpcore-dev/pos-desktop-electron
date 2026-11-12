@@ -7,6 +7,7 @@ import {
   BarChart3,
   Bell,
   CalendarDays,
+  ChevronLeft,
   ChevronRight,
   ClipboardCheck,
   DatabaseBackup,
@@ -135,8 +136,20 @@ const ROUTE_PRELOADERS = {
   "/customers": () => import("./Customers"),
 };
 
-const drawerWidth = 288;
+// Drawer ajustable: se arrastra su orilla entre el mini y el abierto (que es
+// el máximo). Por debajo de SNAP_WIDTH los textos no caben: vuelve al mini.
+const drawerWidth = 240;
 const miniDrawerWidth = 72;
+const SNAP_WIDTH = 140;
+const SIDEBAR_WIDTH_KEY = "vendia.sidebarWidth";
+const readSidebarWidth = () => {
+  try {
+    const v = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return v >= miniDrawerWidth && v <= drawerWidth ? v : miniDrawerWidth;
+  } catch (e) {
+    return miniDrawerWidth;
+  }
+};
 
 /* Ancho que ocupa el bloque nativo de minimizar/maximizar/cerrar en Windows
    (reportado por Chromium vía env(titlebar-area-*)). Se le suman 14px para
@@ -292,7 +305,39 @@ function StatusDot({ ok, pulse, tone }) {
 /* ──────────────────────────────────────────────────────────── */
 
 const Layout = () => {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sideWidth, setSideWidth] = useState(readSidebarWidth);
+  // Mientras se arrastra no hay transición (sigue al cursor sin retraso).
+  const [resizing, setResizing] = useState(false);
+  const drawerOpen = sideWidth >= SNAP_WIDTH;
+  const setDrawerOpen = useCallback((value) => {
+    setSideWidth((prev) => {
+      const open = typeof value === "function" ? value(prev >= SNAP_WIDTH) : value;
+      return open ? drawerWidth : miniDrawerWidth;
+    });
+  }, []);
+  useEffect(() => {
+    if (resizing) return;
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sideWidth));
+    } catch (e) {}
+  }, [sideWidth, resizing]);
+  const startResize = useCallback((event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setResizing(true);
+    const clamp = (x) => Math.max(miniDrawerWidth, Math.min(drawerWidth, Math.round(x)));
+    const move = (ev) => setSideWidth(clamp(ev.clientX));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      setResizing(false);
+      setSideWidth((w) => (w < SNAP_WIDTH ? miniDrawerWidth : w));
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, []);
   // Ítem del mini-sidebar bajo el ratón (para mostrar su etiqueta sin expandir).
   const [miniHoverItem, setMiniHoverItem] = useState(null);
   const [storeName, setStoreName] = useState("MI TIENDA");
@@ -995,14 +1040,10 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       >
 <div className="flex-1 overflow-y-auto px-1.5 py-2">
           {navSections.map((section, sectionIdx) => (
-            <div key={section.title} className="mb-1">
+            <div key={section.title} className="mb-0.5">
               {expanded && (
-                <span className="flex items-center gap-2 px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                <span className="block px-3 pt-2.5 pb-1 text-[10px] font-bold tracking-[0.1em] text-muted-foreground/80 uppercase">
                   {section.title}
-                  <span
-                    aria-hidden
-                    className="h-px min-w-3 flex-1 bg-border"
-                  />
                 </span>
               )}
               <div className="flex flex-col gap-0.5">
@@ -1035,10 +1076,10 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                             }ms`,
                           }}
                           className={cn(
-                            "nav-item-in group relative flex h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm font-medium transition-all duration-150 outline-none",
+                            "nav-item-in group relative flex h-[38px] cursor-pointer items-center gap-2.5 rounded-lg px-3 text-sm font-medium transition-all duration-150 outline-none",
                             "active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                             isActive
-                              ? "bg-gradient-to-r from-primary/18 via-primary/[0.07] to-transparent font-semibold text-foreground"
+                              ? "bg-gradient-to-r from-brand/[0.16] via-brand/[0.06] to-transparent font-semibold text-foreground dark:from-chart-2/25 dark:via-chart-2/[0.08]"
                               : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
                             !expanded && "w-full justify-center px-0",
                           )}
@@ -1046,14 +1087,14 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                           <span
                             className={cn(
                               "absolute left-0 top-1/2 h-7 w-[2px] -translate-y-1/2 rounded-r-full transition-all duration-200",
-                              isActive ? "bg-primary opacity-100" : "opacity-0",
+                              isActive ? "bg-brand opacity-100 dark:bg-chart-2" : "opacity-0",
                             )}
                           />
 <span
                             className={cn(
                               "inline-flex shrink-0 items-center justify-center transition-transform duration-150 group-hover:translate-x-0.5 [&>svg]:h-[22px] [&>svg]:w-[22px]",
                               isActive
-                                ? "text-primary"
+                                ? "text-brand dark:text-chart-2"
                                 : "text-muted-foreground group-hover:text-foreground",
                               (item.path === "/inventory" ||
                                 (item.path === "/end-of-day" &&
@@ -1062,7 +1103,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                             )}
                           >
                             {item.icon}
-                            {inventoryAlert && (
+                            {inventoryAlert && !expanded && (
                               <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.6rem] font-bold text-white tabular-nums">
                                 {lowStockCount > 99 ? "99+" : lowStockCount}
                               </span>
@@ -1079,12 +1120,21 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                             item.path === "/end-of-day" &&
                             register?.status === "open" && (
                               <span
-                                className="ml-auto text-[11px] font-semibold whitespace-nowrap text-success tabular-nums"
-                                title="Efectivo en caja"
+                                className="ml-auto shrink-0 rounded-full bg-success/12 px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-success tabular-nums ring-1 ring-inset ring-success/20"
+                                aria-label={`Efectivo en caja: ${fmtMoney(register.currentCash)}`}
                               >
                                 {fmtMoney(register.currentCash)}
                               </span>
                             )}
+                          {expanded && inventoryAlert && (
+                            <span
+                              className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-destructive tabular-nums ring-1 ring-inset ring-destructive/20 dark:text-red-400"
+                              aria-label={`${lowStockCount} producto(s) con stock bajo`}
+                            >
+                              <span className="size-1.5 rounded-full bg-current" aria-hidden />
+                              {lowStockCount > 99 ? "99+" : lowStockCount} bajos
+                            </span>
+                          )}
                         </RouterLink>
                       </TooltipTrigger>
                       {inventoryAlert ? (
@@ -1115,8 +1165,9 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           ))}
         </div>
 
-        <div className="mx-4 h-px bg-border/50" />
+        {!expanded && <div className="mx-4 h-px bg-border/50" />}
 
+        {!expanded && (
         <div className="px-1.5 py-2">
           <ShadcnTooltip>
             <TooltipTrigger asChild>
@@ -1131,7 +1182,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                   "hover:bg-foreground/[0.06] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                   "text-left",
                   location.pathname === "/configuration"
-                    ? "bg-gradient-to-r from-primary/18 via-primary/[0.07] to-transparent font-semibold text-foreground"
+                    ? "bg-gradient-to-r from-brand/[0.16] via-brand/[0.06] to-transparent font-semibold text-foreground dark:from-chart-2/25 dark:via-chart-2/[0.08]"
                     : "text-muted-foreground hover:text-foreground",
                   expanded ? "w-full px-3" : "w-full justify-center px-0",
                 )}
@@ -1140,7 +1191,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                   className={cn(
                     "inline-flex shrink-0 items-center justify-center transition-transform duration-150 group-hover:translate-x-0.5 [&>svg]:h-[22px] [&>svg]:w-[22px]",
                     location.pathname === "/configuration"
-                      ? "text-primary"
+                      ? "text-brand dark:text-chart-2"
                       : "text-muted-foreground group-hover:text-foreground",
                   )}
                 >
@@ -1156,6 +1207,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
             )}
           </ShadcnTooltip>
         </div>
+        )}
 
         <div className="mx-4 h-px bg-border/50" />
 
@@ -1200,6 +1252,23 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 </div>
               )}
 
+              {expanded && (
+                <Hint label="Configuración">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/configuration")}
+                    aria-label="Configuración"
+                    aria-current={location.pathname === "/configuration" ? "page" : undefined}
+                    className={cn(
+                      "flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-all duration-200 outline-none",
+                      "hover:bg-foreground/[0.06] hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring",
+                      location.pathname === "/configuration" ? "bg-brand/10 text-brand dark:text-chart-2" : "text-muted-foreground",
+                    )}
+                  >
+                    <Settings size={16} />
+                  </button>
+                </Hint>
+              )}
               <ShadcnTooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -1236,13 +1305,65 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       <div className="min-h-screen animate-in fade-in-0 bg-page duration-700 ease-out">
         {/* ─── SIDEBAR (fijo, altura completa, se encima al navbar) ─── */}
         <aside
-          style={{ width: drawerOpen ? drawerWidth : miniDrawerWidth }}
-          className="fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-sidebar transition-[width] duration-300 ease-in-out"
+          style={{ width: sideWidth }}
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-border bg-sidebar",
+            !resizing && "transition-[width] duration-300 ease-in-out",
+          )}
         >
-          {/* Logo / encabezado del sidebar: al pulsarlo colapsa/expande */}
+          {/* Orilla para arrastrar: ajusta el ancho; doble clic abre o cierra. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Ajustar el ancho del menú"
+            aria-valuemin={miniDrawerWidth}
+            aria-valuemax={drawerWidth}
+            aria-valuenow={sideWidth}
+            onPointerDown={startResize}
+            onDoubleClick={() => setDrawerOpen((open) => !open)}
+            className="group/resize absolute inset-y-0 right-0 z-10 w-2 cursor-col-resize"
+          >
+            <span
+              className={cn(
+                "absolute inset-y-0 right-0 w-[3px] rounded-l-full transition-colors duration-150",
+                resizing ? "bg-chart-2" : "bg-transparent group-hover/resize:bg-chart-2/50",
+              )}
+            />
+          </div>
+          {/* Encabezado. Abierto: logo, tienda, quién atiende y "cerrar". Mini: el logo abre. */}
+          {drawerOpen ? (
+            <div className="flex h-14 w-full shrink-0 items-center gap-2.5 border-b border-border/60 pl-3 pr-2">
+              {storeLogo ? (
+                <img src={storeLogo} alt="" className="h-8 w-8 shrink-0 rounded-md object-contain" />
+              ) : (
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-base font-bold text-primary-foreground">
+                  {storeName.charAt(0) || "P"}
+                </span>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold leading-tight text-foreground">{storeName}</p>
+                {cashier && (
+                  <p className="truncate text-[11px] leading-tight text-muted-foreground">
+                    {cashier.name} · {cashier.role === "admin" ? "Propietario" : "Cajero"}
+                  </p>
+                )}
+              </div>
+              <Hint label="Cerrar el menú (Ctrl + B)" side="right">
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(false)}
+                  aria-label="Cerrar el menú"
+                  className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              </Hint>
+            </div>
+          ) : (
           <button
-            onClick={() => setDrawerOpen(!drawerOpen)}
+            onClick={() => setDrawerOpen(true)}
             title={storeName}
+            aria-label="Abrir el menú"
             className="flex h-14 w-full shrink-0 cursor-pointer items-center justify-center border-b border-border/60 outline-none transition-colors hover:bg-foreground/[0.06]"
           >
             {storeLogo ? (
@@ -1257,6 +1378,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
               </span>
             )}
           </button>
+          )}
           {renderSidebar(drawerOpen)}
         </aside>
 
@@ -1264,7 +1386,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 bg-card shadow-[0_6px_12px_-10px_rgba(15,23,41,0.22)] dark:bg-background dark:shadow-none"
           style={{
             WebkitAppRegion: "drag",
-            paddingLeft: (drawerOpen ? drawerWidth : miniDrawerWidth) + 16,
+            paddingLeft: sideWidth + 16,
             paddingRight: `calc(${RIGHT_TITLEBAR_PAD} + 14px)`,
           }}
         >
@@ -1508,7 +1630,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         {/* ─── MAIN: se desplaza según el ancho del sidebar ─── */}
         <main
           className="flex-1 p-4 transition-[margin-left] duration-300 ease-in-out md:p-6"
-          style={{ marginLeft: drawerOpen ? drawerWidth : miniDrawerWidth }}
+          style={{ marginLeft: sideWidth, transition: resizing ? "none" : undefined }}
         >
           <HostStatusBanner />
           <Suspense fallback={<RouteShellSkeleton />}>
