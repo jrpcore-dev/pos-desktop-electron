@@ -1,10 +1,18 @@
 import React, { createContext, useContext, useCallback } from "react";
 import { Toaster, toast as sonnerToast } from "sonner";
-import { CheckCircle2, XCircle, TriangleAlert, Info } from "lucide-react";
+import { Check, X, TriangleAlert, Info } from "lucide-react";
+
+// Notificaciones (Sonner) con la identidad de Vendia (maqueta aprobada):
+// tarjeta clara con sombra en capas, ícono en una ficha de color con relieve,
+// el rayo de Vendia tenue en sus colores, barrita que se vacía con el tiempo
+// y entrada con rebote suave. Los estilos viven en index.css (`.vt-toast`).
+// La API no cambia: notify(mensaje, "success" | "error" | "warning" | "info").
 
 const ToastContext = createContext(null);
 
 export const useToast = () => useContext(ToastContext);
+
+const DURATION = 3500;
 
 const toastMethods = {
   info: sonnerToast.info,
@@ -15,16 +23,16 @@ const toastMethods = {
 };
 
 const icons = {
-  info: <Info className="h-[22px] w-[22px]" />,
-  warning: <TriangleAlert className="h-[22px] w-[22px]" />,
-  error: <XCircle className="h-[22px] w-[22px]" />,
-  success: <CheckCircle2 className="h-[22px] w-[22px]" />,
+  info: <Info size={18} strokeWidth={2.6} />,
+  warning: <TriangleAlert size={18} strokeWidth={2.6} />,
+  error: <X size={18} strokeWidth={2.8} />,
+  success: <Check size={18} strokeWidth={2.8} />,
 };
 
 const ToastProvider = ({ children }) => {
   const notify = useCallback((message, severity = "success") => {
     const method = toastMethods[severity] || sonnerToast;
-    method(message, { icon: icons[severity] || icons.info });
+    method(message, { icon: icons[severity === "warn" ? "warning" : severity] || icons.info });
   }, []);
 
   return (
@@ -33,21 +41,20 @@ const ToastProvider = ({ children }) => {
       <Toaster
         position="bottom-center"
         closeButton
-        richColors
         icons={icons}
+        style={{ "--vt-toast-duration": `${DURATION}ms`, "--width": "400px" }}
         toastOptions={{
-          duration: 3500,
+          duration: DURATION,
+          unstyled: true,
           classNames: {
-            toast:
-              "!px-4 !py-3 !shadow-lg !rounded-lg !border-l-4 !border-solid",
-            success: "!border-l-success",
-            error: "!border-l-destructive",
-            warning: "!border-l-warning",
-            info: "!border-l-info",
-            title: "!text-base !font-bold",
-            description: "!text-sm",
-            icon: "!h-[24px] !w-[24px]",
-            closeButton: "!size-6",
+            toast: "vt-toast",
+            icon: "vt-toast-icon",
+            content: "vt-toast-content",
+            title: "vt-toast-title",
+            description: "vt-toast-description",
+            closeButton: "vt-toast-close",
+            actionButton: "vt-toast-action",
+            cancelButton: "vt-toast-cancel",
           },
         }}
       />
