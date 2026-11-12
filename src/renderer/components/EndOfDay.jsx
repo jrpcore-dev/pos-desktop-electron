@@ -1937,32 +1937,16 @@ const EndOfDay = () => {
                       />
                     </div>
 
-                    <div className="flex items-center gap-1 rounded-lg bg-sidebar p-1">
-                      {filterChips.map((chip) => (
-                        <button
-                          key={chip.value}
-                          onClick={() => setTurnoFilter(chip.value)}
-                          className={cn(
-                            "flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
-                            turnoFilter === chip.value
-                              ? "bg-primary text-primary-foreground shadow-sm"
-                              : "text-muted-foreground hover:bg-background hover:text-foreground",
-                          )}
-                        >
-                          {chip.label}
-                          <span
-                            className={cn(
-                              "rounded px-1 tabular-nums",
-                              turnoFilter === chip.value
-                                ? "bg-primary-foreground/20"
-                                : "bg-muted",
-                            )}
-                          >
-                            {chip.count}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
+                    <Tabs value={turnoFilter} onValueChange={setTurnoFilter}>
+                      <TabsList aria-label="Filtrar movimientos">
+                        {filterChips.map((chip) => (
+                          <TabsTrigger key={chip.value} value={chip.value} className="font-semibold">
+                            {chip.label}
+                            <span className="text-xs tabular-nums opacity-70">{chip.count}</span>
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </Tabs>
                   </div>
                 </div>
 

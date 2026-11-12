@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "./ui/table";
 import { Skeleton } from "./ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -407,32 +408,16 @@ const Cashiers = () => {
             aria-label="Buscar cajeros por nombre"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-sidebar p-1" role="group" aria-label="Filtrar por estado">
-          {filterChips.map((chip) => (
-            <button
-              key={chip.value}
-              type="button"
-              onClick={() => setStatusFilter(chip.value)}
-              aria-pressed={statusFilter === chip.value}
-              className={cn(
-                "flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
-                statusFilter === chip.value
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-background hover:text-foreground",
-              )}
-            >
-              {chip.label}
-              <span
-                className={cn(
-                  "rounded px-1 tabular-nums",
-                  statusFilter === chip.value ? "bg-primary-foreground/20" : "bg-muted",
-                )}
-              >
-                {counts[chip.value]}
-              </span>
-            </button>
-          ))}
-        </div>
+        <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+          <TabsList aria-label="Filtrar por estado">
+            {filterChips.map((chip) => (
+              <TabsTrigger key={chip.value} value={chip.value} className="font-semibold">
+                {chip.label}
+                <span className="text-xs tabular-nums opacity-70">{counts[chip.value]}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
