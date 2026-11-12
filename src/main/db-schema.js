@@ -457,6 +457,9 @@ const createTables = (db) => {
   // Recarga Taecel enlazada a la línea de venta. La usan la impresión, el
   // historial y el candado de cancelación (SERVICE_SALE_NOT_CANCELLABLE).
   ensureColumn("sale_items", "service_transaction_id", "INTEGER");
+  // Costo de la partida al momento de vender (costo por pieza × piezas que
+  // salieron del stock). Sin él la ganancia se calculaba con el costo de hoy.
+  ensureColumn("sale_items", "cost_at_sale", "REAL");
 
   // Vendesaldo quedó reemplazado por Taecel. Se borran sus credenciales en
   // claro para que no queden en la BD ni en los respaldos.

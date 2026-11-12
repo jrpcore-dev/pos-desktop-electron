@@ -150,6 +150,7 @@ const CLASSIFICATION_BASE = {
   "get-tier-prices": SCOPES.HOST_READ,
   "get-product-movement": SCOPES.HOST_READ,
   "get-purchase-suggestions": SCOPES.HOST_READ,
+  "get-profit-by-range": SCOPES.HOST_READ,
   "get-tiers": SCOPES.HOST_READ,
   "search-customers": SCOPES.HOST_READ,
   "search-products": SCOPES.HOST_READ,

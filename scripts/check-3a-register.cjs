@@ -182,10 +182,12 @@ const cashRegisterRow = (db, id) =>
   // Local-first · productos (`products.uid` y su índice) ya está en HEAD.
   // Local-first · retiros y entradas (`cash_register_expenses.uid` y su índice) ya está en HEAD.
   // Local-first · promos y paquetes (`group_promos.uid`, `bundles.uid` y sus índices) ya está en HEAD.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  // Reportes · `sale_items.cost_at_sale` (costo al vender) para la ganancia
+  // real (ALTER ADD COLUMN reescribe el CREATE TABLE: alta Y baja).
+  const DDL_AGREGADO = [/^CREATE TABLE "?sale_items"? \(.*cost_at_sale REAL/s];
+  const DDL_AGREGADO_TOTAL = 1;
+  const DDL_BORRADO = [/^CREATE TABLE "?sale_items"? \(/];
+  const DDL_BORRADO_TOTAL = 1;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -352,6 +354,8 @@ const cashRegisterRow = (db, id) =>
       // Local-first · promos y paquetes creados en una caja.
       ...(colDe(before.cols.group_promos, "uid") ? [] : ["+ group_promos.uid|TEXT|nn=0|dflt=null"]),
       ...(colDe(before.cols.bundles, "uid") ? [] : ["+ bundles.uid|TEXT|nn=0|dflt=null"]),
+      // Reportes · costo de la partida al vender.
+      ...(colDe(before.cols.sale_items, "cost_at_sale") ? [] : ["+ sale_items.cost_at_sale|REAL|nn=0|dflt=null"]),
     ];
     // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
     const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)

@@ -248,4 +248,83 @@ const purchaseSuggestions = (db, { today = mxToday(), limit = null } = {}) => {
   };
 };
 
-module.exports = { productMovement, purchaseSuggestions, deliveryWindow, addDays, daysBetween };
+// ── Ganancia real (sobre el costo de lo vendido) ────────────────────────────
+// Ganancia = lo que se cobró por los productos − lo que costaron. No es la
+// utilidad (ventas − gastos): ésa sigue aparte.
+//   · Cobrado por partida: su precio × lo que no se devolvió, ajustado al
+//     total real de la venta (descuentos de toda la venta, redondeo).
+//   · Costo: el que se guardó al vender (cost_at_sale); en ventas anteriores,
+//     el costo actual del producto. Sin costo capturado no se inventa
+//     ganancia: esa venta se cuenta aparte (`missing`).
+//   · Recargas y servicios no cuentan: su cobro es casi todo del proveedor.
+const profitByRange = (db, { startDate, endDate, dev = { sql: "", args: [] } } = {}) => {
+  if (!startDate || !endDate) return { success: false, error: "Periodo inválido" };
+  const salesCore = require("./sales-core");
+  const lines = db
+    .prepare(
+      `SELECT s.id AS sale_id, s.total AS sale_total, DATE(s.created_at, '${MX_SHIFT}') AS day,
+              si.quantity, COALESCE(si.returned_qty, 0) AS returned, si.status AS item_status,
+              si.price_at_sale, si.cost_at_sale, si.stock_deducted, si.service_transaction_id,
+              si.product_id, p.cost_price, p.sale_unit, p.box_qty
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         LEFT JOIN products p ON p.id = si.product_id
+        WHERE DATE(s.created_at, '${MX_SHIFT}') BETWEEN ? AND ?
+          AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}`,
+    )
+    .all(startDate, endDate, ...dev.args);
+
+  const bySale = new Map();
+  for (const l of lines) {
+    if (!bySale.has(l.sale_id)) bySale.set(l.sale_id, { total: Number(l.sale_total) || 0, day: l.day, lines: [] });
+    bySale.get(l.sale_id).lines.push(l);
+  }
+  let revenue = 0;
+  let cost = 0;
+  let missing = 0;
+  let missingRevenue = 0;
+  const byDay = {};
+  for (const sale of bySale.values()) {
+    const kept = sale.lines.map((l) => {
+      const qty = Number(l.quantity) || 0;
+      const eff = l.item_status === "cancelado" ? 0 : Math.max(0, qty - (Number(l.returned) || 0));
+      return { l, qty, eff, gross: (Number(l.price_at_sale) || 0) * eff };
+    });
+    const grossSum = kept.reduce((a, k) => a + k.gross, 0);
+    // El total de la venta manda: reparte descuentos y redondeo por partida.
+    const factor = grossSum > 0 ? sale.total / grossSum : 0;
+    for (const k of kept) {
+      if (!(k.eff > 0) || k.l.service_transaction_id) continue;
+      const lineRevenue = k.gross * factor;
+      let lineCost = null;
+      if (k.l.cost_at_sale != null) {
+        lineCost = (Number(k.l.cost_at_sale) || 0) * (k.qty > 0 ? k.eff / k.qty : 0);
+      } else if (k.l.product_id != null) {
+        const per = salesCore.costPerPiece({ cost_price: k.l.cost_price, sale_unit: k.l.sale_unit, box_qty: k.l.box_qty });
+        if (per > 0) lineCost = per * (Number(k.l.stock_deducted) || 0) * (k.qty > 0 ? k.eff / k.qty : 0);
+      }
+      if (lineCost == null) {
+        missing += 1;
+        missingRevenue += lineRevenue;
+        continue;
+      }
+      revenue += lineRevenue;
+      cost += lineCost;
+      byDay[sale.day] = (byDay[sale.day] || 0) + (lineRevenue - lineCost);
+    }
+  }
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const profit = revenue - cost;
+  return {
+    success: true,
+    revenue: r2(revenue),
+    cost: r2(cost),
+    profit: r2(profit),
+    margin: revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0,
+    missing,
+    missingRevenue: r2(missingRevenue),
+    byDay: Object.fromEntries(Object.entries(byDay).map(([d, v]) => [d, r2(v)])),
+  };
+};
+
+module.exports = { productMovement, purchaseSuggestions, profitByRange, deliveryWindow, addDays, daysBetween };

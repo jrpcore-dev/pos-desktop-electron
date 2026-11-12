@@ -78,6 +78,7 @@
   "get-product-promos": "host_read",
   "get-products": "host_read",
   "get-products-by-ids": "host_read",
+  "get-profit-by-range": "host_read",
   "get-promotions": "host_read",
   "get-purchase-suggestions": "host_read",
   "get-recent-customers": "host_read",

@@ -80,6 +80,7 @@ export const invoke = [
   "get-product-promos",
   "get-products",
   "get-products-by-ids",
+  "get-profit-by-range",
   "get-promotions",
   "get-purchase-suggestions",
   "get-recent-customers",

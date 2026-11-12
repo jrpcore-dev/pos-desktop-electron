@@ -22,6 +22,25 @@ const credit = require("./credit");
 const MAX_CART_LINES = 500;
 const KNOWN_UNITS = ["piece", "weight", "box", "package", "boxpack"];
 
+// Costo por pieza (o kg) del producto: en caja/paquete el costo se captura por
+// contenedor (box_qty piezas). Es la misma regla que el margen del formulario.
+const CONTAINER_UNITS = ["box", "package", "boxpack"];
+const costPerPiece = (product) => {
+  const cost = Number(product && product.cost_price) || 0;
+  if (!(cost > 0)) return 0;
+  if (CONTAINER_UNITS.includes(product.sale_unit)) {
+    const pieces = Number(product.box_qty) || 0;
+    return pieces > 0 ? cost / pieces : 0;
+  }
+  return cost;
+};
+// Costo de una partida: lo que salió del stock × costo por pieza. null si el
+// producto no tiene costo capturado (no se inventa una ganancia del 100 %).
+const lineCostOf = (product, stockDeducted) => {
+  const per = costPerPiece(product);
+  return per > 0 ? Math.round(per * (Number(stockDeducted) || 0) * 10000) / 10000 : null;
+};
+
 // Bloque 5 · folio continuo por dispositivo: H-000001 para el Host, A-000001
 // para la caja A, etc. El prefijo sale del `device_code` que el Host asigna al
 // aprobar la caja.
@@ -378,7 +397,7 @@ const createSaleTx = (
   const saleId = saleInfo.lastInsertRowid;
 
   const itemStmt = db.prepare(
-    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted, service_transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted, service_transaction_id, cost_at_sale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   // `day_sold` mantiene el contador "vendido hoy" de la línea base compartida:
   // se escribe junto al stock, así que la fila cambia igual que antes y viaja
@@ -387,7 +406,7 @@ const createSaleTx = (
     "UPDATE products SET stock = stock - ?, day_sold = COALESCE(day_sold, 0) + ? WHERE id = ?",
   );
   const getProductStmt = db.prepare(
-    "SELECT name, stock, sale_unit, box_qty, pack_qty FROM products WHERE id = ?",
+    "SELECT name, stock, sale_unit, box_qty, pack_qty, cost_price FROM products WHERE id = ?",
   );
   const getStockStmt = db.prepare("SELECT stock FROM products WHERE id = ?");
 
@@ -421,6 +440,7 @@ const createSaleTx = (
         // Recarga Taecel: enlaza la línea de venta con el ledger del proveedor.
         // Nunca desde el carrito de un cliente: sólo la llamada interna.
         allowServiceLink ? item.serviceTransactionId || null : null,
+        null, // manual o servicio: sin costo conocido
       );
       continue;
     }
@@ -477,6 +497,7 @@ const createSaleTx = (
       item.discount_percent || 0,
       stockDeducted,
       null,
+      lineCostOf(product, stockDeducted),
     );
 
     if (stockAfter < 0) {
@@ -546,4 +567,6 @@ module.exports = {
   folioPrefixFor,
   folioNextSeq,
   MAX_CART_LINES,
+  costPerPiece,
+  lineCostOf,
 };

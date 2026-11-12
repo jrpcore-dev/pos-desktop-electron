@@ -469,7 +469,7 @@ const ChartsSection = React.memo(function ChartsSection({
             {chartMode === "semanal" ? "Ventas por día de la semana" : "Ventas por semana del mes"}
           </CardDescription>
         </CardHeader>
-        <CardContent key={String(chartLoading)} className="pt-2 vt-reveal">
+        <CardContent key={String(chartLoading)} className="flex flex-1 flex-col pt-2 vt-reveal">
           {chartLoading ? (
             <div className="flex h-[260px] items-end gap-2 p-3">
               {[0, 1, 2, 3, 4, 5, 6].map((i) => (
@@ -664,12 +664,13 @@ const ChartsSection = React.memo(function ChartsSection({
       </Card>
 
 
-      {/* Comparativa Ingresos vs Gastos vs Ganancia */}
-      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
+      {/* Comparativa Ingresos vs Gastos vs Ganancia · crece a la altura de
+          Productos cuando éste muestra Movimiento (van lado a lado). */}
+      <Card wash className={cn(CARD_RADIUS, "flex min-w-0 flex-col")}>
         <CardHeader className="pb-0">
           <CardTitle className="text-[15px]">Ingresos vs gastos vs ganancia</CardTitle>
           <CardDescription className="text-xs">
-            Comparativa apilada del período · haz clic en una semana para profundizar
+            Lo cobrado, los gastos y lo que le ganaste a lo vendido · haz clic en una semana para profundizar
           </CardDescription>
         </CardHeader>
         <CardContent key={String(chartLoading)} className="pt-2 vt-reveal">
@@ -683,8 +684,10 @@ const ChartsSection = React.memo(function ChartsSection({
             <div
               role="img"
               aria-label="Ingresos, gastos y ganancia por día del período"
-              className="h-[220px] w-full"
+              className="relative min-h-[220px] w-full flex-1"
             >
+              {/* Absoluto: la gráfica toma el alto que le da la tarjeta sin empujarla. */}
+              <div className="absolute inset-0">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                   <defs>
@@ -720,9 +723,10 @@ const ChartsSection = React.memo(function ChartsSection({
                     onClick={(d) => d?.weekStart && onWeekClick(d.weekStart)}
                     style={{ cursor: chartMode === "mensual" ? "pointer" : "default" }}
                   />
-                  <Line type="monotone" dataKey="utilidad" name="Ganancia" stroke={C.warning} strokeWidth={2.5} dot={false} animationDuration={900} />
+                  <Line type="monotone" dataKey="ganancia" name="Ganancia" stroke={C.success} strokeWidth={2.5} dot={false} animationDuration={900} />
                 </ComposedChart>
               </ResponsiveContainer>
+              </div>
             </div>
           ) : (
             <EmptyState
@@ -739,14 +743,14 @@ const ChartsSection = React.memo(function ChartsSection({
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: C.destructive }} /> Gastos
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-0.5 w-4 rounded-full" style={{ background: C.warning }} /> Ganancia
+              <span className="h-0.5 w-4 rounded-full" style={{ background: C.success }} /> Ganancia (sobre costo)
             </span>
           </div>
         </CardContent>
       </Card>
 
       {/* Productos: Más vendidos | Movimiento */}
-      <Card wash className={cn(CARD_RADIUS, "min-w-0", prodView === "movement" && "lg:col-span-2")}>
+      <Card wash className={cn(CARD_RADIUS, "min-w-0")}>
         <CardHeader className="flex-row flex-wrap items-start justify-between gap-2 pb-0">
           <div>
             <div className="flex items-center gap-2">
@@ -1110,7 +1114,7 @@ const Reports = () => {
     if (!startDate || !endDate) return;
     setLoading(true);
     const prev = prevRangeOf(startDate, endDate);
-    const [salesRes, expRes, prevSalesRes, prevExpRes] = await Promise.all([
+    const [salesRes, expRes, prevSalesRes, prevExpRes, gainRes, prevGainRes] = await Promise.all([
       window.api.invoke("get-sales-by-range", { startDate, endDate, deviceId: deviceFilter }),
       window.api.invoke("get-expenses-by-range", {
         startDate,
@@ -1127,6 +1131,11 @@ const Reports = () => {
         endDate: prev.end,
         deviceId: deviceFilter,
       }),
+      // Ganancia real: lo cobrado por los productos − lo que costaron.
+      window.api.invoke("get-profit-by-range", { startDate, endDate, deviceId: deviceFilter }).catch(() => null),
+      window.api
+        .invoke("get-profit-by-range", { startDate: prev.start, endDate: prev.end, deviceId: deviceFilter })
+        .catch(() => null),
     ]);
 
     const salesTotal = salesRes.success ? salesRes.total || 0 : 0;
@@ -1162,6 +1171,11 @@ const Reports = () => {
       prevSales,
       prevExpenses,
       prevCount,
+      gain: gainRes && gainRes.success ? gainRes.profit : 0,
+      gainMargin: gainRes && gainRes.success ? gainRes.margin : 0,
+      gainRevenue: gainRes && gainRes.success ? gainRes.revenue : 0,
+      gainMissing: gainRes && gainRes.success ? gainRes.missing : 0,
+      prevGain: prevGainRes && prevGainRes.success ? prevGainRes.profit : 0,
     });
     setHourly(hourlyByHour);
     setLoading(false);
@@ -1308,7 +1322,7 @@ const Reports = () => {
       start = `${y}-${String(m + 1).padStart(2, "0")}-01`;
       end = `${y}-${String(m + 1).padStart(2, "0")}-${String(dim).padStart(2, "0")}`;
     }
-    const [salesRes, expRes] = await Promise.all([
+    const [salesRes, expRes, gainRes] = await Promise.all([
       window.api.invoke("get-daily-sales-week", {
         startDate: start,
         endDate: toEndExclusive(end),
@@ -1319,7 +1333,9 @@ const Reports = () => {
         endDate,
         deviceId: deviceFilter,
       }),
+      window.api.invoke("get-profit-by-range", { startDate: start, endDate: end, deviceId: deviceFilter }).catch(() => null),
     ]);
+    const gainMap = (gainRes && gainRes.success && gainRes.byDay) || {};
 
     const dayMap = {};
     if (salesRes.success)
@@ -1348,7 +1364,7 @@ const Reports = () => {
         const ds = toDateStr(d);
         const v = dayMap[ds]?.ventas || 0;
         const g = expMap[ds] || 0;
-        return { label, ventas: v, gastos: g, utilidad: v - g, isToday: ds === today };
+        return { label, ventas: v, gastos: g, utilidad: v - g, ganancia: gainMap[ds] || 0, isToday: ds === today };
       });
       setTrendData(pts);
     } else {
@@ -1363,6 +1379,7 @@ const Reports = () => {
           ds,
           v: dayMap[ds]?.ventas || 0,
           g: expMap[ds] || 0,
+          p: gainMap[ds] || 0,
         });
       }
       const pts = buckets.map((wk, i) => {
@@ -1374,6 +1391,7 @@ const Reports = () => {
           ventas,
           gastos,
           utilidad: ventas - gastos,
+          ganancia: wk.reduce((s, x) => s + x.p, 0),
         };
       });
       setTrendData(pts);
@@ -1944,9 +1962,14 @@ const Reports = () => {
             loading={loading}
             icon={<Percent />}
             tone="success"
-            label="Margen de ganancia"
-            value={`${summary.profitMargin.toFixed(1)}%`}
-            caption={`Utilidad sobre ${fmtMoney(summary.salesTotal)}`}
+            label="Ganancia"
+            value={fmtMoney(summary.gain || 0)}
+            delta={pctOf(summary.gain || 0, summary.prevGain || 0)}
+            // En chico: el margen sobre lo vendido y el porcentaje de antes
+            // (utilidad sobre ventas), que se conserva.
+            caption={`margen ${(summary.gainMargin || 0).toFixed(1)} % · utilidad ${summary.profitMargin.toFixed(1)} %${
+              summary.gainMissing > 0 ? ` · ${summary.gainMissing} sin costo` : ""
+            }`}
           />
           <StatCard
             className={CARD_RADIUS}

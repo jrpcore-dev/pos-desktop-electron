@@ -1921,6 +1921,14 @@ ipcMain.handle("open-whatsapp", async (event, { phone, text } = {}) => {
     return { success: false, error: error.message };
   }
 });
+// Ganancia real del periodo (cobrado − costo de lo vendido) y por día.
+ipcMain.handle("get-profit-by-range", async (event, { startDate, endDate, deviceId } = {}) => {
+  try {
+    return reportsCore.profitByRange(db, { startDate, endDate, dev: deviceWhere(deviceId, "s") });
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 ipcMain.handle("get-purchase-suggestions", async (event, { limit } = {}) => {
   try {
     return reportsCore.purchaseSuggestions(db, { limit: Number(limit) || null });

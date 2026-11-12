@@ -104,5 +104,42 @@ const w = rc.deliveryWindow("lun,jue", TODAY);
 check(w.next === 1 && w.following === 5 && w.label === "lun y jue", "miércoles → jueves (1) y lunes (5)", w);
 check(rc.deliveryWindow("lun,mar,mie,jue,vie,sab,dom", TODAY).label === "diario", "todos los días = diario");
 
+console.log("=== E · ganancia real ===");
+const salesCore = require(path.join(fixture.REPO, "src/main/sales-core.js"));
+check(salesCore.lineCostOf({ cost_price: 12, sale_unit: "piece" }, 2) === 24, "costo de una partida: piezas × costo");
+check(salesCore.lineCostOf({ cost_price: 120, sale_unit: "box", box_qty: 12 }, 24) === 240, "por caja: costo de la caja entre sus piezas");
+check(salesCore.lineCostOf({ cost_price: 0, sale_unit: "piece" }, 3) === null, "sin costo capturado: no se inventa");
+const g = fixture.createFileDb(path.join(TMP, "gain.db"));
+g.prepare("INSERT INTO products (id, barcode, name, price, stock, sale_unit, is_active, cost_price) VALUES (1, 'a', 'Coca', 18, 50, 'piece', 1, 15), (2, 'b', 'Sin costo', 10, 50, 'piece', 1, 0)").run();
+const gsale = (id, total, day, status = null) =>
+  g.prepare("INSERT INTO sales (id, total, payment_method, created_at, status, folio) VALUES (?, ?, 'cash', ?, ?, ?)").run(id, total, `${day} 18:00:00`, status, `G-${id}`);
+const gitem = (saleId, productId, qty, price, extra = {}) =>
+  g.prepare(
+    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, stock_deducted, cost_at_sale, returned_qty, status, service_transaction_id) VALUES (?, ?, 'x', ?, ?, ?, ?, ?, ?, ?)",
+  ).run(saleId, productId, qty, price, qty, extra.cost ?? null, extra.returned ?? 0, extra.status ?? "activo", extra.service ?? null);
+// 1) Venta nueva: 10 Cocas a $18 con su costo de ese día ($12) → gana $60.
+gsale(1, 180, "2026-11-09");
+gitem(1, 1, 10, 18, { cost: 120 });
+// 2) Venta vieja sin costo guardado: 2 Cocas → usa el costo de hoy ($15) → gana $6.
+gsale(2, 36, "2026-11-10");
+gitem(2, 1, 2, 18);
+// 3) 4 Cocas, se devolvió 1; con descuento de toda la venta (total $48 en vez de $54).
+gsale(3, 48, "2026-11-10");
+gitem(3, 1, 4, 18, { cost: 48, returned: 1 });
+// 4) Producto sin costo y una recarga: no cuentan.
+gsale(4, 110, "2026-11-10");
+gitem(4, 2, 1, 10);
+gitem(4, null, 1, 100, { service: 77 });
+// 5) Venta cancelada: no cuenta.
+gsale(5, 900, "2026-11-10", "cancelado");
+gitem(5, 1, 50, 18, { cost: 600 });
+const gp = rc.profitByRange(g, { startDate: "2026-11-09", endDate: "2026-11-15" });
+// Venta 3: cobrado 48 por 3 piezas que quedaron (factor 48/54), costo 48 × 3/4 = 36 → 12.
+check(gp.success && Math.abs(gp.profit - (60 + 6 + 12)) < 0.01, "ganancia = cobrado − costo, con devolución y descuento", gp);
+check(Math.abs(gp.revenue - (180 + 36 + 48)) < 0.01, "lo cobrado sin la recarga ni la venta cancelada", gp.revenue);
+check(gp.missing === 1, "el producto sin costo se cuenta aparte", gp.missing);
+check(gp.byDay["2026-11-09"] === 60 && Math.abs(gp.byDay["2026-11-10"] - 18) < 0.01, "ganancia por día", gp.byDay);
+check(gp.margin > 0 && gp.margin < 100, "margen sobre lo cobrado", gp.margin);
+
 console.log(`\n=== reportes: ${pass} PASS / ${fail} FAIL ===`);
 process.exit(fail ? 1 : 0);
