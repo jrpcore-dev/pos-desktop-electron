@@ -21,6 +21,8 @@ import {
   Search,
   SearchX,
   XCircle,
+  Undo2,
+  Package,
 } from "lucide-react";
 import { loadPdfToolchain } from "@/utils/pdfToolchain";
 import { printDocument } from "../utils/printPdf";
@@ -140,6 +142,47 @@ const methodChip = (pm) => {
     </span>
   );
 };
+
+// Detalle de venta: forma de pago en grande, con su color por significado
+// (efectivo entra a la caja, tarjeta/transferencia al banco, fiado a cuenta).
+const PAY_BADGE = {
+  cash: "bg-success/12 text-success",
+  card: "bg-brand/10 text-brand dark:bg-chart-2/15 dark:text-chart-2",
+  transfer: "bg-brand/10 text-brand dark:bg-chart-2/15 dark:text-chart-2",
+  credit: "bg-warning/15 text-amber-700 dark:text-warning",
+};
+const PayBadge = ({ sale }) => {
+  const meta = methodMeta[sale.payment_method] || { label: sale.payment_method || "—", icon: Banknote };
+  const Icon = meta.icon;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full py-1 pl-2.5 pr-3 text-[13px] font-bold",
+        PAY_BADGE[sale.payment_method] || "bg-muted text-muted-foreground",
+      )}
+    >
+      <Icon size={16} />
+      {meta.label}
+      {sale.payment_method === "credit" && sale.customer_name ? ` · ${sale.customer_name}` : ""}
+    </span>
+  );
+};
+const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+// Cómo quedó la venta (lo que se ve bajo el título).
+const saleState = (sale, items) => {
+  if (sale.pending) return { label: sale.pending === "conflict" ? "En revisión" : "Por subir", cls: "bg-warning/15 text-amber-700 dark:text-warning" };
+  if (sale.status === "cancelado") return { label: "Cancelada", cls: "bg-destructive/10 text-destructive" };
+  const returned = items.filter((it) => it.status === "cancelado" || Number(it.returned_qty || 0) > 0).length;
+  if (returned > 0) {
+    return {
+      label: "Completada con devolución",
+      detail: `${returned} ${returned === 1 ? "producto devuelto" : "productos devueltos"}`,
+      cls: "bg-warning/15 text-amber-700 dark:text-warning",
+    };
+  }
+  return { label: "Completada", cls: "bg-success/12 text-success" };
+};
+const qtyText = (q, isW) => (isW ? `${round3(q)} kg` : `${round3(q)}`);
 
 const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
   const isCanceled = sale.status === "cancelado";
@@ -1070,134 +1113,216 @@ const Transacciones = () => {
       </Tabs>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Venta {saleDetail ? (saleDetail.pending ? saleDetail.folio : `#${saleDetail.id}`) : "…"}</DialogTitle>
-            <DialogDescription>Detalle de la transacción</DialogDescription>
+        <DialogContent className="flex max-h-[92vh] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+          {/* Encabezado de marca: título y estado a la izquierda, total y
+              forma de pago a la derecha. */}
+          <DialogHeader className="flex flex-row items-start justify-between gap-4 px-6 pb-4 pt-5 pr-14 text-left">
+            <div className="min-w-0">
+              <DialogTitle className="text-lg font-bold">
+                Venta {saleDetail ? (saleDetail.pending ? saleDetail.folio : `#${saleDetail.id}`) : "…"}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {saleDetail
+                  ? `${formatMXDate(saleDetail.created_at)} · ${formatMXTime(saleDetail.created_at)}${saleDetail.folio && !saleDetail.pending ? ` · folio ${saleDetail.folio}` : ""}`
+                  : "Detalle de la transacción"}
+              </DialogDescription>
+              {saleDetail && !detailLoading && (() => {
+                const st = saleState(saleDetail, saleItems);
+                return (
+                  <span className={cn("mt-2.5 inline-flex items-center gap-2 rounded-full py-1 pl-2.5 pr-3 text-[12.5px] font-bold", st.cls)}>
+                    <span className="size-2 rounded-full bg-current" aria-hidden="true" />
+                    {st.label}
+                    {st.detail && <span className="font-medium opacity-85">· {st.detail}</span>}
+                  </span>
+                );
+              })()}
+            </div>
+            {saleDetail && !detailLoading && (
+              <div className="shrink-0 text-right">
+                <p className="text-[11.5px] text-muted-foreground">Total cobrado</p>
+                <p
+                  className={cn(
+                    "text-2xl font-bold tabular-nums",
+                    saleDetail.status === "cancelado" && "text-muted-foreground line-through",
+                  )}
+                >
+                  {fmtMoney(saleDetail.total)}
+                </p>
+                <div className="mt-1.5">
+                  <PayBadge sale={saleDetail} />
+                </div>
+              </div>
+            )}
           </DialogHeader>
+          <div className="h-px shrink-0 bg-border/70" aria-hidden="true" />
 
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {detailLoading ? (
             <div className="space-y-2 py-2">
               <Skeleton className="h-4 w-40" />
               <Skeleton className="h-4 w-56" />
               <div className="my-3" />
               {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-9 w-full" />
+                <Skeleton key={i} className="h-12 w-full" />
               ))}
-              <Skeleton className="h-9 w-32" />
             </div>
           ) : !saleDetail ? (
             <p className="text-sm text-destructive">No se pudo cargar el detalle de la venta.</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
-                <div>
-                  <p className="text-xs text-muted-foreground">Fecha</p>
-                  <p className="font-medium text-foreground">{formatMXDate(saleDetail.created_at)} · {formatMXTime(saleDetail.created_at)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Cajero</p>
-                  <p className="font-medium text-foreground">{saleDetail.cashier_name || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Método</p>
-                  <p className="font-medium text-foreground">{methodChip(saleDetail.payment_method)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Estado</p>
-                  <p className="font-medium text-foreground">{statusBadge(saleDetail)}</p>
-                </div>
-                {(saleDetail.discount_total ?? 0) > 0 && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Descuento</p>
-                    <p className="font-medium text-emerald-600 dark:text-emerald-400">
-                      −{fmtMoney(saleDetail.discount_total)}
-                    </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ["Cajero", saleDetail.cashier_name || "—"],
+                  ["Caja", saleDetail.device_name || saleDetail.device_code || "—"],
+                  ["Cliente", saleDetail.customer_name || "Público general"],
+                  [
+                    "Productos",
+                    `${saleItems.length} ${saleItems.length === 1 ? "producto" : "productos"}`,
+                  ],
+                ].map(([k, v]) => (
+                  <div key={k} className="min-w-0 rounded-[10px] bg-muted/60 px-3 py-2">
+                    <p className="text-[11px] font-semibold text-muted-foreground">{k}</p>
+                    <p className="truncate text-[13px] font-semibold text-foreground">{v}</p>
                   </div>
-                )}
-                {saleDetail.status === "cancelado" && saleDetail.cancelled_by && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Canceló</p>
-                    <p className="font-medium text-foreground">
-                      {saleDetail.cancelled_by}
-                      {saleDetail.cancelled_at ? ` · ${formatMXDate(saleDetail.cancelled_at)} ${formatMXTime(saleDetail.cancelled_at)}` : ""}
-                    </p>
-                  </div>
+                ))}
+              </div>
+
+              {saleDetail.status === "cancelado" && saleDetail.cancelled_by && (
+                <p className="mt-3 rounded-[10px] bg-destructive/8 px-3 py-2 text-[12.5px] text-destructive">
+                  Cancelada por <b>{saleDetail.cancelled_by}</b>
+                  {saleDetail.cancelled_at
+                    ? ` · ${formatMXDate(saleDetail.cancelled_at)} ${formatMXTime(saleDetail.cancelled_at)}`
+                    : ""}
+                </p>
+              )}
+
+              <div className="mt-3">
+                {saleItems.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">Sin artículos registrados</p>
+                ) : (
+                  saleItems.map((it, idx) => {
+                    const isW = it.sale_unit === "weight";
+                    const sold = round3(it.quantity);
+                    const returned = round3(it.returned_qty);
+                    const cancelled = it.status === "cancelado";
+                    const active = cancelled ? 0 : round3(Math.max(0, sold - returned));
+                    const disc = Number(it.discount_percent || 0);
+                    const price = Number(it.price_at_sale || 0);
+                    const full = price * sold * (1 - disc / 100);
+                    const real = price * active * (1 - disc / 100);
+                    const backQty = cancelled ? sold : returned;
+                    const back = price * backQty * (1 - disc / 100);
+                    return (
+                      <div
+                        key={it.id}
+                        className={cn(
+                          "grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 py-2.5",
+                          idx > 0 && "border-t",
+                        )}
+                      >
+                        <span className="flex size-10 items-center justify-center overflow-hidden rounded-[9px] bg-muted text-muted-foreground">
+                          {it.image_path ? (
+                            <img src={it.image_path} alt="" className="size-full bg-white object-contain" />
+                          ) : (
+                            <Package size={17} />
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <p
+                            className={cn(
+                              "truncate text-sm font-semibold text-foreground",
+                              cancelled && "text-muted-foreground line-through",
+                            )}
+                          >
+                            {it.name || it.product_name || "—"}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground tabular-nums">
+                            {qtyText(cancelled ? sold : active || sold, isW)} × {fmtMoney(price)}
+                            {isW ? " el kg" : ""}
+                            {disc > 0 ? ` · −${disc} %` : ""}
+                            {it.barcode ? ` · ${it.barcode}` : ""}
+                          </p>
+                          {backQty > 0 && (
+                            <div className="mt-1.5 inline-flex items-start gap-2 rounded-[9px] bg-warning/12 px-2.5 py-1.5 text-xs">
+                              <Undo2 size={14} className="mt-px shrink-0 text-amber-700 dark:text-warning" />
+                              <div>
+                                <b className="text-amber-700 dark:text-warning">
+                                  {cancelled ? "Se devolvió todo" : `Devuelto ${qtyText(backQty, isW)}`} · −{fmtMoney(back)}
+                                </b>
+                                {(it.return_reason || it.cancelled_at || it.cancelled_by) && (
+                                  <span className="block text-muted-foreground">
+                                    {[
+                                      it.return_reason,
+                                      it.cancelled_at ? formatMXTime(it.cancelled_at) : null,
+                                      it.cancelled_by,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-bold tabular-nums text-foreground">{fmtMoney(real)}</p>
+                          {Math.abs(full - real) > 0.004 && (
+                            <p className="text-[11.5px] text-muted-foreground line-through tabular-nums">
+                              {fmtMoney(full)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
-              <Separator className="my-4" />
-
-              <div className="overflow-hidden rounded-xl border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Producto</TableHead>
-                      <TableHead>Código</TableHead>
-                      <TableHead className="text-right">Cant.</TableHead>
-                      <TableHead className="text-right">Precio</TableHead>
-                      <TableHead className="text-right">Subtotal</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {saleItems.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5} className="h-20 px-4 text-center text-sm text-muted-foreground">
-                          Sin artículos registrados
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      saleItems.map((it) => {
-                        const subTotal = (it.price_at_sale || 0) * (it.quantity || 0);
-                        const canceledItem = it.status === "cancelado";
-                        return (
-                          <TableRow key={it.id}>
-                            <TableCell className="px-4 py-2.5">
-                              <span className={cn("text-sm text-foreground", canceledItem && "line-through text-muted-foreground")}>
-                                {it.name || it.product_name || "—"}
-                              </span>
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 text-xs text-muted-foreground">
-                              {it.barcode || "—"}
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 text-right text-sm tabular-nums text-foreground">
-                              {it.quantity}
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 text-right text-sm tabular-nums text-foreground">
-                              {fmtMoney(it.price_at_sale)}
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 text-right text-sm font-semibold tabular-nums text-foreground">
-                              {fmtMoney(subTotal)}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })
+              {(() => {
+                const lines = saleItems.reduce((acc, it) => {
+                  const active =
+                    it.status === "cancelado"
+                      ? 0
+                      : Math.max(0, round3(it.quantity) - round3(it.returned_qty));
+                  return (
+                    acc +
+                    Number(it.price_at_sale || 0) * active * (1 - Number(it.discount_percent || 0) / 100)
+                  );
+                }, 0);
+                const saleDiscount = Number(saleDetail.discount_total || 0);
+                return (
+                  <div className="mt-2 rounded-xl bg-muted/60 px-3.5 py-2.5 text-sm">
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-muted-foreground">Productos</span>
+                      <b className="tabular-nums">{fmtMoney(lines)}</b>
+                    </div>
+                    {saleDiscount > 0 && (
+                      <div className="flex justify-between py-0.5">
+                        <span className="text-muted-foreground">Descuento de la venta</span>
+                        <b className="tabular-nums text-success">−{fmtMoney(saleDiscount)}</b>
+                      </div>
                     )}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="flex justify-end pt-1">
-                <div className="flex items-baseline justify-between gap-10 text-sm">
-                  <span className="text-muted-foreground">Total</span>
-                  <span className="text-base font-bold tabular-nums text-foreground">
-                    {fmtMoney(saleDetail.total)}
-                  </span>
-                </div>
-              </div>
+                    <div className="mt-1.5 flex justify-between border-t pt-2 text-[15px] font-bold">
+                      <span>Total cobrado</span>
+                      <span className="tabular-nums">{fmtMoney(saleDetail.total)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </>
           )}
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-row justify-end gap-2 border-t bg-muted/50 px-6 py-3">
+            <Button variant="outline" onClick={() => setDetailOpen(false)}>
+              Cerrar
+            </Button>
             {!detailLoading && saleDetail && (
-              <Button variant="outline" onClick={() => printSaleTicket(saleDetail, saleItems, setPrinting, setError)} disabled={printing}>
+              <Button onClick={() => printSaleTicket(saleDetail, saleItems, setPrinting, setError)} disabled={printing}>
                 <Printer className="h-4 w-4" />
                 {printing ? "Imprimiendo..." : "Imprimir ticket"}
               </Button>
             )}
-            <Button variant="outline" onClick={() => setDetailOpen(false)}>
-              Cerrar
-            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

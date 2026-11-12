@@ -3141,11 +3141,28 @@ ipcMain.handle("find-sales-by-folio", async (event, query) => {
 });
 
 ipcMain.handle("get-sale-details", async (event, saleId) => {  try {
-    const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
+    // Con la caja donde se vendió y el cliente (fiado o con nivel).
+    const sale = db
+      .prepare(
+        `SELECT s.*, pd.device_code, ${deviceNameSql("s")}, c.name AS customer_name
+           FROM sales s
+           LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+           LEFT JOIN customers c ON c.id = s.customer_id
+          WHERE s.id = ?`,
+      )
+      .get(saleId);
+    // Cada producto con su foto y, si se devolvió, el motivo (va en la nota
+    // del movimiento de devolución de esa venta).
     const items = db
       .prepare(
         `
-      SELECT si.*, COALESCE(p.name, si.product_name) AS name, p.barcode, p.sale_unit AS sale_unit FROM sale_items si
+      SELECT si.*, COALESCE(p.name, si.product_name) AS name, p.barcode, p.sale_unit AS sale_unit,
+             p.image_path,
+             (SELECT NULLIF(sm.notes, '') FROM stock_movements sm
+               WHERE sm.product_id = si.product_id AND sm.type = 'devolution'
+                 AND sm.reference LIKE '%venta #' || si.sale_id
+               ORDER BY sm.id DESC LIMIT 1) AS return_reason
+      FROM sale_items si
       LEFT JOIN products p ON si.product_id = p.id
       WHERE si.sale_id = ?
     `,
