@@ -22,6 +22,7 @@ export const invoke = [
   "box-wait-approval",
   "cancel-sale",
   "cancel-sale-item",
+  "catalog-image-suggest",
   "check-barcode-exists",
   "close-cash-register",
   "complete-task",

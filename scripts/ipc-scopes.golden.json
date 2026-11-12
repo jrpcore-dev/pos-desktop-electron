@@ -20,6 +20,7 @@
   "box-wait-approval": "system",
   "cancel-sale": "rpc",
   "cancel-sale-item": "rpc",
+  "catalog-image-suggest": "host_read",
   "check-barcode-exists": "host_read",
   "close-cash-register": "rpc",
   "complete-task": "rpc",

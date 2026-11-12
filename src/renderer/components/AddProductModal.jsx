@@ -656,6 +656,9 @@ const AddProductModal = ({
   // se reemplaza por la del catálogo.
   const catalogImageRef = useRef(false);
   const userImageRef = useRef(false);
+  const productImageRef = useRef("");
+  productImageRef.current = productImage;
+  const [imageSuggestions, setImageSuggestions] = useState([]);
   const discountColRef = useRef(null);
   const promoColRef = useRef(null);
   const [focusFlash, setFocusFlash] = useState(null);
@@ -777,6 +780,15 @@ const AddProductModal = ({
       try {
         const res = await window.api.invoke("check-barcode-exists", code);
         const displayName = res.cat_name || res.name;
+        // El código coincide con una foto del catálogo: entra sola, salvo
+        // que ya haya una foto (propia o elegida).
+        const useIndexImage = () => {
+          if (!res.index_image || userImageRef.current) return;
+          if (productImageRef.current && !catalogImageRef.current) return;
+          setProductImage(res.index_image);
+          setImageTouched(true);
+          catalogImageRef.current = true;
+        };
         if (!res.exists) {
           setBarcodeStatus({ type: null, name: "" });
           if (!editProduct && !isCatalogMode) {
@@ -788,8 +800,10 @@ const AddProductModal = ({
               catalogImageRef.current = false;
             }
           }
+          if (!isCatalogMode) useIndexImage();
         } else if (editProduct && res.id === editProduct.id) {
           setBarcodeStatus({ type: null, name: "" });
+          if (!productImageRef.current) useIndexImage();
         } else if (res.active) {
           setBarcodeStatus({ type: "active", name: displayName });
         } else {
@@ -801,8 +815,8 @@ const AddProductModal = ({
             setValue("box_qty", String(res.box_qty || ""));
             if (res.category_id)
               setValue("category_id", String(res.category_id));
-            if (res.cat_image && !userImageRef.current) {
-              setProductImage(res.cat_image);
+            if ((res.cat_image || res.index_image) && !userImageRef.current) {
+              setProductImage(res.cat_image || res.index_image);
               setImageTouched(true);
               catalogImageRef.current = true;
             }
@@ -821,6 +835,38 @@ const AddProductModal = ({
     }, 400);
     return () => clearTimeout(t);
   }, [wBarcode, editProduct, isCatalogMode, setValue]);
+
+  // Sin foto: fotos del catálogo con nombre parecido para elegir una.
+  const [wName, wBrand] = useWatch({ control, name: ["name", "brand"] });
+  useEffect(() => {
+    if (!open || productImage || isCatalogMode) {
+      setImageSuggestions([]);
+      return undefined;
+    }
+    const name = String(wName || "").trim();
+    if (name.length < 3) {
+      setImageSuggestions([]);
+      return undefined;
+    }
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const r = await window.api.invoke("catalog-image-suggest", {
+          name,
+          brand: wBrand || "",
+          barcode: wBarcode || "",
+          limit: 8,
+        });
+        if (alive) setImageSuggestions(Array.isArray(r?.suggestions) ? r.suggestions : []);
+      } catch {
+        if (alive) setImageSuggestions([]);
+      }
+    }, 350);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [open, productImage, isCatalogMode, wName, wBrand, wBarcode]);
 
   const margin = useMemo(
     () => calcMargin(watchMargins, wSaleUnit),
@@ -1551,6 +1597,40 @@ const AddProductModal = ({
                 />
               </div>
               </div>
+              {imageSuggestions.length > 0 && !productImage && (
+                <div className="rounded-xl bg-muted/50 p-3 ring-1 ring-border/70">
+                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    Fotos sugeridas del catálogo · toca una para usarla
+                  </p>
+                  <div className="flex gap-2 overflow-x-auto pb-0.5">
+                    {imageSuggestions.map((s) => (
+                      <button
+                        key={s.barcode}
+                        type="button"
+                        title={s.name}
+                        aria-label={`Usar la foto de ${s.name}`}
+                        onClick={() => {
+                          setProductImage(s.image);
+                          setImageTouched(true);
+                          catalogImageRef.current = false;
+                          userImageRef.current = true;
+                        }}
+                        className="group w-[76px] shrink-0 cursor-pointer rounded-lg bg-card p-1.5 text-left ring-1 ring-border transition hover:ring-2 hover:ring-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:ring-chart-2"
+                      >
+                        <img
+                          src={s.image}
+                          alt=""
+                          className="aspect-square w-full rounded-md bg-white object-contain"
+                        />
+                        <span className="mt-1 line-clamp-2 block text-[10.5px] leading-tight text-muted-foreground group-hover:text-foreground">
+                          {s.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* Proveedor y Categoría: fila completa debajo de la foto. */}
               <div className="grid grid-cols-1 gap-x-4 gap-y-[18px] sm:grid-cols-2">
                 <Controller

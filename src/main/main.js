@@ -1156,6 +1156,7 @@ ipcMain.handle("get-next-barcode", async () => productsCore.nextInternalBarcode(
 
 ipcMain.handle("check-barcode-exists", async (event, barcode) => {
   if (!barcode) return { exists: false };
+  const indexImage = catalogImageFor(barcode);
   const row = db
     .prepare(
       `SELECT id, name, cat_name, brand, is_active, is_catalog,
@@ -1163,9 +1164,10 @@ ipcMain.handle("check-barcode-exists", async (event, barcode) => {
        FROM products WHERE barcode = ?`,
     )
     .get(String(barcode).trim());
-  if (!row) return { exists: false };
+  if (!row) return { exists: false, index_image: indexImage };
   return {
     exists: true,
+    index_image: indexImage,
     active: row.is_active === 1,
     name: row.name,
     cat_name: row.cat_name || "",
@@ -6505,6 +6507,96 @@ const catalogImageFor = (barcode) => {
   }
 };
 
+// Fotos sugeridas del catálogo por nombre (cuando el código no coincide con
+// ninguna). Candidatos: los productos del catálogo que tienen foto. Puntaje por
+// palabras en común (sin acentos ni mayúsculas); los números ("600", "1.5")
+// y la marca pesan más. Devuelve las mejores con su miniatura.
+const SUGGEST_STOP = new Set(["de", "del", "la", "el", "los", "las", "con", "sin", "y", "en", "para", "pz", "pzs", "pieza", "piezas"]);
+const suggestTokens = (text) =>
+  nomarize(text)
+    .replace(/(\d)\s*(ml|lt|l|gr|g|kg|oz|pz)\b/g, "$1$2")
+    .split(/[^a-z0-9.]+/)
+    .map((t) => t.replace(/^\.+|\.+$/g, ""))
+    .filter((t) => t.length >= 2 && !SUGGEST_STOP.has(t));
+let catalogSuggestPool = null;
+const loadSuggestPool = () => {
+  if (catalogSuggestPool) return catalogSuggestPool;
+  const index = loadCatalogImageIndex();
+  const codes = Object.keys(index);
+  if (!codes.length) return (catalogSuggestPool = []);
+  const rows = db
+    .prepare(
+      `SELECT barcode, COALESCE(NULLIF(cat_name, ''), name) AS name, brand
+         FROM products
+        WHERE is_catalog = 1 AND barcode IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify(codes));
+  catalogSuggestPool = rows.map((r) => ({
+    barcode: r.barcode,
+    name: r.name,
+    brand: r.brand || "",
+    tokens: new Set(suggestTokens(`${r.name} ${r.brand || ""}`)),
+    brandNorm: nomarize(r.brand || "").trim(),
+  }));
+  return catalogSuggestPool;
+};
+
+ipcMain.handle("catalog-image-suggest", async (event, { name, brand, barcode, limit = 8 } = {}) => {
+  try {
+    const words = suggestTokens(`${name || ""} ${brand || ""}`);
+    if (!words.length) return { suggestions: [] };
+    const brandNorm = nomarize(brand || "").trim();
+    const own = String(barcode || "").trim();
+    const scored = [];
+    for (const c of loadSuggestPool()) {
+      if (c.barcode === own) continue;
+      // Primero cuentan las palabras; la medida ("600ml") sólo desempata
+      // entre las que ya se parecen por nombre.
+      let text = 0;
+      let num = 0;
+      for (const w of words) {
+        const isNum = /\d/.test(w);
+        if (c.tokens.has(w)) {
+          if (isNum) num += 1;
+          else text += 1;
+        } else if (!isNum && w.length >= 4) {
+          // Prefijo: "galle" encuentra "galletas".
+          for (const t of c.tokens) {
+            if (t.startsWith(w) || w.startsWith(t)) {
+              text += 0.5;
+              break;
+            }
+          }
+        }
+      }
+      if (text < 1) continue;
+      let score = text * 2 + num;
+      if (brandNorm && c.brandNorm && c.brandNorm === brandNorm) score += 1.5;
+      scored.push({ c, score });
+    }
+    scored.sort((a, b) => b.score - a.score || a.c.name.length - b.c.name.length);
+    // Sin repetir la misma foto (varias presentaciones comparten imagen).
+    const max = Math.min(12, Math.max(1, Number(limit) || 8));
+    const index = loadCatalogImageIndex();
+    const seen = new Set();
+    const top = [];
+    for (const it of scored) {
+      const file = index[it.c.barcode];
+      if (!file || seen.has(file)) continue;
+      seen.add(file);
+      top.push(it);
+      if (top.length >= max) break;
+    }
+    return {
+      suggestions: top
+        .map(({ c }) => ({ barcode: c.barcode, name: c.name, image: catalogImageFor(c.barcode) }))
+        .filter((s) => s.image),
+    };
+  } catch (error) {
+    return { suggestions: [], error: error.message };
+  }
+});
+
 const seedCatalogIfEmpty = async (force = false) => {
   try {
     const count = db
@@ -6517,6 +6609,7 @@ const seedCatalogIfEmpty = async (force = false) => {
       return;
     }
     const result = await runCatalogImport(file);
+    catalogSuggestPool = null;
     if (result.success) {
       console.log(
         force

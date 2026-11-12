@@ -130,6 +130,7 @@ const CLASSIFICATION_BASE = {
   "get-all-settings": SCOPES.HOST_READ,
   "get-cashiers": SCOPES.HOST_READ,
   "get-cashiers-overview": SCOPES.HOST_READ,
+  "catalog-image-suggest": SCOPES.HOST_READ,
   "verify-admin-pin": SCOPES.HOST_READ,
   "get-catalog-categories": SCOPES.HOST_READ,
   "get-catalog-products": SCOPES.HOST_READ,
