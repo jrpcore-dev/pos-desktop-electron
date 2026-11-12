@@ -107,6 +107,37 @@ const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 
 const fmtKg = (n) => String(round3(n));
 
+// Cantidad de un producto en un texto corto: kilo con su unidad (gramos si es
+// menos de 1 kg), piezas con "x2" sólo si es más de una.
+const qtyLabel = (p) => {
+  const q = round3(p?.qty);
+  if (p?.weight) return q < 1 ? ` ${Math.round(q * 1000)} g` : ` ${fmtKg(q)} kg`;
+  return q > 1 ? ` x${q}` : "";
+};
+
+// Devolución parcial: lo escrito en el cuadro se guarda tal cual (se puede
+// borrar todo y volver a escribir) y sólo se valida al confirmar.
+const cleanQtyText = (raw, isWeight) => {
+  const t = String(raw ?? "").replace(",", ".");
+  if (!isWeight) return t.replace(/\D/g, "").slice(0, 6);
+  const [int = "", ...rest] = t.replace(/[^\d.]/g, "").split(".");
+  return rest.length ? `${int.slice(0, 5)}.${rest.join("").slice(0, 3)}` : int.slice(0, 5);
+};
+const cancelQtyError = (d) => {
+  if (!d) return null;
+  const q = d.qty;
+  if (!Number.isFinite(q) || q <= 0) return d.isWeightItem ? "Escribe cuántos kg" : "Escribe cuántas unidades";
+  if (q > d.itemQty + 1e-9) {
+    return `Máximo ${d.isWeightItem ? `${fmtKg(d.itemQty)} kg` : d.itemQty}`;
+  }
+  if (!d.isWeightItem && !Number.isInteger(q)) return "Sólo unidades completas";
+  return null;
+};
+// Motivo opcional de la devolución (va a la nota del movimiento de stock).
+const CANCEL_REASONS = ["Error al cobrar", "Producto dañado", "El cliente no lo quiso", "Otro"];
+// Cambia la cantidad desde los botones (− + "1" "todas"): el cuadro la muestra.
+const withQty = (p, qty) => (p ? { ...p, qty, qtyText: undefined } : p);
+
 // Error mostrado DENTRO del modal abierto: el aviso de la página queda
 // detrás del modal y no se ve.
 const ModalError = ({ text, onClose }) =>
@@ -815,6 +846,7 @@ const EndOfDay = () => {
 
   const handleCancelSaleItem = async () => {
     if (!cancelItemData) return;
+    if (cancelQtyError(cancelItemData)) return;
 
     setCancelItemLoading(true);
 
@@ -823,6 +855,7 @@ const EndOfDay = () => {
         saleId: cancelItemData.saleId,
         itemId: cancelItemData.itemId,
         quantity: cancelItemData.qty,
+        reason: cancelItemData.reason || "",
         cashierName: cashier?.name,
         role: cashier?.role,
         cashierId: cashier?.id,
@@ -1272,7 +1305,7 @@ const EndOfDay = () => {
           const productsText = (sale.products || [])
             .map(
               (product) =>
-                `${product.name}${product.qty > 1 ? ` x${product.qty}` : ""}`,
+                `${product.name}${qtyLabel(product)}`,
             )
             .join(", ");
 
@@ -1476,7 +1509,7 @@ const EndOfDay = () => {
     if (items.length !== 1) return null;
     const it = items[0];
     const returned = Number(it.returned_qty || 0);
-    const activeQty = Math.max(0, Number(it.quantity || 0) - returned);
+    const activeQty = round3(Math.max(0, Number(it.quantity || 0) - returned));
     if (activeQty !== 1) return null;
     const discount = Number(it.discount_percent || 0);
     const subtotal = activeQty * Number(it.price_at_sale || 0) * (1 - discount / 100);
@@ -1492,7 +1525,7 @@ const EndOfDay = () => {
 
       const isWeightItem = it.sale_unit === "weight";
       const returned = Number(it.returned_qty || 0);
-      const active = Math.max(0, Number(it.quantity || 0) - returned);
+      const active = round3(Math.max(0, Number(it.quantity || 0) - returned));
       if (active <= 0) return;
 
       setCancelItemData({
@@ -2573,7 +2606,7 @@ const EndOfDay = () => {
                         : "Transferencia";
 
                   const productsText = (sale.products || [])
-                    .map((p) => `${p.name}${p.qty > 1 ? ` x${p.qty}` : ""}`)
+                    .map((p) => `${p.name}${qtyLabel(p)}`)
                     .join(", ");
 
                   return (
@@ -2749,9 +2782,8 @@ const EndOfDay = () => {
                             Number(it.returned_qty || 0) >=
                               Number(it.quantity || 0);
                           const returned = Number(it.returned_qty || 0);
-                          const active = Math.max(
-                            0,
-                            Number(it.quantity || 0) - returned,
+                          const active = round3(
+                            Math.max(0, Number(it.quantity || 0) - returned),
                           );
                           const discount = Number(it.discount_percent || 0);
                           const activeSubtotal =
@@ -2772,7 +2804,7 @@ const EndOfDay = () => {
                               </TableCell>
 
                               <TableCell className="text-right tabular-nums">
-                                x{active}
+                                {it.sale_unit === "weight" ? `${fmtKg(active)} kg` : `x${active}`}
                               </TableCell>
 
                               <TableCell className="text-right font-semibold tabular-nums">
@@ -2813,24 +2845,31 @@ const EndOfDay = () => {
                   )}
                 </div>
 
-                {/* DEVOLUCIÓN INLINE */}
+                {/* DEVOLUCIÓN INLINE · el mismo control de − y +, con el resultado
+                    en palabras, motivo opcional y el botón que dice el monto. */}
                 {cancelItemData && (() => {
                 const isW = cancelItemData.isWeightItem;
                 const minQty = isW ? 0.001 : 1;
+                const unitOf = (q) => (isW ? `${fmtKg(q)} kg` : `${q} ${q === 1 ? "pieza" : "piezas"}`);
+                const qtyError = cancelQtyError(cancelItemData);
+                const okQty = qtyError ? 0 : cancelItemData.qty;
+                const refund =
+                  cancelItemData.itemPrice * okQty * (1 - cancelItemData.itemDiscount / 100);
+                const newTotal = Number(saleDetailSale?.total || 0) - refund;
+                const left = qtyError ? null : round3(cancelItemData.itemQty - cancelItemData.qty);
                 return (
-                  <div className="mt-4 space-y-3 rounded-lg border border-red-500/20 bg-red-50/60 p-3 dark:bg-red-500/5">
+                  <div className="mt-4 space-y-4 rounded-xl border bg-card p-4 shadow-sm">
                     <div className="flex flex-col items-center gap-2 text-center">
-                      <PackageX size={18} className="shrink-0 text-destructive" />
-
-                      <div>
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-brand/10 text-brand dark:bg-chart-2/15 dark:text-chart-2">
+                        <PackageX size={19} />
+                      </span>
+                      <div className="min-w-0">
                         <p className="text-base font-bold">
-                          Devolución de {cancelItemData.itemName}
+                          Devolver {cancelItemData.itemName}
                         </p>
-
-                        <p className="text-sm font-semibold text-muted-foreground">
-                          {isW
-                            ? `${fmtKg(cancelItemData.itemQty)} kg disponible(s) · ${fmtMoney(cancelItemData.itemPrice)}/kg`
-                            : `${cancelItemData.itemQty} unidad(es) disponible(s) · ${fmtMoney(cancelItemData.itemPrice)} c/u`}
+                        <p className="text-xs text-muted-foreground">
+                          Se vendieron {unitOf(cancelItemData.itemQty)} ·{" "}
+                          {fmtMoney(cancelItemData.itemPrice)} {isW ? "el kg" : "c/u"}
                           {cancelItemData.itemDiscount > 0 &&
                             ` · desc. ${cancelItemData.itemDiscount}%`}
                         </p>
@@ -2838,251 +2877,212 @@ const EndOfDay = () => {
                     </div>
 
                     <div>
-                      <span className="mb-1.5 block text-center text-sm font-bold text-muted-foreground">
-                        {isW
-                          ? "¿Cuántos kg cancelar?"
-                          : "¿Cuántas unidades cancelar?"}
-                      </span>
+                      <p className="mb-2 text-center text-xs font-bold uppercase tracking-[0.06em] text-muted-foreground">
+                        {isW ? "¿Cuántos kg se devuelven?" : "¿Cuántas piezas se devuelven?"}
+                      </p>
 
-                      <div className="flex items-center justify-center gap-2">
+                      <div className="flex flex-wrap items-center justify-center gap-2">
                         <Button
                           type="button"
                           variant="outline"
-                          size="icon-sm"
+                          size="icon"
+                          className="h-10 w-10 rounded-[10px]"
                           disabled={
-                            cancelItemLoading || cancelItemData.qty <= minQty
+                            cancelItemLoading || !(cancelItemData.qty > minQty)
                           }
                           onClick={() =>
+                            setCancelItemData((p) => {
+                              const base = Number.isFinite(p?.qty) ? p.qty : 0;
+                              return withQty(
+                                p,
+                                isW
+                                  ? round3(Math.max(minQty, base - 0.1))
+                                  : Math.max(1, base - 1),
+                              );
+                            })
+                          }
+                          aria-label="Restar"
+                        >
+                          <Minus size={16} />
+                        </Button>
+
+                        <Input
+                          type="text"
+                          inputMode={isW ? "decimal" : "numeric"}
+                          value={
+                            cancelItemData.qtyText ??
+                            (isW ? fmtKg(cancelItemData.qty) : String(cancelItemData.qty))
+                          }
+                          disabled={cancelItemLoading}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => {
+                            const text = cleanQtyText(e.target.value, isW);
+                            const parsed = text === "" || text === "." ? NaN : Number(text);
                             setCancelItemData((p) =>
                               p
                                 ? {
                                     ...p,
-                                    qty: isW
-                                      ? round3(
-                                          Math.max(minQty, p.qty - 0.1),
-                                        )
-                                      : Math.max(1, p.qty - 1),
+                                    qtyText: text,
+                                    qty: Number.isFinite(parsed) ? round3(parsed) : NaN,
                                   }
                                 : p,
-                            )
-                          }
-                          aria-label="Restar unidad"
-                        >
-                          <Minus size={14} />
-                        </Button>
-
-                        <Input
-                          type="number"
-                          inputMode={isW ? "decimal" : "numeric"}
-                          min={minQty}
-                          max={cancelItemData.itemQty}
-                          step={isW ? 0.001 : 1}
-                          value={cancelItemData.qty}
-                          disabled={cancelItemLoading}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (isW) {
-                              if (raw.trim() === "") return;
-                              const parsed = parseFloat(raw);
-                              if (Number.isNaN(parsed) || parsed < 0) return;
-                              setCancelItemData((p) =>
-                                p ? { ...p, qty: round3(parsed) } : p,
-                              );
-                            } else {
-                              const v = Math.min(
-                                cancelItemData.itemQty,
-                                Math.max(1, parseInt(raw, 10) || 1),
-                              );
-                              setCancelItemData((p) =>
-                                p ? { ...p, qty: v } : p,
-                              );
+                            );
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleCancelSaleItem();
                             }
                           }}
-                          onBlur={
-                            isW
-                              ? () =>
-                                  setCancelItemData((p) =>
-                                    p
-                                      ? {
-                                          ...p,
-                                          qty: round3(
-                                            Math.min(
-                                              p.itemQty,
-                                              Math.max(0.001, p.qty),
-                                            ),
-                                          ),
-                                        }
-                                      : p,
-                                  )
-                              : undefined
-                          }
-                          className={cn(
-                            "text-center text-sm font-bold tabular-nums",
-                            isW ? "h-10 w-24" : "h-8 w-16",
-                          )}
-                          aria-label="Cantidad a cancelar"
+                          aria-invalid={!!qtyError}
+                          className="h-10 w-24 rounded-[10px] text-center text-base font-bold tabular-nums"
+                          aria-label="Cantidad a devolver"
                         />
 
                         <Button
                           type="button"
                           variant="outline"
-                          size="icon-sm"
+                          size="icon"
+                          className="h-10 w-10 rounded-[10px]"
                           disabled={
                             cancelItemLoading ||
                             cancelItemData.qty >= cancelItemData.itemQty
                           }
                           onClick={() =>
-                            setCancelItemData((p) =>
-                              p
-                                ? {
-                                    ...p,
-                                    qty: isW
-                                      ? Math.min(
-                                          p.itemQty,
-                                          round3(p.qty + 0.1),
-                                        )
-                                      : Math.min(p.itemQty, p.qty + 1),
-                                  }
-                                : p,
-                            )
+                            setCancelItemData((p) => {
+                              const base = Number.isFinite(p?.qty) ? p.qty : 0;
+                              return withQty(
+                                p,
+                                isW
+                                  ? Math.min(p.itemQty, round3(base + 0.1))
+                                  : Math.min(p.itemQty, base + 1),
+                              );
+                            })
                           }
-                          aria-label="Sumar unidad"
+                          aria-label="Sumar"
                         >
-                          <Plus size={14} />
+                          <Plus size={16} />
                         </Button>
 
-                        <span className="inline-flex h-8 items-center text-sm font-bold text-muted-foreground">
-                          de{" "}
-                          {isW
-                            ? `${fmtKg(cancelItemData.itemQty)} kg`
-                            : cancelItemData.itemQty}
+                        <span className="text-sm font-semibold text-muted-foreground">
+                          de {unitOf(cancelItemData.itemQty)}
                         </span>
+                      </div>
+
+                        {(isW || cancelItemData.itemQty > 1) && (
+                          <div className="mt-2.5 flex justify-center gap-1.5">
+                            {(isW ? cancelItemData.itemQty > 1 : true) && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                disabled={cancelItemLoading || cancelItemData.qty === 1}
+                                onClick={() => setCancelItemData((p) => withQty(p, 1))}
+                              >
+                                {isW ? "1 kg" : "1 pieza"}
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              disabled={
+                                cancelItemLoading ||
+                                cancelItemData.qty === cancelItemData.itemQty
+                              }
+                              onClick={() => setCancelItemData((p) => withQty(p, p?.itemQty))}
+                            >
+                              Todo
+                            </Button>
+                          </div>
+                        )}
+
+                      {cancelItemData.qtyText !== undefined && qtyError && (
+                        <p className="mt-1.5 text-center text-xs font-semibold text-destructive">
+                          {qtyError}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-center text-xs font-bold uppercase tracking-[0.06em] text-muted-foreground">
+                        Motivo{" "}
+                        <span className="font-medium normal-case tracking-normal">· opcional</span>
+                      </p>
+                      <div className="flex flex-wrap justify-center gap-1.5">
+                        {CANCEL_REASONS.map((r) => {
+                          const on = cancelItemData.reason === r;
+                          return (
+                            <button
+                              key={r}
+                              type="button"
+                              aria-pressed={on}
+                              disabled={cancelItemLoading}
+                              onClick={() =>
+                                setCancelItemData((p) =>
+                                  p ? { ...p, reason: on ? "" : r } : p,
+                                )
+                              }
+                              className={cn(
+                                "cursor-pointer rounded-full px-3 py-1.5 text-xs font-semibold transition-colors",
+                                on
+                                  ? "bg-foreground text-background"
+                                  : "text-muted-foreground ring-1 ring-border hover:bg-muted hover:text-foreground",
+                              )}
+                            >
+                              {r}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
-                    {(isW || cancelItemData.itemQty > 1) && (
-                      <div className="flex flex-wrap items-center justify-center gap-2">
-                        {(isW ? cancelItemData.itemQty > 1 : true) && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="lg"
-                            className="text-base"
-                            disabled={
-                              cancelItemLoading || cancelItemData.qty === 1
-                            }
-                            onClick={() =>
-                              setCancelItemData((p) =>
-                                p ? { ...p, qty: 1 } : p,
-                              )
-                            }
-                          >
-                            Cancelar 1{isW ? " kg" : ""}
-                          </Button>
-                        )}
-
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="lg"
-                          className="text-base"
-                          disabled={
-                            cancelItemLoading ||
-                            cancelItemData.qty === cancelItemData.itemQty
-                          }
-                          onClick={() =>
-                            setCancelItemData((p) =>
-                              p ? { ...p, qty: p.itemQty } : p,
-                            )
-                          }
-                        >
-                          Cancelar todas (
-                          {isW
-                            ? `${fmtKg(cancelItemData.itemQty)} kg`
-                            : cancelItemData.itemQty}
-                          )
-                        </Button>
+                    <div className="rounded-xl bg-muted/60 px-3.5 py-3">
+                      <div className="mb-1.5 flex items-baseline justify-between gap-2 border-b pb-2">
+                        <span className="text-sm font-bold">Se le regresa al cliente</span>
+                        <span className="text-xl font-bold text-destructive tabular-nums">
+                          {fmtMoney(refund)}
+                        </span>
                       </div>
-                    )}
-
-                    {(() => {
-                      const refund =
-                        cancelItemData.itemPrice *
-                        cancelItemData.qty *
-                        (1 - cancelItemData.itemDiscount / 100);
-                      const newTotal =
-                        Number(saleDetailSale?.total || 0) - refund;
-
-                      return (
-                        <div className="space-y-1.5 rounded-lg border bg-background px-3 py-2.5">
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">
-                              Devolución
-                            </span>
-
-                            <span className="font-bold tabular-nums text-destructive">
-                              −{fmtMoney(refund)}
-                            </span>
-                          </div>
-
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">
-                              Stock a restaurar
-                            </span>
-
-                            <span className="font-bold tabular-nums">
-                              +{isW ? fmtKg(cancelItemData.qty) : cancelItemData.qty}
-                              {isW ? " kg" : ""}
-                            </span>
-                          </div>
-
-                          <Separator className="my-1" />
-
-                          <div className="flex justify-between text-sm">
-                            <span className="font-semibold">
-                              Nuevo total ticket
-                            </span>
-
-                            <span className="font-extrabold tabular-nums">
-                              {fmtMoney(newTotal)}
-                            </span>
-                          </div>
+                      <div className="flex justify-between py-0.5 text-sm">
+                        <span className="text-muted-foreground">Vuelve al inventario</span>
+                        <span className="font-bold text-success tabular-nums">
+                          +{isW ? `${fmtKg(okQty)} kg` : okQty}
+                        </span>
+                      </div>
+                      <div className="flex justify-between py-0.5 text-sm">
+                        <span className="text-muted-foreground">El ticket queda en</span>
+                        <span className="font-bold tabular-nums">{fmtMoney(newTotal)}</span>
+                      </div>
+                      {left > 0 && (
+                        <div className="flex justify-between py-0.5 text-sm">
+                          <span className="text-muted-foreground">Siguen en la venta</span>
+                          <span className="font-bold tabular-nums">{unitOf(left)}</span>
                         </div>
-                      );
-                    })()}
+                      )}
+                    </div>
 
-                    {cancelItemData.qty < cancelItemData.itemQty && (
-                      <Alert variant="warning" className="rounded-lg py-2">
-                        <Info size={15} className="text-warning" />
-                        <AlertDescription>
-                          Quedarán{" "}
-                          {isW
-                            ? `${fmtKg(
-                                cancelItemData.itemQty - cancelItemData.qty,
-                              )} kg`
-                            : `${cancelItemData.itemQty - cancelItemData.qty} unidad(es)`}{" "}
-                          de este producto en la venta.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-
-                    <div className="flex justify-end gap-2 pt-1">
-                      <CancelButton
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex-1"
                         disabled={cancelItemLoading}
                         onClick={() => setCancelItemData(null)}
                       >
-                        Cancelar
-                      </CancelButton>
+                        Volver
+                      </Button>
 
                       <Button
                         variant="destructive"
-                        disabled={cancelItemLoading}
+                        className="flex-1"
+                        disabled={cancelItemLoading || !!qtyError}
                         onClick={handleCancelSaleItem}
                       >
                         {cancelItemLoading ? (
                           <Spinner size={16} />
                         ) : (
-                          "Confirmar devolución"
+                          `Devolver ${fmtMoney(refund)}`
                         )}
                       </Button>
                     </div>
