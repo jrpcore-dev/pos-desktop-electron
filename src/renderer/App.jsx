@@ -237,6 +237,17 @@ const AppInner = () => {
   // El rayo de Vendia que se arma y se carga (sólo si tarda más de 0.5 s).
   const loadingScreen = <BrandLoader />;
 
+  // Arranque: el rayo de index.html tapa la ventana desde el primer cuadro.
+  // Se quita cuando ya hay una pantalla real (no la de carga). Con el login
+  // guardado, este efecto corre hasta que Layout terminó de cargar.
+  const onBoxFlow =
+    (isBoxDevice && (!canSell || (boxSetupRanRef.current && !boxDownloadShown))) ||
+    (canSell && boxSetupRanRef.current && !boxWelcomeSeen);
+  const booting = box === null || (!onBoxFlow && isFirstTime === null);
+  useEffect(() => {
+    if (!booting) window.__vendiaBootDone?.();
+  }, [booting]);
+
   // B7 · la caja corta ANTES que todo lo demás. Mientras no esté sincronizada
   // no hay catálogo propio ni cajeros propios, así que ni el asistente de
   // instalación ni el login tienen sentido: sólo vincular y descargar. No es

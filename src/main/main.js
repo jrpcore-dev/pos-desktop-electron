@@ -603,6 +603,10 @@ const createMainWindow = () => {
     titleBarStyle: "hidden",
     titleBarOverlay: { ...TITLEBAR_COLORS.light, height: TITLEBAR_HEIGHT },
     title: "Vendia",
+    // Sin destello blanco: nace con el fondo de la app y se muestra cuando ya
+    // pintó su primer cuadro (el rayo de carga de index.html).
+    show: false,
+    backgroundColor: "#f8fafc",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -610,6 +614,19 @@ const createMainWindow = () => {
       sandbox: true,
     },
   });
+
+  {
+    const win = mainWin;
+    let revealed = false;
+    const reveal = () => {
+      if (revealed || win.isDestroyed()) return;
+      revealed = true;
+      win.show();
+    };
+    win.once("ready-to-show", reveal);
+    // Por si la página tarda o falla: la ventana nunca se queda escondida.
+    setTimeout(reveal, 4000);
+  }
 
   mainWin.on("close", (e) => {
     if (!isQuitting) {

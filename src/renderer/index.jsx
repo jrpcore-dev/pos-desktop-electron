@@ -11,6 +11,8 @@ const logError = (message) => {
 };
 
 const report = (tag, error) => {
+  // Un error al arrancar no se queda escondido detrás del rayo de carga.
+  try { window.__vendiaBootDone?.(); } catch {}
   logError(`${tag}: ${error && error.stack ? error.stack : String(error)}`);
 };
 

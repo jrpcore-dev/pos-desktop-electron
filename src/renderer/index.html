@@ -4,11 +4,76 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vendia</title>
+    <!-- Tema guardado ANTES de pintar: el arranque ya sale claro u oscuro. -->
+    <script>
+      try {
+        if (localStorage.getItem("themeMode") === "dark") document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
+    <!-- Arranque: el rayo de Vendia FIJO desde el primer cuadro, mientras carga
+         la interfaz. Sin animación a propósito: en ese momento el hilo principal
+         está ocupado cargando la app y cualquier movimiento se traba. Lo único
+         que se mueve es el desvanecido final (lo hace el compositor). El rayo
+         que se arma (BrandLoader.jsx) queda para las esperas largas, ya con la
+         app cargada. App.jsx lo quita con window.__vendiaBootDone. -->
+    <style>
+      html, body { margin: 0; background: #f8fafc; }
+      html.dark, html.dark body { background: #0a0e1a; }
+      #vendia-boot {
+        --vb-up-a: #5079e6; --vb-up-b: #2f56c4;
+        --vb-blade-a: #25386b; --vb-blade-b: #0f1a36;
+        position: fixed; inset: 0; z-index: 10000;
+        display: flex; align-items: center; justify-content: center;
+        background: #f8fafc;
+        transition: opacity 240ms ease;
+        will-change: opacity;
+      }
+      html.dark #vendia-boot {
+        --vb-up-a: #5e8bf7; --vb-up-b: #3664de;
+        --vb-blade-a: #ffffff; --vb-blade-b: #c5cfe2;
+        background: #0a0e1a;
+      }
+      #vendia-boot.out { opacity: 0; pointer-events: none; }
+    </style>
     <!-- Tipografía autoalojada en ./assets/fonts (sin CDN):
          Instrument Sans para toda la UI. Ver los @font-face en index.css. -->
     <link rel="stylesheet" href="./index.css" />
   </head>
   <body>
+    <div id="vendia-boot" role="status" aria-label="Cargando">
+      <svg width="112" height="112" viewBox="0 0 400 420" aria-hidden="true">
+        <defs>
+          <linearGradient id="vb-up" gradientUnits="userSpaceOnUse" x1="30" y1="40" x2="160" y2="260">
+            <stop offset="0" style="stop-color: var(--vb-up-a)" />
+            <stop offset="1" style="stop-color: var(--vb-up-b)" />
+          </linearGradient>
+          <linearGradient id="vb-blade" gradientUnits="userSpaceOnUse" x1="339" y1="48" x2="200" y2="380">
+            <stop offset="0" style="stop-color: var(--vb-blade-a)" />
+            <stop offset="1" style="stop-color: var(--vb-blade-b)" />
+          </linearGradient>
+        </defs>
+        <g transform="translate(14 0)">
+          <polygon points="178.8,262.0 339.4,48.0 200.0,380.0" fill="url(#vb-blade)" />
+          <polygon points="32.0,102.0 94.0,40.0 116.1,163.0 154.1,125.0 200.0,380.0 130.7,215.0 94.6,251.1" fill="url(#vb-up)" />
+        </g>
+      </svg>
+    </div>
+    <script>
+      // Se quita en cuanto App ya tiene pantalla: sin espera mínima.
+      (function () {
+        var done = false;
+        window.__vendiaBootDone = function () {
+          if (done) return;
+          done = true;
+          var el = document.getElementById("vendia-boot");
+          if (!el) return;
+          el.classList.add("out");
+          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+        };
+        // Por si algo falla al cargar: nunca se queda tapando la app.
+        setTimeout(window.__vendiaBootDone, 20000);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/index.jsx"></script>
   </body>
