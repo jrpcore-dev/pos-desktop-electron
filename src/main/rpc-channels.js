@@ -142,6 +142,7 @@ const RPC_CHANNELS = new Set([
   "taecel:recharge",
   "taecel:transaction-status",
   "taecel:history",
+  "taecel:get-recent-numbers",
   "taecel:reconcile",
 ]);
 

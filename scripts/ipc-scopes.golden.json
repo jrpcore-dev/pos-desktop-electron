@@ -164,6 +164,7 @@
   "stop-weight-stream": "system",
   "taecel:get-balance": "rpc",
   "taecel:get-catalog": "rpc",
+  "taecel:get-recent-numbers": "rpc",
   "taecel:history": "rpc",
   "taecel:recharge": "rpc",
   "taecel:reconcile": "rpc",

@@ -166,6 +166,7 @@ export const invoke = [
   "stop-weight-stream",
   "taecel:get-balance",
   "taecel:get-catalog",
+  "taecel:get-recent-numbers",
   "taecel:history",
   "taecel:recharge",
   "taecel:reconcile",

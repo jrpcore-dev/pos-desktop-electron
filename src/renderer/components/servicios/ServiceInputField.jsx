@@ -31,10 +31,12 @@ const ServiceInputField = ({
   inputRef,
   confirmRef,
   onComplete,
+  known = false,
 }) => {
   if (!spec || spec.kind === "none") return null;
 
-  const needsConfirm = spec.confirmar !== false;
+  // Un número que ya se recargó con éxito no se pide dos veces.
+  const needsConfirm = spec.confirmar !== false && !known;
   const matched = !!confirm && confirm === value;
   const mismatch = !!confirm && confirm.length >= value.length && !matched;
   // Referencias alfanuméricas (tags IAVE/Televía): mayúsculas y sin espacios,
@@ -134,7 +136,12 @@ const ServiceInputField = ({
       )}
 
       <p id="service-input-msg" aria-live="polite" className="min-h-4 px-0.5">
-        {error ? (
+        {known && !error ? (
+          <span className="flex items-center gap-1 text-xs font-semibold text-success">
+            <CircleCheck size={13} aria-hidden />
+            Número ya usado · no hace falta repetirlo
+          </span>
+        ) : error ? (
           <span className="flex items-center gap-1 text-xs font-medium text-destructive">
             <TriangleAlert size={12} aria-hidden />
             {error}

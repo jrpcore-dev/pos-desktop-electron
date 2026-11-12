@@ -29,6 +29,9 @@ const ServicesScreen = () => {
   const notify = useToast();
   const [tab, setTab] = useState("cobrar");
   const [transactions, setTransactions] = useState([]);
+  const pendingCount = transactions.filter((t) =>
+    ["unknown", "pending", "needs_review"].includes(t.status),
+  ).length;
   const [operators, setOperators] = useState([]);
   const [busyFolio, setBusyFolio] = useState(null);
   const [provider, setProvider] = useState({ state: "loading" });
@@ -194,37 +197,39 @@ const ServicesScreen = () => {
             <TabsTrigger value="historial" className="gap-1.5 px-3 text-sm">
               <History size={14} aria-hidden />
               Historial
+              {pendingCount > 0 && (
+                <span
+                  className="rounded-full bg-warning/15 px-1.5 text-[10.5px] font-bold leading-4 text-amber-700 tabular-nums dark:text-warning"
+                  title="Recargas por confirmar"
+                >
+                  {pendingCount}
+                </span>
+              )}
             </TabsTrigger>
           </TabsList>
 
-          <div
-            role="status"
-            aria-live="polite"
-            className="ml-auto flex h-9 min-w-0 items-center gap-2.5 rounded-lg border border-border bg-card px-3 text-xs"
-          >
-            <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-foreground">
-              {provider.state === "live" ? (
-                <Wifi size={13} className="text-success" aria-hidden />
-              ) : provider.state === "loading" ? (
-                <Loader2 size={13} className="animate-spin text-muted-foreground" aria-hidden />
-              ) : (
-                <WifiOff size={13} className="text-warning" aria-hidden />
-              )}
-              Taecel
-            </span>
-            <span aria-hidden className="h-4 w-px bg-border" />
+          {/* Saldos de Taecel como dos "bolsas": punto verde si alcanza,
+              ámbar si queda poco. Sin conexión, el motivo en su lugar. */}
+          <div role="status" aria-live="polite" className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
             {provider.state === "live" ? (
               <>
                 <Balance label="Tiempo aire" cents={provider.airtimeCents} />
                 <Balance label="Servicios" cents={provider.servicesCents} />
               </>
             ) : (
-              <span className="truncate text-muted-foreground">
-                {provider.state === "loading"
-                  ? "Consultando saldo…"
-                  : provider.notConfigured
-                    ? "Sin configurar · captura la Key y el NIP en «Proveedor»"
-                    : `Sin conexión${provider.error ? ` · ${provider.error}` : ""}`}
+              <span className="inline-flex h-9 min-w-0 items-center gap-2 rounded-[9px] bg-card px-3 text-xs ring-1 ring-border">
+                {provider.state === "loading" ? (
+                  <Loader2 size={13} className="animate-spin text-muted-foreground" aria-hidden />
+                ) : (
+                  <WifiOff size={13} className="text-warning" aria-hidden />
+                )}
+                <span className="truncate text-muted-foreground">
+                  {provider.state === "loading"
+                    ? "Consultando saldo de Taecel…"
+                    : provider.notConfigured
+                      ? "Taecel sin configurar · captura la Key y el NIP en «Proveedor»"
+                      : `Taecel sin conexión${provider.error ? ` · ${provider.error}` : ""}`}
+                </span>
               </span>
             )}
           </div>
@@ -306,18 +311,20 @@ const ServicesScreen = () => {
 
 // Saldo de una bolsa de Taecel; en ámbar cuando ya alcanza para poco.
 const LOW_BALANCE_CENTS = 200 * 100;
-const Balance = ({ label, cents = 0 }) => (
-  <span className="inline-flex shrink-0 items-baseline gap-1">
-    <span className="text-muted-foreground">{label}</span>
-    <b
-      className={cn(
-        "font-bold tabular-nums",
-        cents < LOW_BALANCE_CENTS ? "text-warning" : "text-foreground",
-      )}
+const Balance = ({ label, cents = 0 }) => {
+  const low = cents < LOW_BALANCE_CENTS;
+  return (
+    <span
+      className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[9px] bg-card pl-2.5 pr-3 text-xs ring-1 ring-border"
+      title={low ? "Saldo bajo en Taecel" : undefined}
     >
-      {money(cents || 0)}
-    </b>
-  </span>
-);
+      <span className={cn("size-2 rounded-full", low ? "bg-warning" : "bg-success")} aria-hidden />
+      <span className="text-muted-foreground">{label}</span>
+      <b className={cn("text-[13px] font-bold tabular-nums", low ? "text-amber-700 dark:text-warning" : "text-foreground")}>
+        {money(cents || 0)}
+      </b>
+    </span>
+  );
+};
 
 export default ServicesScreen;

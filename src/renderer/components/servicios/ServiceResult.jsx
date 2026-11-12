@@ -98,7 +98,7 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
               className="h-11 w-full gap-1.5 bg-success text-sm font-bold text-success-foreground hover:bg-success/90"
             >
               <CircleCheck size={16} />
-              Cobrar otro
+              Nueva recarga
             </Button>
             <Button variant="outline" onClick={() => onPrint?.(tx)} className="h-11 w-full gap-1.5 text-sm">
               <Printer size={15} />

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check, History, X } from "lucide-react";
+import { VendiaBolt } from "../TicketPrinter";
+import { printServiceReceipt } from "./printServiceReceipt";
+import { money } from "./serviceMoney";
 import {
   buildFamilies,
   defaultMember,
@@ -122,18 +125,61 @@ const ServiceCheckout = ({
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)
-      .map(([fam]) => fam);
+      .map(([fam, n]) => ({ ...fam, todayCount: n }));
   }, [transactions, families]);
 
   // Etiqueta y ejemplo legibles del dato a capturar (celular, tag, referencia).
   const inputSpec = useMemo(() => referenceSpec(operator), [operator]);
   const free = isFreeAmount(operator);
 
+  const [recentNumbers, setRecentNumbers] = useState([]);
+  const familyKey = family?.key;
+  useEffect(() => {
+    if (!familyKey || !family) {
+      setRecentNumbers([]);
+      return undefined;
+    }
+    let alive = true;
+    window.api
+      .invoke("taecel:get-recent-numbers", { carrierIds: family.members.map((m) => String(m.key)) })
+      .then((r) => {
+        if (alive) setRecentNumbers(r?.ok && Array.isArray(r.numbers) ? r.numbers : []);
+      })
+      .catch(() => alive && setRecentNumbers([]));
+    return () => {
+      alive = false;
+    };
+    // Al elegir otra compañía o al terminar una recarga.
+  }, [familyKey, tx?.status === "applied"]);
+  const knownNumber =
+    !!inputValue && recentNumbers.some((r) => r.number === inputValue);
+  // Sugerencias: los que empiezan con lo escrito (o los últimos, sin nada).
+  const numberSuggestions = knownNumber
+    ? []
+    : recentNumbers.filter((r) => !inputValue || r.number.startsWith(inputValue)).slice(0, 3);
+  const repeatRecharge = (r) => {
+    const member = family?.members.find((m) => String(m.key) === String(r.carrierId));
+    if (member && member.key !== operatorKey) setOperatorKey(member.key);
+    const target = member || operator;
+    setInputValue(r.number);
+    setConfirmValue(r.number);
+    setInputError("");
+    const product = target?.products?.find((p) => p.sku === r.sku);
+    if (product) {
+      setSku(product.sku);
+      focusNext("charge");
+    } else {
+      setSku("");
+      focusNext("list");
+    }
+  };
+
   const validation = operator ? validateInput(operator, inputValue) : { ok: false };
   const confirmOk =
     !operator ||
     operator.input?.kind === "none" ||
     !operator.input?.confirmar ||
+    knownNumber ||
     confirmValue === inputValue;
   const numberReady = !!operator && validation.ok && confirmOk;
   const canCharge = providerLive && !!chargeProduct && numberReady && !!quoteData && !busy && !tx;
@@ -391,9 +437,10 @@ const ServiceCheckout = ({
         >
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
             {/* Compañía elegida */}
-            <div className="shrink-0 border-b border-border bg-muted/40 px-3 pb-2.5 pt-3">
-              <div className="flex items-center gap-3">
-                <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded-lg border border-border bg-card px-1.5">
+            <div className="vt-sheet-band relative shrink-0 overflow-hidden px-3.5 pb-3 pt-3.5">
+              <VendiaBolt className="vt-sheet-bolt" />
+              <div className="relative flex items-center gap-3">
+                <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded-[10px] bg-card px-1.5 shadow-sm ring-1 ring-border">
                   <OperatorIcon
                     id={family.logo}
                     remote={family.remoteLogo}
@@ -428,7 +475,7 @@ const ServiceCheckout = ({
                 <div
                   role="group"
                   aria-label="Tipo de producto"
-                  className="mt-2.5 flex gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1"
+                  className="relative mt-3 flex gap-1 overflow-x-auto rounded-xl bg-card p-1 ring-1 ring-border"
                 >
                   {family.members.map((m) => {
                     const active = m.key === operatorKey;
@@ -443,7 +490,7 @@ const ServiceCheckout = ({
                           "h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-all",
                           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                           active
-                            ? "bg-primary text-primary-foreground shadow-sm"
+                            ? "bg-brand text-white shadow-sm dark:bg-chart-2 dark:text-background"
                             : "text-muted-foreground hover:bg-muted hover:text-foreground",
                         )}
                       >
@@ -463,12 +510,14 @@ const ServiceCheckout = ({
                   busy={busy}
                   onRetry={retry}
                   onDone={reset}
-                  onPrint={() =>
-                    notify(
-                      `La recarga quedó como venta ${tx.saleFolio || ""}; reimprímela desde Transacciones`,
-                      "info",
-                    )
-                  }
+                  onPrint={async () => {
+                    try {
+                      const res = await printServiceReceipt(tx);
+                      if (res && res.success === false) notify(res.error || "No se pudo imprimir", "error");
+                    } catch (e) {
+                      notify(e?.message || "No se pudo imprimir", "error");
+                    }
+                  }}
                 />
               </div>
             ) : (
@@ -491,7 +540,50 @@ const ServiceCheckout = ({
                       inputRef={inputRef}
                       confirmRef={confirmRef}
                       onComplete={() => focusNext(sku ? "charge" : "list")}
+                      known={knownNumber}
                     />
+                    {numberSuggestions.length > 0 && (
+                      <div className="flex flex-col gap-1.5">
+                        <p className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+                          <History size={12} aria-hidden />
+                          {inputValue ? "Números que coinciden" : "Números recientes"}
+                        </p>
+                        {numberSuggestions.map((r) => (
+                          <div
+                            key={r.number}
+                            className="flex items-center gap-2 rounded-[10px] bg-muted/60 py-1.5 pl-3 pr-1.5"
+                          >
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                setInputValue(r.number);
+                                setConfirmValue(r.number);
+                                setInputError("");
+                                focusNext(sku ? "charge" : "list");
+                              }}
+                              className="min-w-0 flex-1 cursor-pointer text-left"
+                              title="Usar este número"
+                            >
+                              <span className="block text-[13px] font-bold tabular-nums text-foreground">
+                                {r.number.replace(/(\d{2})(\d{4})(\d{4})/, "$1 $2 $3")}
+                              </span>
+                              <span className="block truncate text-[11.5px] text-muted-foreground">
+                                {r.carrierName} {money(r.amountCents)} · {timeAgo(r.at)}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => repeatRecharge(r)}
+                              className="shrink-0 cursor-pointer whitespace-nowrap rounded-lg bg-card px-2.5 py-1.5 text-[11.5px] font-bold text-brand ring-1 ring-border hover:ring-chart-2 dark:text-chart-2"
+                            >
+                              Repetir {money(r.amountCents)}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </Step>
 
                   <Step
@@ -544,7 +636,16 @@ const ServiceCheckout = ({
                   </Step>
                 </div>
 
-                <div className="shrink-0 border-t border-border bg-card p-3.5">
+                <div className="shrink-0 border-t border-border bg-muted/40 p-3.5">
+                  {quoteData && numberReady && (
+                    <p className="mb-2 flex items-baseline justify-between gap-2 text-[12.5px] text-muted-foreground">
+                      <span className="min-w-0 truncate">
+                        {product?.name || family.name}
+                        {inputValue ? ` · ${inputValue.replace(/(\d{2})(\d{4})(\d{4})/, "$1 $2 $3")}` : ""}
+                      </span>
+                      <b className="shrink-0 tabular-nums text-foreground">{money(quoteData.totalCents || 0)}</b>
+                    </p>
+                  )}
                   <ServiceSummary
                     quote={quoteData}
                     canCharge={canCharge}
@@ -577,6 +678,18 @@ const ServiceCheckout = ({
   );
 };
 
+// "hace 3 días", "ayer", "hoy" de una fecha de SQLite (UTC).
+const timeAgo = (sqliteUtc) => {
+  if (!sqliteUtc) return "";
+  const d = new Date(String(sqliteUtc).replace(" ", "T") + "Z");
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (!Number.isFinite(days) || days <= 0) return "hoy";
+  if (days === 1) return "ayer";
+  if (days < 30) return `hace ${days} días`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? "hace 1 mes" : `hace ${months} meses`;
+};
+
 // Paso numerado del flujo: el círculo pasa a check al completarse y el
 // paso en curso se resalta para que el cajero sepa qué sigue.
 const Step = ({ n, title, done, current, aside, children }) => (
@@ -588,7 +701,7 @@ const Step = ({ n, title, done, current, aside, children }) => (
           done
             ? "bg-success text-success-foreground"
             : current
-              ? "bg-primary text-primary-foreground ring-4 ring-primary/15"
+              ? "bg-brand text-white ring-4 ring-brand/15 dark:bg-chart-2 dark:text-background dark:ring-chart-2/20"
               : "bg-muted text-muted-foreground",
         )}
       >

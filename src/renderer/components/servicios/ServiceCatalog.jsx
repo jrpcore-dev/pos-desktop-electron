@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Check, Clock, Package, Search, Sparkles, WifiOff, X } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -130,9 +131,9 @@ const ServiceCatalog = ({
           placeholder="Busca compañía, monto o paquete — ej. «telcel 100», «internet 7 días»"
           aria-label="Buscar compañía, monto o paquete"
           className={cn(
-            "h-12 w-full rounded-xl border border-input bg-field pl-10 pr-24 text-sm shadow-sm transition-colors",
+            "h-12 w-full rounded-xl border-[1.5px] border-input bg-field pl-10 pr-24 text-sm shadow-sm transition-colors",
             "placeholder:text-muted-foreground/80",
-            "focus-visible:border-ring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/15",
+            "focus-visible:border-chart-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-chart-2/20",
           )}
         />
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
@@ -158,40 +159,16 @@ const ServiceCatalog = ({
 
       {/* Categorías: control segmentado con conteo */}
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <div
-          role="group"
-          aria-label="Categorías"
-          className="inline-flex rounded-xl border border-border bg-muted/60 p-1"
-        >
-          {CAT_TABS.filter((tab) => tab.key === "all" || counts[tab.key] > 0).map((tab) => {
-            const active = tab.key === category;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                aria-pressed={active}
-                onClick={() => onCategoryChange(tab.key)}
-                className={cn(
-                  "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-                  active
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
+        <Tabs value={category} onValueChange={onCategoryChange}>
+          <TabsList aria-label="Categorías">
+            {CAT_TABS.filter((tab) => tab.key === "all" || counts[tab.key] > 0).map((tab) => (
+              <TabsTrigger key={tab.key} value={tab.key} className="font-semibold">
                 {tab.name}
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 text-[10px] font-bold tabular-nums leading-4",
-                    active ? "bg-primary text-primary-foreground" : "bg-border text-muted-foreground",
-                  )}
-                >
-                  {counts[tab.key] ?? 0}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                <span className="text-xs tabular-nums opacity-70">{counts[tab.key] ?? 0}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         {searching && (
           <span className="text-xs tabular-nums text-muted-foreground">
             {result.families.length} compañías
@@ -209,7 +186,7 @@ const ServiceCatalog = ({
         {!searching && category === "all" && frequent.length > 0 && (
           <section className="flex flex-col gap-2">
             <SectionTitle icon={Sparkles}>Más cobradas hoy</SectionTitle>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {frequent.map((fam) => {
                 const active = fam.key === selectedFamilyKey;
                 return (
@@ -220,14 +197,21 @@ const ServiceCatalog = ({
                     disabled={disabled}
                     onClick={() => onPick(fam, {})}
                     className={cn(
-                      "flex h-11 cursor-pointer items-center gap-2 rounded-xl border bg-card pl-2 pr-3.5 text-sm font-semibold shadow-xs transition-all",
+                      "flex min-w-0 cursor-pointer items-center gap-2.5 rounded-xl bg-card px-2.5 py-2 text-left transition-all",
                       "hover:-translate-y-px hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                       "disabled:cursor-not-allowed disabled:opacity-50",
-                      active ? "border-chart-2 text-primary ring-2 ring-chart-2/40" : "border-border text-foreground",
+                      active ? "bg-brand/5 ring-2 ring-chart-2" : "ring-1 ring-border",
                     )}
                   >
-                    <OperatorIcon id={fam.logo} remote={fam.remoteLogo} name={fam.name} size="sm" className="w-12" />
-                    {fam.name}
+                    <OperatorIcon id={fam.logo} remote={fam.remoteLogo} name={fam.name} size="sm" className="w-11 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-bold text-foreground">{fam.name}</span>
+                      {fam.todayCount > 0 && (
+                        <span className="block text-[11px] text-muted-foreground tabular-nums">
+                          {fam.todayCount} hoy
+                        </span>
+                      )}
+                    </span>
                   </button>
                 );
               })}
@@ -268,8 +252,8 @@ const ServiceCatalog = ({
             )}
             <div
               className={cn(
-                "grid content-start grid-cols-2 gap-3 sm:grid-cols-3",
-                wide ? "lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" : "2xl:grid-cols-4",
+                "grid content-start grid-cols-2 gap-2.5 sm:grid-cols-3",
+                wide ? "lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" : "xl:grid-cols-3 2xl:grid-cols-4",
               )}
             >
               {result.families.map((fam) => (
@@ -328,7 +312,7 @@ const CatalogSkeleton = ({ wide }) => (
     </div>
     <div
       className={cn(
-        "grid content-start grid-cols-2 gap-3 overflow-hidden sm:grid-cols-3",
+        "grid content-start grid-cols-2 gap-2.5 overflow-hidden sm:grid-cols-3",
         wide ? "lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" : "2xl:grid-cols-4",
       )}
     >
@@ -338,10 +322,10 @@ const CatalogSkeleton = ({ wide }) => (
           className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card"
           style={{ animationDelay: `${(i % 6) * 60}ms` }}
         >
-          <div className="flex h-32 items-center justify-center px-6">
+          <div className="flex h-[92px] items-center justify-center px-4 pt-3">
             <Skeleton className="h-12 w-3/4 rounded-lg" style={{ animationDelay: `${(i % 6) * 60}ms` }} />
           </div>
-          <div className="flex justify-center border-t border-border px-3 py-3">
+          <div className="flex justify-center px-3 pb-2.5">
             <Skeleton className="h-3.5 w-1/2 rounded" style={{ animationDelay: `${(i % 6) * 60}ms` }} />
           </div>
         </div>
@@ -366,8 +350,8 @@ const CatalogEmpty = () => (
 );
 
 const SectionTitle = ({ icon: Icon, children }) => (
-  <h3 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-    {Icon && <Icon size={13} className="text-primary" aria-hidden />}
+  <h3 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-brand dark:text-chart-2">
+    {Icon && <Icon size={13} aria-hidden />}
     {children}
   </h3>
 );
@@ -380,48 +364,41 @@ const FamilyTile = ({ family, active, disabled, onClick }) => (
     aria-pressed={active}
     onClick={onClick}
     className={cn(
-      "group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border bg-card text-left shadow-xs transition-all duration-150",
+      "group relative flex cursor-pointer flex-col items-center gap-2 overflow-hidden rounded-2xl border bg-card px-3 pb-2.5 pt-4 text-left shadow-xs transition-all duration-150",
       "hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.99]",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
       "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0",
       active
-        ? "border-chart-2 ring-2 ring-chart-2/40"
-        : "border-border hover:border-primary/40",
+        ? "border-chart-2 bg-brand/5 ring-2 ring-chart-2/40"
+        : "border-border hover:border-chart-2/50",
     )}
   >
-    <span
-      className={cn(
-        "flex h-32 items-center justify-center px-5 py-4 transition-colors",
-        active ? "bg-primary/[0.07]" : "bg-card",
-      )}
-    >
+    <span className="flex h-[76px] w-full items-center justify-center px-3">
       <OperatorIcon
         id={family.logo}
         remote={family.remoteLogo}
         name={family.name}
         size="xl"
-        className="h-full w-full transition-transform duration-150 group-hover:scale-105"
+        className="h-full w-full transition-transform duration-200 group-hover:scale-[1.06]"
       />
     </span>
-    <span className="flex items-center justify-center border-t border-border px-3 py-2.5">
-      <span
-        className={cn(
-          "line-clamp-1 text-center text-sm font-bold leading-tight",
-          active ? "text-primary" : "text-foreground",
-        )}
-      >
-        {family.name}
-      </span>
+    <span
+      className={cn(
+        "line-clamp-1 w-full text-center text-[13px] font-bold leading-tight",
+        active ? "text-brand dark:text-chart-2" : "text-foreground",
+      )}
+    >
+      {family.name}
     </span>
     {/* Sólo se marca lo que no es obvio: que la marca trae más de un producto. */}
     {extraLabel(family) && (
-      <span className="absolute left-2 top-2">
+      <span className="absolute left-1.5 top-1.5">
         <Tag tone="primary">{extraLabel(family)}</Tag>
       </span>
     )}
     {active && (
-      <span className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-primary shadow-sm">
-        <Check size={14} className="text-primary-foreground" strokeWidth={3} aria-hidden />
+      <span className="absolute right-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-brand shadow-sm dark:bg-chart-2">
+        <Check size={12} className="text-white" strokeWidth={3} aria-hidden />
       </span>
     )}
   </button>

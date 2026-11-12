@@ -302,6 +302,46 @@ ipcMain.handle("taecel:transaction-status", async (e, payload) =>
 ipcMain.handle("taecel:history", async (e, payload) =>
   serviceTx.history(payload || {}),
 );
+// Números ya recargados con éxito (para "Repetir" y no pedir confirmarlos):
+// el último de cada número, sin repetir, de las compañías pedidas. El número
+// completo sólo vive cifrado; aquí se descifra para la pantalla de cobro.
+ipcMain.handle("taecel:get-recent-numbers", async (e, { carrierIds, limit = 30 } = {}) => {
+  try {
+    const ids = (Array.isArray(carrierIds) ? carrierIds : []).map(String).filter(Boolean);
+    const rows = db
+      .prepare(
+        `SELECT reference_hash, reference_enc, carrier_id, carrier_name, product_code,
+                product_name, amount_cents, requested_at
+           FROM service_transactions
+          WHERE status = 'applied' AND reference_enc IS NOT NULL
+            ${ids.length ? `AND CAST(carrier_id AS TEXT) IN (${ids.map(() => "?").join(",")})` : ""}
+          ORDER BY id DESC
+          LIMIT 500`,
+      )
+      .all(...ids);
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      if (seen.has(r.reference_hash)) continue;
+      seen.add(r.reference_hash);
+      const number = taecel.decryptReference(r.reference_enc);
+      if (!number) continue;
+      out.push({
+        number,
+        carrierId: r.carrier_id != null ? String(r.carrier_id) : null,
+        carrierName: r.carrier_name,
+        sku: r.product_code,
+        productName: r.product_name,
+        amountCents: Number(r.amount_cents) || 0,
+        at: r.requested_at,
+      });
+      if (out.length >= Math.min(60, Number(limit) || 30)) break;
+    }
+    return { ok: true, numbers: out };
+  } catch (error) {
+    return { ok: false, error: error.message, numbers: [] };
+  }
+});
 ipcMain.handle("taecel:reconcile", async (e, payload) => {
   const body = payload || {};
   const cashier = resolveCallerCashier(body);
