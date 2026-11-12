@@ -22,6 +22,7 @@ const pins = require("./pins");
 const protocol = require("./protocol");
 const salesCore = require("./sales-core");
 const salesLocal = require("./sales-local");
+const salesCancelCore = require("./sales-cancel-core");
 // 3g/D · registro de listeners CRUDOS: el puente lo usa para ejecutar en la
 // caja las claves de `save-setting` que son del propio aparato.
 const ipcRegistry = require("./ipc-registry");
@@ -448,7 +449,47 @@ const setBundleActiveOp = (db, [id, active]) => {
   };
 };
 
+// Cancelar una venta propia · mismas reglas que el Host (sales-cancel-core).
+// Aquí se marca cancelada con sus partidas y el stock vuelve al momento; el
+// Host la cancela al subir. Fiado va en línea (el saldo vive en el Host) y una
+// venta que aún no sube no se cancela: se quita desde Pendientes.
+const SALE_STATE_COLS = ["id", "status", "cancelled_at", "cancelled_by", "cancelled_by_device"];
+const cancelSaleOp = (db, [payload = {}]) => {
+  const { saleId, cashierName, role } = payload || {};
+  const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(Number(saleId));
+  if (sale && sale.id < 0) {
+    return fail("NOT_YET_ON_HOST", "Esta venta todavía se está guardando en el Host. Intenta cancelarla en unos segundos.");
+  }
+  if (sale && sale.payment_method === "credit") return { online: true, what: "Cancelar una venta a crédito" };
+  const deviceId = activation.getSetting(db, "box_device_id") || null;
+  const ok = salesCancelCore.check(db, sale, { role, caller: deviceId });
+  if (!ok.success) return ok;
+  const at = sqliteNowUtc();
+  const by = cashierName || null;
+  const mark = (row) => ({ ...pickCols(row, SALE_STATE_COLS) });
+  const done = (row) => ({ ...mark(row), status: "cancelado", cancelled_at: at, cancelled_by: by, cancelled_by_device: deviceId });
+  const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ? ORDER BY id").all(sale.id);
+  const open = items.filter((it) => it.status !== "cancelado");
+  return {
+    args: [{ ...payload, saleId: sale.id, cancelledAt: at }],
+    effect: {
+      rows: [
+        { table: "sales", before: mark(sale), after: done(sale) },
+        ...open.map((it) => ({ table: "sale_items", before: mark(it), after: done(it) })),
+      ],
+      // Igual que el Host: vuelve todo lo descontado de la venta.
+      stock: items
+        .filter((it) => it.product_id != null && (Number(it.stock_deducted) || 0) > 0)
+        .map((it) => ({ productId: it.product_id, delta: Number(it.stock_deducted) })),
+    },
+    tables: ["sales", "sale_items", "products"],
+    label: `Venta cancelada · ${sale.folio || "#" + sale.id}`,
+    result: {},
+  };
+};
+
 const QUEUED_OPS = {
+  "cancel-sale": cancelSaleOp,
   "save-group-promo": saveGroupPromoOp,
   "save-bundle": saveBundleOp,
   "set-bundle-active": setBundleActiveOp,
@@ -680,7 +721,7 @@ const salesChanged = () => {
 
 const enqueueOp = (db, channel, args) => {
   const prepared = QUEUED_OPS[channel](db, args);
-  if (prepared && prepared.success === false) return prepared;
+  if (prepared && (prepared.success === false || prepared.online)) return prepared;
   opQueue.enqueue(db, {
     channel,
     args: prepared.args || args,
@@ -695,7 +736,11 @@ const enqueueOp = (db, channel, args) => {
 };
 
 const syncOps = async (db) => {
-  const send = (row) => rpcCall(db, row.channel, row.args, null, { idempotencyKey: row.idempotencyKey });
+  const send = (row) =>
+    rpcCall(db, row.channel, row.args, null, { idempotencyKey: row.idempotencyKey }).then((r) =>
+      // Ya la cancelaron en el Host (el administrador): quedó como se quería.
+      row.channel === "cancel-sale" && r && r.code === "ALREADY_CANCELLED" ? { success: true } : r,
+    );
   let out = await opQueue.sync(db, send);
   // Si se unió a una subida que ya iba en curso, lo encolado después no estaba
   // en esa vuelta: se sube ahora, en orden, mientras el Host siga contestando.
@@ -705,6 +750,8 @@ const syncOps = async (db) => {
   }
   if (out.synced || out.conflicts) {
     opsChanged([
+      "sales",
+      "sale_items",
       "products",
       "product_prices",
       "stock_movements",
@@ -1576,7 +1623,12 @@ const forward = (db, channel, args = []) => {
   const exactStock =
     channel === "update-product" && !editedHere && !!args[1] && typeof args[1] === "object" && "stock" in args[1];
   if (QUEUED_OPS[channel] && localReady(db) && !exactStock) {
-    return Promise.resolve(enqueueOp(db, channel, args));
+    const out = enqueueOp(db, channel, args);
+    if (!(out && out.online)) return Promise.resolve(out);
+    // Lo que no puede ir en cola (p. ej. cancelar fiado) va al Host.
+    return rpcCall(db, channel, args).then((r) =>
+      r && r.code === "HOST_UNREACHABLE" ? HOST_REQUIRED(out.what || "Esta operación") : r,
+    );
   }
   // En línea con referencias a lo creado aquí (categoría, proveedor, el propio
   // producto): primero sube lo que está en cola y viaja por uid.

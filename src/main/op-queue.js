@@ -61,7 +61,14 @@ const ROW_COLUMNS = Object.freeze({
   // paquete van aparte, como conjunto (`items`).
   group_promos: ["id", "uid", "name", "scope", "category_id", "brand", "percent", "start_date", "end_date", "is_active", "created_at"],
   bundles: ["id", "uid", "name", "price", "start_date", "end_date", "is_active", "created_at"],
+  // Cancelar una venta propia (sales-cancel-core): sólo el estado; la venta y
+  // sus partidas ya existen (vienen del Host), nunca se crean desde aquí.
+  sales: ["id", "status", "cancelled_at", "cancelled_by", "cancelled_by_device"],
+  sale_items: ["id", "status", "cancelled_at", "cancelled_by", "cancelled_by_device"],
 });
+// Tablas donde una fila de la cola sólo actualiza: si falta (un resync aún no
+// la trae), no se inventa una fila a medias.
+const UPDATE_ONLY = new Set(["sales", "sale_items"]);
 // Totales que se mueven como suma o resta (nunca cantidad exacta): sólo estas
 // columnas, para que nada guardado en la cola pueda nombrar otra.
 const ADD_COLUMNS = Object.freeze({ cash_register: ["expenses", "cash_in"] });
@@ -89,14 +96,14 @@ const writeRow = (db, table, row) => {
       ...sets.map((c) => row[c]),
       keyVal,
     );
-  } else {
+  } else if (!UPDATE_ONLY.has(table)) {
     db.prepare(
       `INSERT INTO ${table} (${present.join(", ")}) VALUES (${present.map(() => "?").join(", ")})`,
     ).run(...present.map((c) => row[c]));
   }
 };
 const removeRow = (db, table, row) => {
-  if (!ROW_COLUMNS[table] || !row) return;
+  if (!ROW_COLUMNS[table] || !row || UPDATE_ONLY.has(table)) return;
   const [keyCol, keyVal] = rowKey(row);
   db.prepare(`DELETE FROM ${table} WHERE ${keyCol} = ?`).run(keyVal);
 };

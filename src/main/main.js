@@ -18,6 +18,7 @@ const { hashPin, verifyPin } = require("./pins");
 const activation = require("./activation");
 const ipcScopes = require("./ipc-scopes");
 const salesCore = require("./sales-core");
+const salesCancelCore = require("./sales-cancel-core");
 const dbSchema = require("./db-schema");
 // 3e · troceado de imports: el proceso principal es uno solo y un lote de
 // 27 000 filas no tiene por qué ocupárselo entero.
@@ -2676,93 +2677,17 @@ ipcMain.handle(
 
 ipcMain.handle(
   "cancel-sale",
-  async (event, { saleId, cashierName, reason, role, cashierId }) => {
+  async (event, { saleId, cashierName, reason, role, cashierId, cancelledAt }) => {
     try {
       if (!saleId) return { success: false, error: "Venta inválida" };
       const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
-      if (!sale) return { success: false, error: "Venta no encontrada" };
-      if (sale.status === "cancelado")
-        return { success: false, error: "Esta venta ya fue cancelada" };
-
-      // Una recarga Taecel ya se aplicó en el operador. Cancelar la venta sin
-      // revertir la recarga descuadraría el saldo. Se bloquea en el POS; el
-      // admin debe gestionar la reversión con Taecel.
-      const serviceItem = db
-        .prepare(
-          "SELECT 1 FROM sale_items WHERE sale_id = ? AND service_transaction_id IS NOT NULL LIMIT 1",
-        )
-        .get(saleId);
-      if (serviceItem) {
-        return {
-          success: false,
-          code: "SERVICE_SALE_NOT_CANCELLABLE",
-          error:
-            "Esta venta contiene una recarga. No se puede cancelar desde el POS; gestiona la reversión con Taecel.",
-        };
-      }
-
-      const reg = sale.register_id
-        ? db
-            .prepare("SELECT status, closed_at, device_id FROM cash_register WHERE id = ?")
-            .get(sale.register_id)
-        : null;
-      // Bloque 4/A · una caja remota solo cancela SUS ventas. El Host local
-      // (callerDeviceId() === null) conserva la capacidad de administrarlas.
+      // Reglas y cancelación compartidas con la caja (sales-cancel-core):
+      // recarga Taecel no, una caja sólo sus ventas, fuera del admin dentro
+      // del plazo; una caja que la canceló sin Host manda su hora.
       const caller = callerDeviceId();
-      if (caller) {
-        const owner = sale.device_id || (reg && reg.device_id) || null;
-        if (owner !== caller) {
-          return {
-            success: false,
-            code: "SALE_NOT_OWNED",
-            error: "Esa venta pertenece a otra caja y no se puede cancelar desde aquí",
-          };
-        }
-      }
-      const canCancel =
-        role === "admin" ||
-        (reg && reg.status === "open") ||
-        (reg && reg.status === "closed" && isWithinCancelWindow(reg.closed_at));
-      if (!canCancel)
-        return {
-          success: false,
-          error: "No se puede cancelar esta venta fuera del plazo permitido",
-        };
-
-      const doCancel = db.transaction(() => {
-        db.prepare(
-          "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
-        ).run(cashierName || null, caller || null, saleId);
-        db.prepare(
-          "UPDATE sale_items SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE sale_id=? AND (status IS NULL OR status != 'cancelado')",
-        ).run(cashierName || null, caller || null, saleId);
-        const items = db
-          .prepare(
-            "SELECT product_id, stock_deducted FROM sale_items WHERE sale_id = ?",
-          )
-          .all(saleId);
-        const restoreStmt = db.prepare(
-          "UPDATE products SET stock = stock + ?, day_sold = MAX(COALESCE(day_sold, 0) - ?, 0) WHERE id = ?",
-        );
-        const movStmt = db.prepare(
-          "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
-        );
-        for (const it of items) {
-          if (it.product_id && (it.stock_deducted || 0) > 0) {
-            restoreStmt.run(it.stock_deducted, it.stock_deducted, it.product_id);
-            movStmt.run(
-              it.product_id,
-              it.stock_deducted,
-              `Cancelación venta #${saleId}`,
-              reason || "",
-              cashierId || null,
-            );
-          }
-        }
-        // Fiado: lo que quedaba a cuenta del cliente se revierte.
-        credit.reverseSale(db, sale, { cashierName, deviceId: caller });
-      });
-      doCancel();
+      const ok = salesCancelCore.check(db, sale, { role, caller });
+      if (!ok.success) return ok;
+      salesCancelCore.apply(db, sale, { cashierName, reason, cashierId, caller, cancelledAt });
       emitDbChanged(["sales"], {});
       return { success: true };
     } catch (error) {
@@ -3810,7 +3735,11 @@ const startLiveReplica = () => {
       }
       // Lo mismo con clientes, categorías y proveedores creados o editados en
       // la caja que aún no suben.
-      for (const table of ["customers", "categories", "suppliers", "cash_register_expenses", "group_promos", "bundles"]) {
+      for (const table of [
+        "customers", "categories", "suppliers", "cash_register_expenses", "group_promos", "bundles",
+        // Ventas propias canceladas aquí que aún no suben.
+        "sales", "sale_items",
+      ]) {
         if (!tables.includes(table)) continue;
         try {
           boxRpc.reapplyPendingRows(db, table);
