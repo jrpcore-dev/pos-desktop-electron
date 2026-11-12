@@ -55,7 +55,7 @@ const CreditSaleDialog = ({ open, onClose, customer, total, onConfirm, busy }) =
   const overLimit = limit > 0 && newBalance > limit;
   const paidCoversAll = paidNum >= total - 0.004;
   const canConfirm =
-    !!info && !busy && charge > 0 && !paidCoversAll && (!overLimit || pin.length >= 4);
+    !!info && !busy && charge > 0 && !paidCoversAll && (!overLimit || pin.length >= 3); // mismo mínimo que el login (hay PIN de 3)
 
   const confirm = () => {
     if (!canConfirm) return;

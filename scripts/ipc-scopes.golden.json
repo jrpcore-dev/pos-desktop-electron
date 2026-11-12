@@ -52,6 +52,7 @@
   "get-cash-register-expenses": "rpc",
   "get-cash-register-status": "rpc",
   "get-cashiers": "host_read",
+  "get-cashiers-overview": "host_read",
   "get-catalog-categories": "host_read",
   "get-catalog-products": "host_read",
   "get-catalog-stats": "host_read",

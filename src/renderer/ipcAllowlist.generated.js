@@ -54,6 +54,7 @@ export const invoke = [
   "get-cash-register-expenses",
   "get-cash-register-status",
   "get-cashiers",
+  "get-cashiers-overview",
   "get-catalog-categories",
   "get-catalog-products",
   "get-catalog-stats",

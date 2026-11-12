@@ -3899,8 +3899,74 @@ ipcMain.handle("get-cashiers", async () => {
   }
 });
 
+// Cajeros con su día: la caja que tienen abierta (nombre y hora), la hora en
+// que cerraron hoy y lo vendido hoy en sus cajas. Lectura local también en la
+// caja (réplica). "Hoy" es la fecha de México.
+//   register_online: true = esa caja está conectada (el Host la ve en su flujo,
+//   o es este mismo equipo); false = abierta pero desconectada; null = no se
+//   sabe (una caja no ve la conexión de las demás).
+//   register_code: la letra de la caja si hay varias con el mismo nombre.
+ipcMain.handle("get-cashiers-overview", async () => {
+  try {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+    const self = isBoxDevice()
+      ? String(activation.getSetting(db, "box_device_id") || "")
+      : businessHostId();
+    const online = isBoxDevice() ? null : new Set(apiServer.connectedDevices());
+    const rows = db
+      .prepare(
+        `SELECT c.id, c.name, c.role, c.is_active,
+                r.id AS register_id, r.opened_at AS register_opened_at,
+                CASE WHEN r.id IS NULL THEN NULL ELSE ${deviceNameSql("r").replace(" AS device_name", "")} END AS register_device,
+                r.device_id AS register_device_id,
+                CASE WHEN (SELECT COUNT(*) FROM paired_devices d2 WHERE d2.device_name = pd.device_name) > 1
+                     THEN pd.device_code END AS register_code,
+                (SELECT MAX(x.closed_at) FROM cash_register x
+                  WHERE COALESCE(x.cashier_id, x.opened_by) = c.id AND x.status = 'closed'
+                    AND date(x.closed_at, '-6 hours') = @today) AS closed_today_at,
+                (SELECT COUNT(*) FROM sales s JOIN cash_register x ON x.id = s.register_id
+                  WHERE COALESCE(x.cashier_id, x.opened_by) = c.id AND COALESCE(s.status, '') != 'cancelado'
+                    AND date(s.created_at, '-6 hours') = @today) AS today_count,
+                (SELECT COALESCE(SUM(s.total), 0) FROM sales s JOIN cash_register x ON x.id = s.register_id
+                  WHERE COALESCE(x.cashier_id, x.opened_by) = c.id AND COALESCE(s.status, '') != 'cancelado'
+                    AND date(s.created_at, '-6 hours') = @today) AS today_total
+           FROM cashiers c
+           LEFT JOIN cash_register r ON r.id = (
+             SELECT y.id FROM cash_register y
+              WHERE y.status = 'open' AND COALESCE(y.cashier_id, y.opened_by) = c.id
+              ORDER BY y.id DESC LIMIT 1)
+           LEFT JOIN paired_devices pd ON pd.device_id = r.device_id
+          ORDER BY c.name`,
+      )
+      .all({ today });
+    return rows.map(({ register_device_id: dev, ...r }) => ({
+      ...r,
+      register_online: !r.register_id
+        ? null
+        : !dev || dev === self || dev === businessHostId()
+          ? true
+          : online
+            ? online.has(dev)
+            : null,
+    }));
+  } catch (error) {
+    console.error("[get-cashiers-overview]", error && error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+// PIN nuevo o cambiado: mínimo 4 dígitos. Los de 3 que ya existían no se
+// tocan y siguen sirviendo para entrar.
+const PIN_NEW_MIN = 4;
+const newPinError = (pin) =>
+  pin && !new RegExp(`^\\d{${PIN_NEW_MIN},6}$`).test(String(pin))
+    ? { success: false, code: "PIN_TOO_SHORT", error: `El PIN debe tener de ${PIN_NEW_MIN} a 6 dígitos` }
+    : null;
+
 ipcMain.handle("add-cashier", async (event, cashier) => {
   try {
+    const bad = newPinError(cashier && cashier.pin);
+    if (bad) return bad;
     const { salt, hash } = hashPin(cashier.pin || "0000");
     const info = db
       .prepare(
@@ -3915,6 +3981,8 @@ ipcMain.handle("add-cashier", async (event, cashier) => {
 
 ipcMain.handle("update-cashier", async (event, id, cashier) => {
   try {
+    const bad = newPinError(cashier && cashier.pin);
+    if (bad) return bad;
     if (cashier.pin) {
       const { salt, hash } = hashPin(cashier.pin);
       db.prepare(

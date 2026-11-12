@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils";
 // Pad de NIP para reabrir una sesión caducada. Se superpone a la pantalla
 // (capa fija) sin desmontar nada: la venta que estaba en curso sigue viva
 // detrás del overlay y el carrito no se pierde.
+// Mismo mínimo que el login (LoginScreen): hay PIN de 3 dígitos. La app no sabe
+// cuántos tiene el de cada quien (sólo guarda su huella cifrada).
+const PIN_MIN = 3;
 const PAD = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "borrar", "0", "ok"];
 
 export default function ReauthModal({
@@ -25,7 +28,7 @@ export default function ReauthModal({
   const push = useCallback((d) => setPin((p) => (p.length >= 8 ? p : p + d)), []);
   const back = useCallback(() => setPin((p) => p.slice(0, -1)), []);
   const confirm = useCallback(() => {
-    if (pin.length >= 4 && onConfirm) onConfirm(pin);
+    if (pin.length >= PIN_MIN && onConfirm) onConfirm(pin);
   }, [pin, onConfirm]);
 
   useEffect(() => {
@@ -75,7 +78,7 @@ export default function ReauthModal({
             <button
               key={k}
               type="button"
-              disabled={busy || k === "ok" && pin.length < 4}
+              disabled={busy || (k === "ok" && pin.length < PIN_MIN)}
               onClick={() => {
                 if (k === "ok") confirm();
                 else if (k === "borrar") back();

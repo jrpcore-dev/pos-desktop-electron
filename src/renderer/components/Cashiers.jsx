@@ -36,7 +36,12 @@ import {
 } from "./ui/tooltip";
 
 import PageHeader from "./PageHeader";
+import { cn } from "@/lib/utils";
+import { fmtMoney } from "@/utils/format";
 
+// PIN nuevo o cambiado: mínimo 4 dígitos. Los de 3 que ya existían siguen
+// sirviendo para entrar (el login y "sesión expirada" aceptan desde 3).
+const PIN_NEW_MIN = 4;
 const makeCashierSchema = (isCreate) =>
   z.object({
     name: z.string().min(1, "El nombre es requerido"),
@@ -45,33 +50,117 @@ const makeCashierSchema = (isCreate) =>
       .regex(/^\d*$/, "Solo números")
       .max(6, "Máximo 6 dígitos")
       .refine(
-        (v) => (isCreate ? v.length >= 3 : v.length === 0 || v.length >= 3),
-        { message: "Mínimo 3 dígitos" },
+        (v) => (isCreate ? v.length >= PIN_NEW_MIN : v.length === 0 || v.length >= PIN_NEW_MIN),
+        { message: `Mínimo ${PIN_NEW_MIN} dígitos` },
       ),
     active: z.boolean(),
   });
 
+// Hora local de un DATETIME de SQLite (UTC): "8:02 a. m." → "8:02".
+const fmtTime = (sqliteUtc) => {
+  if (!sqliteUtc) return "";
+  const d = new Date(String(sqliteUtc).replace(" ", "T") + "Z");
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit", hour12: false });
+};
+const inRegister = (c) => !!c.register_id;
+// Caja abierta pero el Host no la ve conectada (apagada o sin red).
+const offline = (c) => inRegister(c) && c.register_online === false;
+// Con la letra si hay varias cajas con el mismo nombre: "Caja 2 (B)".
+const boxLabel = (c) =>
+  `${c.register_device || "otra caja"}${c.register_code ? ` (${c.register_code})` : ""}`;
+
+// Avatar con el punto verde de quien tiene caja abierta.
+const LiveAvatar = ({ cashier }) => (
+  <span className={cn("relative shrink-0", !cashier.is_active && "opacity-55")}>
+    <InitialsAvatar id={cashier.id} name={cashier.name} solid={cashier.role === "admin"} />
+    {inRegister(cashier) && (
+      <span
+        className={cn(
+          "absolute -right-px -bottom-px size-3 rounded-full border-2 border-card",
+          offline(cashier) ? "bg-warning" : "bg-success",
+        )}
+        aria-hidden="true"
+      />
+    )}
+  </span>
+);
+
+const LiveDot = () => (
+  <span className="relative inline-flex size-[7px]" aria-hidden="true">
+    <span className="absolute inset-0 animate-ping rounded-full bg-current opacity-60 motion-reduce:animate-none" />
+    <span className="relative size-[7px] rounded-full bg-current" />
+  </span>
+);
+
+const StatusBadge = ({ cashier }) => {
+  if (offline(cashier)) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-warning/12 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-warning/30 dark:text-warning"
+        title="La caja quedó abierta pero no está conectada al Host"
+      >
+        <span className="size-[7px] rounded-full bg-warning" aria-hidden="true" />
+        Caja abierta · {boxLabel(cashier)} sin conexión
+      </span>
+    );
+  }
+  if (inRegister(cashier)) {
+    return (
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-success/12 px-2.5 py-0.5 text-xs font-semibold text-success ring-1 ring-success/25">
+        <LiveDot />
+        En caja · {boxLabel(cashier)}
+      </span>
+    );
+  }
+  if (!cashier.is_active) {
+    return (
+      <span className="inline-flex whitespace-nowrap rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
+        Inactivo
+      </span>
+    );
+  }
+  const closed = fmtTime(cashier.closed_today_at);
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
+      <span className="size-[7px] rounded-full bg-current" aria-hidden="true" />
+      Activo{closed ? ` · cerró ${closed}` : ""}
+    </span>
+  );
+};
+
 const CashierRow = memo(function CashierRow({ cashier, onEdit, onDelete }) {
   const isAdmin = cashier.role === "admin";
+  const count = Number(cashier.today_count || 0);
   return (
-    <TableRow className="group h-14 hover:bg-muted/40">
+    <TableRow className={cn("group h-14 hover:bg-muted/40", !cashier.is_active && "text-muted-foreground")}>
       <TableCell className="px-4">
-        <div className="flex items-center gap-3">
-          <InitialsAvatar id={cashier.id} name={cashier.name} solid={isAdmin} />
-          <span className="truncate text-sm font-medium text-foreground">
-            {cashier.name}
+        <div className="flex min-w-0 items-center gap-3">
+          <LiveAvatar cashier={cashier} />
+          <span className="min-w-0 truncate text-sm">
+            <span className={cn("font-semibold", cashier.is_active && "text-foreground")}>{cashier.name}</span>
+            <span className="text-xs text-muted-foreground"> · {isAdmin ? "Propietario" : "Cajero"}</span>
           </span>
         </div>
       </TableCell>
       <TableCell className="px-4">
-        <Badge variant={isAdmin ? "soft-primary" : "soft-neutral"}>
-          {isAdmin ? "Propietario" : "Cajero"}
-        </Badge>
+        <StatusBadge cashier={cashier} />
       </TableCell>
       <TableCell className="px-4">
-        <Badge variant={cashier.is_active ? "soft-success" : "soft-neutral"}>
-          {cashier.is_active ? "Activo" : "Inactivo"}
-        </Badge>
+        {count > 0 ? (
+          <div className="leading-tight">
+            <b className="text-sm font-semibold tabular-nums text-foreground">{fmtMoney(cashier.today_total)}</b>
+            <span className="block text-[11px] text-muted-foreground">
+              {count} {count === 1 ? "venta" : "ventas"}
+            </span>
+          </div>
+        ) : (
+          <div className="leading-tight text-muted-foreground">
+            <b className="text-sm font-semibold">—</b>
+            {cashier.is_active ? <span className="block text-[11px]">sin ventas</span> : null}
+          </div>
+        )}
       </TableCell>
       <TableCell className="px-4 text-right">
         {!isAdmin && (
@@ -110,6 +199,40 @@ const CashierRow = memo(function CashierRow({ cashier, onEdit, onDelete }) {
   );
 });
 
+// "En caja ahora": quien tiene una caja abierta, en cuál y desde qué hora.
+const LiveCard = ({ cashier }) => {
+  const count = Number(cashier.today_count || 0);
+  const opened = fmtTime(cashier.register_opened_at);
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-xl bg-card px-3.5 py-3 shadow-sm ring-[1.5px]",
+        offline(cashier) ? "ring-warning/40" : "ring-success/30",
+      )}
+    >
+      <LiveAvatar cashier={cashier} />
+      <div className="min-w-0">
+        <p className="truncate text-sm font-bold">{cashier.name}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {boxLabel(cashier)}
+          {opened ? ` · abrió ${opened}` : ""}
+        </p>
+        {offline(cashier) && (
+          <p className="mt-0.5 text-[11px] font-semibold text-amber-700 dark:text-warning">
+            Sin conexión · la caja quedó abierta
+          </p>
+        )}
+      </div>
+      <div className="ml-auto shrink-0 text-right text-xs text-muted-foreground">
+        hoy
+        <b className="block text-[15px] font-bold tabular-nums text-foreground">
+          {count} {count === 1 ? "venta" : "ventas"}
+        </b>
+      </div>
+    </div>
+  );
+};
+
 const Cashiers = () => {
   const [cashiers, setCashiers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -139,7 +262,9 @@ const Cashiers = () => {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const list = await window.api.invoke("get-cashiers");
+      // Con su día (caja abierta, ventas de hoy); si falla, la lista simple.
+      let list = await window.api.invoke("get-cashiers-overview");
+      if (!Array.isArray(list)) list = await window.api.invoke("get-cashiers");
       if (Array.isArray(list)) setCashiers(list);
     } catch {}
     if (!silent) setLoading(false);
@@ -151,13 +276,45 @@ const Cashiers = () => {
 
   // Cualquier alta/baja/edición de cajero (en el Host o en la réplica de una
   // caja) recarga la lista al instante, sin recargar la pantalla.
-  useDbChanges(() => load(true), ["cashiers"]);
+  // También al abrir/cerrar una caja o vender: el estado "En caja" y lo de hoy.
+  useDbChanges(() => load(true), ["cashiers", "cash_register", "sales"]);
 
-  const filtered = searchTerm.trim()
-    ? cashiers.filter((c) =>
-        c.name.toLowerCase().includes(searchTerm.toLowerCase()),
-      )
-    : cashiers;
+  const [statusFilter, setStatusFilter] = useState("all");
+  const live = useMemo(() => cashiers.filter(inRegister), [cashiers]);
+  const offCount = live.filter(offline).length;
+  const counts = useMemo(
+    () => ({
+      all: cashiers.length,
+      live: live.length,
+      active: cashiers.filter((c) => c.is_active).length,
+      inactive: cashiers.filter((c) => !c.is_active).length,
+    }),
+    [cashiers, live],
+  );
+  const filterChips = [
+    { value: "all", label: "Todos" },
+    { value: "live", label: "En caja" },
+    { value: "active", label: "Activos" },
+    { value: "inactive", label: "Inactivos" },
+  ];
+  const term = searchTerm.trim().toLowerCase();
+  const filtered = cashiers.filter((c) => {
+    if (term && !c.name.toLowerCase().includes(term)) return false;
+    if (statusFilter === "live") return inRegister(c);
+    if (statusFilter === "active") return !!c.is_active;
+    if (statusFilter === "inactive") return !c.is_active;
+    return true;
+  });
+  const headerSummary = loading
+    ? "Gestiona los usuarios del sistema"
+    : [
+        live.length - offCount ? `${live.length - offCount} en caja ahora` : null,
+        offCount ? `${offCount} sin conexión` : null,
+        `${counts.active} ${counts.active === 1 ? "activo" : "activos"}`,
+        counts.inactive ? `${counts.inactive} ${counts.inactive === 1 ? "inactivo" : "inactivos"}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
 
   const handleOpen = (cashier = null) => {
     setEditing(cashier);
@@ -211,7 +368,7 @@ const Cashiers = () => {
     <TooltipProvider delayDuration={200}>
     <div className="p-1">
       <PageHeader
-        description="Gestiona los usuarios del sistema"
+        description={headerSummary}
         actions={
           <Button onClick={() => handleOpen()}>
             <Plus className="h-4 w-4" />
@@ -220,20 +377,61 @@ const Cashiers = () => {
         }
       />
 
-      <div className="relative mb-5 max-w-sm">
-        <Search
-          size={16}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <Input
-          type="search"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Buscar cajeros por nombre..."
-          className="h-10 pl-9"
-          aria-label="Buscar cajeros por nombre"
-        />
+      {!loading && live.length > 0 && (
+        <section aria-label="En caja ahora" className="mb-4">
+          <p className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-muted-foreground">
+            En caja ahora
+          </p>
+          <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+            {live.map((c) => (
+              <LiveCard key={c.id} cashier={c} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full max-w-sm">
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Input
+            type="search"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar cajeros por nombre..."
+            className="h-10 pl-9"
+            aria-label="Buscar cajeros por nombre"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-sidebar p-1" role="group" aria-label="Filtrar por estado">
+          {filterChips.map((chip) => (
+            <button
+              key={chip.value}
+              type="button"
+              onClick={() => setStatusFilter(chip.value)}
+              aria-pressed={statusFilter === chip.value}
+              className={cn(
+                "flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
+                statusFilter === chip.value
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground",
+              )}
+            >
+              {chip.label}
+              <span
+                className={cn(
+                  "rounded px-1 tabular-nums",
+                  statusFilter === chip.value ? "bg-primary-foreground/20" : "bg-muted",
+                )}
+              >
+                {counts[chip.value]}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
@@ -244,10 +442,10 @@ const Cashiers = () => {
                 Nombre
               </TableHead>
               <TableHead>
-                Rol
+                Estado
               </TableHead>
               <TableHead>
-                Estado
+                Hoy
               </TableHead>
               <TableHead className="w-28 text-right">
                 Acciones
@@ -283,7 +481,7 @@ const Cashiers = () => {
                     <p className="text-sm">
                       {cashiers.length === 0
                         ? "No hay cajeros registrados"
-                        : "No se encontraron cajeros con ese nombre"}
+                        : "Ningún cajero coincide con la búsqueda o el filtro"}
                     </p>
                     {cashiers.length === 0 && (
                       <Button size="sm" onClick={() => handleOpen()}>
@@ -370,7 +568,7 @@ const Cashiers = () => {
                       type="password"
                       inputMode="numeric"
                       aria-invalid={!!errors.pin}
-                      placeholder={editing ? "••••••" : "Mínimo 3 dígitos"}
+                      placeholder={editing ? "••••••" : `Mínimo ${PIN_NEW_MIN} dígitos`}
                       className="pl-9"
                       maxLength={6}
                       onChange={(e) =>
@@ -386,8 +584,8 @@ const Cashiers = () => {
               )}
               <p className="text-xs text-muted-foreground">
                 {editing
-                  ? "Dejar vacío para mantener el actual"
-                  : "Mínimo 3 dígitos"}
+                  ? `Dejar vacío para mantener el actual · uno nuevo, mínimo ${PIN_NEW_MIN} dígitos`
+                  : `Mínimo ${PIN_NEW_MIN} dígitos`}
               </p>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 p-3">

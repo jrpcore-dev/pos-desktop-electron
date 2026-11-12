@@ -1648,6 +1648,8 @@ const hostReady = (reason) => changeStream?.hostReady(reason);
 // Fase 4 · corta el flujo SSE de una caja (al revocarla).
 const closeDeviceStreams = (deviceId) => changeStream?.closeDevice(deviceId) || 0;
 const replicaStreamStats = () => (changeStream ? changeStream.stats() : null);
+// Cajas conectadas ahora (flujo SSE abierto). Vacío si el servidor no corre.
+const connectedDevices = () => (changeStream ? changeStream.connectedDevices() : []);
 
 module.exports = {
   startServer,
@@ -1658,4 +1660,5 @@ module.exports = {
   hostReady,
   closeDeviceStreams,
   replicaStreamStats,
+  connectedDevices,
 };

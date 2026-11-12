@@ -266,7 +266,10 @@ const createChangeStream = ({
     heartbeat_ms: heartbeatMs,
   });
 
-  return { start, stop, subscribe, hostBusy, hostReady, closeDevice, stats, poll };
+  // Cajas con el flujo abierto ahora mismo (conectadas al Host).
+  const connectedDevices = () => [...new Set([...clients].map((c) => c.deviceId).filter(Boolean))];
+
+  return { start, stop, subscribe, hostBusy, hostReady, closeDevice, connectedDevices, stats, poll };
 };
 
 module.exports = { createChangeStream, DEFAULT_COALESCE_MS, DEFAULT_HEARTBEAT_MS };
