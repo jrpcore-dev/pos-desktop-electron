@@ -44,6 +44,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
   SheetDescription,
 } from "@/components/ui/sheet";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
@@ -2080,15 +2081,11 @@ const Reports = () => {
           }}
         >
           <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
-            <SheetHeader>
-              <SheetTitle className="flex items-center gap-2">
-                <CalendarDays className="h-5 w-5 text-primary" />
-                Calendario de inspección
-              </SheetTitle>
-              <SheetDescription className="text-xs">
-                Selecciona un día para ver su resumen de ventas y gastos
-              </SheetDescription>
-            </SheetHeader>
+            <SheetBrandHeader
+              icon={<CalendarDays />}
+              title={<>Calendario de inspección</>}
+              description={<>Selecciona un día para ver su resumen de ventas y gastos</>}
+            />
 
             <div className="px-6 pb-6">
               {/* Navegación de mes */}

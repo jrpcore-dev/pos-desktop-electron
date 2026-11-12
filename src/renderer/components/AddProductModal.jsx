@@ -314,13 +314,14 @@ const FieldError = ({ message }) =>
   ) : null;
 
 const SectionTitle = ({ icon: Icon, title, className }) => (
-  <div className={cn("flex items-center gap-2", className)}>
-    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-primary">
-      <Icon className="h-4 w-4" />
-    </span>
-    <span className="text-sm font-semibold uppercase tracking-wide text-foreground">
-      {title}
-    </span>
+  <div
+    className={cn(
+      "flex items-center gap-2.5 text-xs font-bold uppercase tracking-[0.07em] text-brand dark:text-chart-2",
+      className,
+    )}
+  >
+    <Icon className="h-[15px] w-[15px] shrink-0" />
+    <span>{title}</span>
   </div>
 );
 
@@ -364,9 +365,9 @@ const NumberField = ({
   className,
   ...props
 }) => (
-  <div className={cn("space-y-1.5", className)}>
+  <div className={cn("space-y-2", className)}>
     {label && (
-      <Label className="font-medium text-muted-foreground">{label}</Label>
+      <Label className="font-semibold text-foreground">{label}</Label>
     )}
     <div className="w-full">
       <InputGroup>
@@ -474,7 +475,7 @@ const InventoryFields = ({
       {/* Stock y mínimo en una sola fila (2×2 en caja, paquete y pieza). */}
       <div
         className={cn(
-          "grid grid-cols-1 gap-4",
+          "grid grid-cols-1 gap-x-4 gap-y-[18px]",
           saleUnit === "box" || saleUnit === "package"
             ? "sm:grid-cols-3"
             : "sm:grid-cols-2",
@@ -1320,6 +1321,36 @@ const AddProductModal = ({
     control,
     name: ["stock", "stock_pack", "stock_loose"],
   });
+
+  // Al editar: unidad, stock y categoría a la vista (qué producto es).
+  const headerPills = useMemo(() => {
+    if (!editProduct) return [];
+    const unit = UNIT_OPTIONS.find((u) => u.value === (editProduct.sale_unit || "piece"));
+    const cat =
+      editProduct.category_name ||
+      categories.find((c) => String(c.id) === String(editProduct.category_id))?.name;
+    const stockNum = Number(editProduct.stock);
+    return [
+      unit && { key: "unit", label: unit.label },
+      Number.isFinite(stockNum) && {
+        key: "stock",
+        label: "Stock",
+        value: editProduct.sale_unit === "weight" ? `${stockNum} kg` : String(stockNum),
+      },
+      cat && { key: "cat", label: cat },
+    ].filter(Boolean);
+  }, [editProduct, categories]);
+
+  // Pie: el precio y lo que se gana al momento (pieza o kilo: precio y costo
+  // son de la misma unidad; en cajas/paquetes ya lo dice el resumen de arriba).
+  const footerSummary = useMemo(() => {
+    if (su !== "piece" && su !== "weight") return null;
+    const price = parseFloat(wPrice) || 0;
+    const cost = parseFloat(wCostPrice) || 0;
+    if (price <= 0) return null;
+    if (cost <= 0) return { price };
+    return { price, gain: price - cost, pct: Math.round(((price - cost) / price) * 100) };
+  }, [su, wPrice, wCostPrice]);
   const summaryPieces = formStockPieces(
     { ...watchMargins, stock: wStock, stock_pack: wStockPack, stock_loose: wStockLoose },
     su,
@@ -1368,9 +1399,11 @@ const AddProductModal = ({
           }
         }}
       >
-        <DialogHeader className="flex flex-row items-start gap-3 border-b bg-card px-6 py-4 text-left">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Plus className="h-6 w-6" />
+        {/* Identidad de los modales (Abrir caja): ficha azul marino sobre el
+            degradado y el rayo del fondo del modal (por eso sin bg-card). */}
+        <DialogHeader className="flex flex-row items-center gap-3 px-6 pb-4 pt-5 pr-14 text-left">
+          <span className="vt-stage flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-md">
+            {editProduct && !isCatalogMode ? <Package className="h-5 w-5" /> : <Plus className="h-6 w-6" />}
           </span>
           <div className="min-w-0 flex-1">
             <DialogTitle>
@@ -1387,8 +1420,24 @@ const AddProductModal = ({
                   ? editProduct.name || "Modifica la información del producto"
                   : "Completa la información del producto"}
             </DialogDescription>
+            {editProduct && !isCatalogMode && headerPills.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {headerPills.map((pill) => (
+                  <span
+                    key={pill.key}
+                    className="rounded-full bg-card px-2.5 py-0.5 text-[11.5px] font-semibold text-muted-foreground ring-1 ring-border"
+                  >
+                    {pill.label}
+                    {pill.value != null && (
+                      <b className="ml-1 font-semibold text-foreground tabular-nums">{pill.value}</b>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </DialogHeader>
+        <div className="h-px shrink-0 bg-border/70" aria-hidden="true" />
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {submitError && (
@@ -1397,7 +1446,7 @@ const AddProductModal = ({
             </Alert>
           )}
 
-          <div className="space-y-6">
+          <div className="space-y-7">
             <section className="space-y-4">
               <SectionTitle icon={ScanBarcode} title="Identidad" />
               <div className="flex flex-col gap-5 sm:flex-row sm:items-stretch">
@@ -1411,13 +1460,13 @@ const AddProductModal = ({
                 }}
                 onError={(msg) => setSubmitError(msg)}
               />
-              <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid min-w-0 flex-1 grid-cols-1 gap-x-4 gap-y-[18px] sm:grid-cols-2">
                 <Controller
                   name="barcode"
                   control={control}
                   render={({ field }) => (
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label className="font-medium text-muted-foreground">
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label className="font-semibold text-foreground">
                         Código de barras
                       </Label>
                       <InputGroup>
@@ -1460,8 +1509,8 @@ const AddProductModal = ({
                   name="name"
                   control={control}
                   render={({ field }) => (
-                    <div className="space-y-1.5">
-                      <Label className="font-medium text-muted-foreground">
+                    <div className="space-y-2">
+                      <Label className="font-semibold text-foreground">
                         Nombre del producto
                       </Label>
                       <InputGroup>
@@ -1483,8 +1532,8 @@ const AddProductModal = ({
                   name="brand"
                   control={control}
                   render={({ field }) => (
-                    <div className="space-y-1.5">
-                      <Label className="font-medium text-muted-foreground">
+                    <div className="space-y-2">
+                      <Label className="font-semibold text-foreground">
                         Marca
                       </Label>
                       <InputGroup>
@@ -1503,13 +1552,13 @@ const AddProductModal = ({
               </div>
               </div>
               {/* Proveedor y Categoría: fila completa debajo de la foto. */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-[18px] sm:grid-cols-2">
                 <Controller
                   name="supplier_id"
                   control={control}
                   render={({ field }) => (
-                    <div className="space-y-1.5">
-                      <Label className="font-medium text-muted-foreground">
+                    <div className="space-y-2">
+                      <Label className="font-semibold text-foreground">
                         Proveedor
                       </Label>
                       <Select value={field.value} onValueChange={field.onChange}>
@@ -1532,8 +1581,8 @@ const AddProductModal = ({
                   name="category_id"
                   control={control}
                   render={({ field }) => (
-                    <div className="space-y-1.5">
-                      <Label className="font-medium text-muted-foreground">
+                    <div className="space-y-2">
+                      <Label className="font-semibold text-foreground">
                         Categoría
                       </Label>
                       <Select
@@ -1564,8 +1613,8 @@ const AddProductModal = ({
             <section className="space-y-4">
               <SectionTitle icon={Package} title="Unidad de venta y precios" />
 
-              <div className="space-y-1.5">
-                <Label className="font-medium text-muted-foreground">
+              <div className="space-y-2">
+                <Label className="font-semibold text-foreground">
                   Unidad de venta
                 </Label>
                 <div className="flex justify-center">
@@ -1649,8 +1698,8 @@ const AddProductModal = ({
                           />
                         )}
                       />
-                      <div className="space-y-1.5">
-                        <Label className="font-medium text-muted-foreground">
+                      <div className="space-y-2">
+                        <Label className="font-semibold text-foreground">
                           Piezas por caja
                         </Label>
                         <div className="flex h-9 items-center gap-1 rounded-lg border border-border bg-muted/40 px-3 text-sm font-semibold tabular-nums">
@@ -1684,7 +1733,7 @@ const AddProductModal = ({
               {/* Paso 2: precios, con su equivalencia por pieza. */}
               <div
                 className={cn(
-                  "grid grid-cols-1 gap-4",
+                  "grid grid-cols-1 gap-x-4 gap-y-[18px]",
                   su === "boxpack"
                     ? "sm:grid-cols-2"
                     : isBox
@@ -2286,7 +2335,28 @@ const AddProductModal = ({
           </div>
         </div>
 
-        <DialogFooter className="items-center justify-between gap-2 border-t bg-card px-6 py-3">
+        <DialogFooter className="flex-row flex-wrap items-center justify-between gap-2 border-t bg-muted/50 px-6 py-3">
+          <span className="min-w-0 text-[12.5px] text-muted-foreground">
+            {footerSummary && (
+              <>
+                Precio <b className="font-semibold text-foreground tabular-nums">{fmtMoney(footerSummary.price)}</b>
+                {footerSummary.gain != null && (
+                  <>
+                    {" · ganas "}
+                    <b
+                      className={cn(
+                        "font-bold tabular-nums",
+                        footerSummary.gain >= 0 ? "text-success" : "text-destructive",
+                      )}
+                    >
+                      {fmtMoney(footerSummary.gain)} ({footerSummary.pct} %)
+                    </b>
+                  </>
+                )}
+              </>
+            )}
+          </span>
+          <div className="flex items-center gap-2">
           <Button type="button" variant="outline" onClick={handleClose}>
             Cancelar
           </Button>
@@ -2321,10 +2391,11 @@ const AddProductModal = ({
             ) : (
               <span className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4" />
-                {editProduct ? "Actualizar Producto" : "Agregar Producto"}
+                {editProduct ? "Guardar cambios" : "Agregar producto"}
               </span>
             )}
           </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

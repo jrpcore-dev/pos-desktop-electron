@@ -8,6 +8,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
 } from "./ui/sheet";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -107,19 +108,13 @@ const TiersSheet = ({ open, onClose, isAdmin, onChanged }) => {
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent side="right" className="flex flex-col gap-0 p-0 sm:max-w-md">
-        <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
-          <Layers size={26} className="shrink-0" />
-          <div className="min-w-0">
-            <SheetTitle className="truncate text-base">
-              {selected ? `Precios de ${selected.name}` : "Niveles de precio"}
-            </SheetTitle>
-            <SheetDescription>
-              {selected
+        <SheetBrandHeader
+          icon={<Layers />}
+          title={<>{selected ? `Precios de ${selected.name}` : "Niveles de precio"}</>}
+          description={<>{selected
                 ? "Los clientes con este nivel pagan estos precios."
-                : "Agrupa clientes con precios especiales (p. ej. Mayorista)."}
-            </SheetDescription>
-          </div>
-        </SheetHeader>
+                : "Agrupa clientes con precios especiales (p. ej. Mayorista)."}</>}
+        />
 
         <div className="flex-1 overflow-auto px-6 py-4">
           {!selected ? (

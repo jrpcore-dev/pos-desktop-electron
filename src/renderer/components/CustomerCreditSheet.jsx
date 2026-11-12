@@ -19,6 +19,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
 } from "./ui/sheet";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -191,13 +192,11 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent side="right" className="flex flex-col gap-0 p-0 sm:max-w-md">
-        <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
-          <Wallet size={28} className="shrink-0" />
-          <div className="min-w-0">
-            <SheetTitle className="truncate text-base">Cuenta de {customer?.name}</SheetTitle>
-            <SheetDescription>Fiado, abonos y movimientos</SheetDescription>
-          </div>
-        </SheetHeader>
+        <SheetBrandHeader
+          icon={<Wallet />}
+          title={<>Cuenta de {customer?.name}</>}
+          description={<>Fiado, abonos y movimientos</>}
+        />
 
         <div className="flex-1 overflow-auto px-6 py-4">
           {/* ─── Saldo ─── */}

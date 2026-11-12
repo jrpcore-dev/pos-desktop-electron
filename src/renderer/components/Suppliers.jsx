@@ -11,7 +11,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useToast } from "./ToastProvider";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
+  Sheet, SheetContent, SheetHeader, SheetTitle,
+  SheetBrandHeader, SheetDescription, SheetFooter,
 } from "./ui/sheet";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -605,19 +606,13 @@ const Suppliers = () => {
             if (e.key === "Enter" && !e.shiftKey) handleSubmit(onSubmit)();
           }}
         >
-          <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
-            <Truck size={30} className="shrink-0" />
-            <div className="min-w-0">
-              <SheetTitle className="text-base">
-                {editItem ? "Editar Proveedor" : "Nuevo Proveedor"}
-              </SheetTitle>
-              <SheetDescription>
-                {editItem
+          <SheetBrandHeader
+            icon={<Truck />}
+            title={<>{editItem ? "Editar Proveedor" : "Nuevo Proveedor"}</>}
+            description={<>{editItem
                   ? "Modifica la información del proveedor"
-                  : "Ingresa la información del nuevo proveedor"}
-              </SheetDescription>
-            </div>
-          </SheetHeader>
+                  : "Ingresa la información del nuevo proveedor"}</>}
+          />
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6">
             {submitError && (

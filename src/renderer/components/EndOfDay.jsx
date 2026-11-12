@@ -55,6 +55,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
   Spinner,
   Table,
   TableBody,
@@ -2685,27 +2686,15 @@ const EndOfDay = () => {
           side="right"
           className="flex w-full max-w-lg flex-col gap-0 p-0"
         >
-          <SheetHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <Receipt size={20} className="text-primary" />
-              </div>
-
-              <div>
-                <SheetTitle className="text-base font-bold">
-                  Detalle de venta #{saleDetailSale?.id}
-                </SheetTitle>
-
-                <SheetDescription className="text-xs">
-                  {saleDetailSale &&
+          <SheetBrandHeader
+            icon={<Receipt />}
+            title={<>Detalle de venta #{saleDetailSale?.id}</>}
+            description={<>{saleDetailSale &&
                     `${formatMXDateTime(saleDetailSale.created_at)} · ${
                       methodLabels[saleDetailSale.payment_method] ||
                       saleDetailSale.payment_method
-                    }`}
-                </SheetDescription>
-              </div>
-            </div>
-          </SheetHeader>
+                    }`}</>}
+          />
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
             {saleDetailSale && isSingle && (

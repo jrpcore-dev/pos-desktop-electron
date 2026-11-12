@@ -4,6 +4,7 @@ import { cva } from "class-variance-authority";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { VendiaBolt } from "../TicketPrinter";
 
 const Sheet = SheetPrimitive.Root;
 const SheetTrigger = SheetPrimitive.Trigger;
@@ -76,7 +77,8 @@ SheetHeader.displayName = "SheetHeader";
 const SheetFooter = ({ className, ...props }) => (
   <div
     className={cn(
-      "mt-auto flex flex-col-reverse gap-2 border-t px-6 py-4 sm:flex-row sm:justify-end",
+      // Botones anchos sobre una franja suave (identidad de los paneles).
+      "mt-auto flex flex-col-reverse gap-2 border-t bg-muted/50 px-6 py-4 sm:flex-row sm:justify-end sm:[&>button]:flex-1",
       className
     )}
     {...props}
@@ -102,7 +104,32 @@ const SheetDescription = React.forwardRef(({ className, ...props }, ref) => (
 ));
 SheetDescription.displayName = SheetPrimitive.Description.displayName;
 
+// Encabezado de marca de los paneles (igual que los modales): ficha azul
+// marino, degradado suave arriba y el rayo de fondo. `children` va debajo
+// (p. ej. píldoras o pestañas del panel).
+const SheetBrandHeader = ({ icon, title, description, className, children }) => (
+  <div className={cn("vt-sheet-band relative shrink-0 overflow-hidden px-6 pb-4 pt-5 pr-14", className)}>
+    <VendiaBolt className="vt-sheet-bolt" />
+    <div className="relative flex items-center gap-3">
+      {icon && (
+        <span className="vt-stage flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-md [&>svg]:h-[19px] [&>svg]:w-[19px]">
+          {icon}
+        </span>
+      )}
+      <div className="min-w-0">
+        <SheetTitle className="truncate text-base font-bold">{title}</SheetTitle>
+        {description && (
+          <SheetDescription className="mt-0.5 text-xs leading-snug">{description}</SheetDescription>
+        )}
+      </div>
+    </div>
+    {children && <div className="relative mt-3">{children}</div>}
+  </div>
+);
+SheetBrandHeader.displayName = "SheetBrandHeader";
+
 export {
+  SheetBrandHeader,
   Sheet,
   SheetPortal,
   SheetOverlay,

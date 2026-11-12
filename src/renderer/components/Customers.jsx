@@ -25,6 +25,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
   SheetDescription,
   SheetFooter,
 } from "./ui/sheet";
@@ -782,19 +783,13 @@ const Customers = () => {
             }
           }}
         >
-          <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
-            <UserPlus size={30} className="shrink-0" />
-            <div className="min-w-0">
-              <SheetTitle className="text-base">
-                {editItem ? "Editar Cliente" : "Nuevo Cliente"}
-              </SheetTitle>
-              <SheetDescription>
-                {editItem
+          <SheetBrandHeader
+            icon={<UserPlus />}
+            title={<>{editItem ? "Editar Cliente" : "Nuevo Cliente"}</>}
+            description={<>{editItem
                   ? "Modifica la información del cliente"
-                  : "Ingresa la información del nuevo cliente"}
-              </SheetDescription>
-            </div>
-          </SheetHeader>
+                  : "Ingresa la información del nuevo cliente"}</>}
+          />
 
           <div className="flex-1 overflow-auto px-6 py-4">
             <CustomerForm value={form} onChange={setForm} />

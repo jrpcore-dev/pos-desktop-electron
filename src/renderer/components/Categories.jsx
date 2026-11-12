@@ -10,6 +10,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
   SheetDescription,
 } from "./ui/sheet";
 import { Input } from "./ui/input";
@@ -374,26 +375,13 @@ const filtered = useMemo(
 
       <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
         <SheetContent side="right" className="sm:max-w-lg">
-          <SheetHeader>
-            <div className="flex items-center gap-3">
-              <span
-                className="flex h-8 w-8 items-center justify-center rounded-lg"
-                style={{ backgroundColor: "hsl(var(--slate-800))", color: "#fff" }}
-              >
-                <Shapes size={18} color="#fff" />
-              </span>
-              <div>
-                <SheetTitle className="text-base">
-                  {editing ? "Editar Categoría" : "Nueva Categoría"}
-                </SheetTitle>
-                <SheetDescription>
-                  {editing
+          <SheetBrandHeader
+            icon={<Shapes />}
+            title={<>{editing ? "Editar Categoría" : "Nueva Categoría"}</>}
+            description={<>{editing
                     ? "Actualiza los datos de la categoría"
-                    : "Registra una nueva categoría de productos"}
-                </SheetDescription>
-              </div>
-            </div>
-          </SheetHeader>
+                    : "Registra una nueva categoría de productos"}</>}
+          />
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6">
             {error && (
@@ -401,7 +389,7 @@ const filtered = useMemo(
                 {error}
               </div>
             )}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>Nombre</Label>
 <Controller
                 name="name"
@@ -422,7 +410,7 @@ const filtered = useMemo(
                 <p className="text-xs text-destructive">{errors.name.message}</p>
               )}
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>Descripción (opcional)</Label>
               <Controller
                 name="description"
@@ -439,7 +427,7 @@ const filtered = useMemo(
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 border-t px-6 py-4">
+          <div className="flex gap-2 border-t bg-muted/50 px-6 py-4 [&>button]:flex-1">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancelar
             </Button>

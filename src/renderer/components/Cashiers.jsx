@@ -10,6 +10,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetBrandHeader,
   SheetDescription,
 } from "./ui/sheet";
 import { Input } from "./ui/input";
@@ -514,19 +515,13 @@ const Cashiers = () => {
             if (e.key === "Enter" && !e.shiftKey) handleSave();
           }}
         >
-          <SheetHeader className="flex flex-row items-center gap-2.5 border-b px-6 py-4 text-left">
-            <UserPlus size={30} className="shrink-0" />
-            <div className="min-w-0">
-              <SheetTitle className="text-base">
-                {editing ? "Editar Cajero" : "Nuevo Cajero"}
-              </SheetTitle>
-              <SheetDescription>
-                {editing
+          <SheetBrandHeader
+            icon={<UserPlus />}
+            title={<>{editing ? "Editar Cajero" : "Nuevo Cajero"}</>}
+            description={<>{editing
                   ? "Modifica la información del cajero"
-                  : "Ingresa la información del nuevo cajero"}
-              </SheetDescription>
-            </div>
-          </SheetHeader>
+                  : "Ingresa la información del nuevo cajero"}</>}
+          />
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6">
             {error && (
@@ -534,7 +529,7 @@ const Cashiers = () => {
                 {error}
               </div>
             )}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>Nombre</Label>
               <Controller
                 name="name"
@@ -552,7 +547,7 @@ const Cashiers = () => {
                 <p className="text-xs text-destructive">{errors.name.message}</p>
               )}
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>PIN de acceso</Label>
               <div className="relative">
                 <Lock
@@ -616,7 +611,7 @@ const Cashiers = () => {
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 border-t px-6 py-4">
+          <div className="flex gap-2 border-t bg-muted/50 px-6 py-4 [&>button]:flex-1">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancelar
             </Button>
@@ -625,8 +620,8 @@ const Cashiers = () => {
               {isSubmitting
                 ? "Guardando..."
                 : editing
-                  ? "Guardar"
-                  : "Agregar"}
+                  ? "Guardar cambios"
+                  : "Crear cajero"}
             </Button>
           </div>
         </SheetContent>
