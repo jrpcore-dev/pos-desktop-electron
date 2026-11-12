@@ -415,7 +415,9 @@ const createSaleTx = (
   for (const item of cart) {
     // Manual items: product_id null, sin stock ni validación de unidad.
     const isManual = item.isManual || typeof item.id !== "number";
-    const quantity = item.quantity;
+    // 3 decimales: el carrito suma kilos de 0.1 en 0.1 y JS deja colas
+    // (2.5000000000000004); nunca se guardan.
+    const quantity = Number.isFinite(item.quantity) ? Math.round(item.quantity * 1000) / 1000 : item.quantity;
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw fail("INVALID_QUANTITY", "Cantidad inválida");
     }

@@ -1199,7 +1199,7 @@ if (e.key === "Tab" && !isEditable) {
         const updatedCart = [...prev];
         updatedCart[existingIndex] = {
           ...updatedCart[existingIndex],
-          quantity: updatedCart[existingIndex].quantity + kg,
+          quantity: Math.round((updatedCart[existingIndex].quantity + kg) * 1000) / 1000,
         };
         return updatedCart;
       }
@@ -1441,7 +1441,8 @@ if (e.key === "Tab" && !isEditable) {
           )
             return it;
           const step = it.isWeightItem ? 0.1 : 1;
-          const newQty = it.quantity + delta * step;
+          // Kilos con 3 decimales: 2.4 + 0.1 en JS da 2.5000000000000004.
+          const newQty = Math.round((it.quantity + delta * step) * 1000) / 1000;
           if (newQty <= 0) return null;
           const qty = allowSaleWithoutStock
             ? newQty

@@ -1667,7 +1667,7 @@ const RegisterHistory = () => {
                                         )}
                                       </span>
                                       <span className="shrink-0 tabular-nums text-muted-foreground">
-                                        {it.quantity} × ${fmtNumber(it.price_at_sale)}
+                                        {Math.round((Number(it.quantity) || 0) * 1000) / 1000} × ${fmtNumber(it.price_at_sale)}
                                       </span>
                                     </div>
                                   ))}

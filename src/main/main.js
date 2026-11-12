@@ -2964,7 +2964,8 @@ ipcMain.handle(
         .prepare(
           `SELECT si.sale_id, COALESCE(p.name, si.product_name) AS name,
                   SUM(CASE WHEN si.status = 'cancelado' THEN 0
-                       ELSE si.quantity - COALESCE(si.returned_qty, 0) END) AS qty
+                       ELSE si.quantity - COALESCE(si.returned_qty, 0) END) AS qty,
+                  MAX(COALESCE(p.sale_unit, 'piece')) AS sale_unit
            FROM sale_items si
            JOIN sales s ON si.sale_id = s.id
            LEFT JOIN products p ON si.product_id = p.id
@@ -2977,7 +2978,8 @@ ipcMain.handle(
       itemRows.forEach((r) => {
         (bySale[r.sale_id] = bySale[r.sale_id] || []).push({
           name: r.name,
-          qty: r.qty,
+          qty: Math.round((Number(r.qty) || 0) * 1000) / 1000,
+          weight: r.sale_unit === "weight",
         });
       });
       const itemDetail = db
@@ -3033,7 +3035,8 @@ ipcMain.handle("get-outside-register-sales", async () => {
       .prepare(
         `SELECT si.sale_id, COALESCE(p.name, si.product_name) AS name,
                 SUM(CASE WHEN si.status = 'cancelado' THEN 0
-                     ELSE si.quantity - COALESCE(si.returned_qty, 0) END) AS qty
+                     ELSE si.quantity - COALESCE(si.returned_qty, 0) END) AS qty,
+                MAX(COALESCE(p.sale_unit, 'piece')) AS sale_unit
          FROM sale_items si
          JOIN sales s ON si.sale_id = s.id
          LEFT JOIN products p ON si.product_id = p.id
@@ -3047,7 +3050,8 @@ ipcMain.handle("get-outside-register-sales", async () => {
     itemRows.forEach((r) => {
       (bySale[r.sale_id] = bySale[r.sale_id] || []).push({
         name: r.name,
-        qty: r.qty,
+        qty: Math.round((Number(r.qty) || 0) * 1000) / 1000,
+        weight: r.sale_unit === "weight",
       });
     });
     const result = sales.map((s) => ({
