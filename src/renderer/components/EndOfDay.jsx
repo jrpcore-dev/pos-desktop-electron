@@ -1990,138 +1990,17 @@ const EndOfDay = () => {
                   Resumen de caja
                 </h3>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  {/* DESGLOSE DE VENTAS */}
-                  <div className="overflow-hidden rounded-xl border">
-                    <div className="border-b bg-muted px-3 py-2">
-                      <p className="text-xs font-extrabold uppercase tracking-[0.07em]">
-                        Desglose de ventas
-                      </p>
-                    </div>
-
-                    {/* Ventas Totales: suma de TODOS los métodos de pago.
-                        No confundir con el efectivo físico en caja. */}
-                    <div className="flex items-center justify-between border-b bg-blue-50 px-3 py-2.5 dark:bg-blue-500/10">
-                      <span className="flex items-center gap-2 text-sm font-bold">
-                        <ShoppingCart size={17} className="text-primary" />
-                        Ventas Totales
-                      </span>
-
-                      <span className="text-sm font-extrabold text-primary tabular-nums">
-                        {fmtMoney(totalSales)}
-                      </span>
-                    </div>
-
-                    {[
-                      {
-                        label: "Efectivo",
-                        value: totalCash,
-                        icon: Banknote,
-                        color: "#059669",
-                      },
-                      {
-                        label: "Tarjeta",
-                        value: totalCard,
-                        icon: CreditCard,
-                        color: "#4f46e5",
-                      },
-                      {
-                        label: "Transferencia",
-                        value: totalTransfer,
-                        icon: Landmark,
-                        color: "#d97706",
-                      },
-                      ...(totalCredit > 0
-                        ? [
-                            {
-                              label: "Fiado (no entra a caja)",
-                              value: totalCredit,
-                              icon: HandCoins,
-                              color: "#dc2626",
-                            },
-                          ]
-                        : []),
-                    ].map((item) => {
-                      const Icon = item.icon;
-
-                      return (
-                        <div
-                          key={item.label}
-                          className="flex items-center justify-between border-b px-3 py-2.5 last:border-b-0"
-                        >
-                          <span className="flex items-center gap-2 text-sm">
-                            <Icon size={17} style={{ color: item.color }} />
-                            {item.label}
-                          </span>
-
-                          <span className="text-sm font-bold tabular-nums">
-                            {fmtMoney(item.value)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* CONTROL DE CAJA */}
-                  <div className="overflow-hidden rounded-xl border">
-                    <div className="border-b bg-muted px-3 py-2">
-                      <p className="text-xs font-extrabold uppercase tracking-[0.07em]">
-                        Control de caja
-                      </p>
-                    </div>
-
-                    {[
-                      [
-                        "Apertura",
-                        fmtMoney(register.opening_balance),
-                      ],
-                      ["Ventas en efectivo", `+${fmtMoneyAbs(totalCash)}`],
-                      ...(collectedCash > 0 || collectedOther > 0
-                        ? [
-                            [
-                              "Cobranza de fiado (efectivo)",
-                              `+${fmtMoneyAbs(collectedCash)}`,
-                            ],
-                          ]
-                        : []),
-                      ...(Number(register.cash_in || 0) > 0
-                        ? [
-                            [
-                              "Entradas de dinero",
-                              `+${fmtMoneyAbs(register.cash_in)}`,
-                            ],
-                          ]
-                        : []),
-                      [
-                        "Gastos",
-                        `-${fmtMoneyAbs(register.expenses)}`,
-                      ],
-                    ].map(([label, value]) => (
-                      <div
-                        key={label}
-                        className="flex justify-between border-b px-3 py-2.5"
-                      >
-                        <span className="text-sm text-muted-foreground">
-                          {label}
-                        </span>
-
-                        <span className="text-sm font-bold tabular-nums">
-                          {value}
-                        </span>
-                      </div>
-                    ))}
-
-                    <div className="flex items-center justify-between bg-teal-50 px-3 py-3 dark:bg-teal-500/10">
-                      <span className="text-sm font-extrabold">
-                        Cierre esperado
-                      </span>
-
-                      <span className="text-base font-extrabold text-teal-600 tabular-nums dark:text-teal-400">
-                        {fmtMoney(expectedClose)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                <ArqueoSummary
+                  register={register}
+                  totalCash={totalCash}
+                  totalCard={totalCard}
+                  totalTransfer={totalTransfer}
+                  totalCredit={totalCredit}
+                  collectedCash={collectedCash}
+                  collectedOther={collectedOther}
+                  expectedClose={expectedClose}
+                  salesCount={salesCount}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -3347,3 +3226,176 @@ const EndOfDay = () => {
 
 export default EndOfDay;
 
+// ── Resumen de caja (pestaña Arqueo) ────────────────────────────────────────
+// Dos columnas: ventas por forma de pago (tonos del azul de Vendia, fiado
+// rayado aparte) y el movimiento del efectivo con sus signos. Abajo, aparte,
+// "¿Dónde está el dinero?". El total es todo lo que hay que llevarse (cajón
+// con apertura, entradas y gastos ya restados, más banco). Sólo aparece si hubo
+// efectivo Y tarjeta/transferencia: con una sola forma repetiría esa tarjeta.
+const CREDIT_STRIPES = {
+  backgroundImage: "repeating-linear-gradient(45deg, currentColor 0 2px, transparent 2px 4px)",
+};
+
+function MethodSwatch({ className, credit }) {
+  return credit ? (
+    <i
+      className="inline-block size-2.5 shrink-0 rounded-[3px] border border-current text-muted-foreground"
+      style={CREDIT_STRIPES}
+    />
+  ) : (
+    <i className={cn("inline-block size-2.5 shrink-0 rounded-[3px]", className)} />
+  );
+}
+
+function ArqueoSummary({
+  register,
+  totalCash,
+  totalCard,
+  totalTransfer,
+  totalCredit,
+  collectedCash,
+  collectedOther,
+  expectedClose,
+  salesCount,
+}) {
+  const methods = [
+    { key: "cash", label: "Efectivo", value: totalCash, swatch: "bg-brand dark:bg-chart-3" },
+    { key: "card", label: "Tarjeta", value: totalCard, swatch: "bg-chart-2 dark:bg-chart-1" },
+    { key: "transfer", label: "Transferencia", value: totalTransfer, swatch: "bg-chart-4" },
+    ...(totalCredit > 0 ? [{ key: "credit", label: "Fiado", value: totalCredit, credit: true }] : []),
+  ];
+  const sold = methods.reduce((sum, m) => sum + m.value, 0);
+  const pct = (v) => (sold > 0 ? Math.round((v / sold) * 100) : 0);
+  const ticket = salesCount > 0 ? sold / salesCount : 0;
+
+  const cashIn = Number(register.cash_in || 0);
+  const ledger = [
+    { label: "Apertura", value: Number(register.opening_balance || 0), sign: "" },
+    { label: "Ventas en efectivo", value: totalCash, sign: "+" },
+    ...(collectedCash > 0 ? [{ label: "Cobranza de fiado", value: collectedCash, sign: "+" }] : []),
+    ...(cashIn > 0 ? [{ label: "Entradas de dinero", value: cashIn, sign: "+" }] : []),
+    { label: "Gastos y retiros", value: Number(register.expenses || 0), sign: "−" },
+  ];
+
+  const cashGot = totalCash + collectedCash;
+  const bankGot = totalCard + totalTransfer + collectedOther;
+  const where = [
+    ...(cashGot > 0 && bankGot > 0
+      ? [{ label: "Total", value: expectedClose + bankGot, note: "cajón y banco: todo lo del turno", swatch: "bg-foreground/70" }]
+      : []),
+    { label: "En el cajón", value: expectedClose, note: "efectivo para contar", swatch: "bg-brand dark:bg-chart-3" },
+    { label: "En el banco", value: bankGot, note: "tarjeta y transferencia", swatch: "bg-chart-2 dark:bg-chart-1" },
+    { label: "Salió", value: Number(register.expenses || 0), note: "gastos y retiros", swatch: "bg-destructive" },
+  ];
+
+  return (
+    <div>
+      <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+        {/* VENTAS POR FORMA DE PAGO */}
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-[0.06em] text-muted-foreground">
+            Ventas por forma de pago
+          </p>
+          <p className="mt-1 mb-2.5 flex flex-wrap items-baseline gap-x-2 text-2xl font-bold tracking-tight tabular-nums">
+            {fmtMoney(sold)}
+            {ticket > 0 && (
+              <span className="text-[13px] font-medium tracking-normal text-muted-foreground">
+                ticket promedio {fmtMoney(ticket)}
+              </span>
+            )}
+          </p>
+
+          {sold > 0 && (
+            <div className="mb-3 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+              {methods
+                .filter((m) => m.value > 0)
+                .map((m) =>
+                  m.credit ? (
+                    <i
+                      key={m.key}
+                      className="block h-full text-muted-foreground"
+                      style={{ ...CREDIT_STRIPES, width: `${(m.value / sold) * 100}%` }}
+                    />
+                  ) : (
+                    <i key={m.key} className={cn("block h-full", m.swatch)} style={{ width: `${(m.value / sold) * 100}%` }} />
+                  ),
+                )}
+            </div>
+          )}
+
+          {methods.map((m) => (
+            <div
+              key={m.key}
+              className={cn(
+                "grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2.5 border-t py-2 text-sm",
+                m.credit && "text-muted-foreground",
+              )}
+            >
+              <MethodSwatch className={m.swatch} credit={m.credit} />
+              <span className="truncate">
+                {m.label}
+                {m.credit && <span className="text-xs"> · no entra a caja</span>}
+              </span>
+              <span className="min-w-9 text-right text-xs text-muted-foreground tabular-nums">{pct(m.value)} %</span>
+              <b className="font-semibold tabular-nums">{fmtMoney(m.value)}</b>
+            </div>
+          ))}
+        </div>
+
+        {/* MOVIMIENTO DEL EFECTIVO */}
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-[0.06em] text-muted-foreground">
+            Movimiento del efectivo
+          </p>
+          <div className="mt-2">
+            {ledger.map((row, i) => (
+              <div
+                key={row.label}
+                className={cn(
+                  "grid grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-2 py-2.5 text-sm",
+                  i > 0 && "border-t",
+                )}
+              >
+                <span
+                  className={cn(
+                    "text-center font-bold",
+                    row.sign === "+" && "text-success",
+                    row.sign === "−" && "text-destructive",
+                  )}
+                >
+                  {row.sign}
+                </span>
+                <span>{row.label}</span>
+                <b className="font-semibold tabular-nums">{fmtMoneyAbs(row.value)}</b>
+              </div>
+            ))}
+            <div className="mt-1 grid grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg bg-success/12 px-2 py-3 text-[15px] font-bold text-success ring-1 ring-success/25 dark:bg-success/15">
+              <span className="text-center">=</span>
+              <span>Cierre esperado</span>
+              <b className="text-lg tabular-nums">{fmtMoney(expectedClose)}</b>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ¿DÓNDE ESTÁ EL DINERO? */}
+      <div className="mt-4 border-t border-dashed pt-3.5">
+        <p className="text-xs font-bold uppercase tracking-[0.06em] text-muted-foreground">
+          ¿Dónde está el dinero del turno?
+        </p>
+        <div className={cn("mt-2 grid grid-cols-2 gap-2.5", where.length === 4 ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
+          {where.map((w) => (
+            <div key={w.label} className="grid gap-1 rounded-[10px] bg-muted px-3.5 py-3">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                <MethodSwatch className={w.swatch} />
+                {w.label}
+              </span>
+              <b className="text-xl font-bold tracking-tight tabular-nums">{fmtMoney(w.value)}</b>
+              <small className="text-xs text-muted-foreground">{w.note}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
