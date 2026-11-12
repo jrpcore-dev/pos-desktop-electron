@@ -29,18 +29,18 @@ const BoxChoiceDialog = ({
   const [confirming, setConfirming] = useState(false);
   const cardRefs = useRef([]);
 
+  // Orden: pieza (lo que más se vende), paquete y caja.
   const options = useMemo(() => {
-    const list = [];
-    if (boxQty > 0) {
-      list.push({
-        key: "box",
-        Icon: Box,
-        title: containerNoun,
-        price: boxPrice,
-        desc: `${boxQty} pz · ${piecesPer}`,
-        badge: `${boxQty}pz`,
-      });
-    }
+    const list = [
+      {
+        key: "piece",
+        Icon: CircleDashed,
+        title: "Pieza",
+        price: piecePrice,
+        desc: "Precio unitario",
+        badge: "1pz",
+      },
+    ];
     if (saleUnit === "boxpack" && packQty > 0) {
       list.push({
         key: "pack",
@@ -51,14 +51,16 @@ const BoxChoiceDialog = ({
         badge: `${packQty}pz`,
       });
     }
-    list.push({
-      key: "piece",
-      Icon: CircleDashed,
-      title: "Pieza",
-      price: piecePrice,
-      desc: "Precio unitario",
-      badge: "1pz",
-    });
+    if (boxQty > 0) {
+      list.push({
+        key: "box",
+        Icon: Box,
+        title: containerNoun,
+        price: boxPrice,
+        desc: `${boxQty} pz · ${piecesPer}`,
+        badge: `${boxQty}pz`,
+      });
+    }
     return list;
   }, [boxQty, packQty, saleUnit, containerNoun, boxPrice, packPrice, piecePrice, piecesPer]);
 
@@ -130,19 +132,19 @@ const BoxChoiceDialog = ({
             <div className="text-center">
               <p className="text-lg font-bold text-foreground">{product.name}</p>
               <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
-                {boxQty > 0 && (
-                  <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary tabular-nums">
-                    {containerNoun}: {fmtMoney(boxPrice)}
-                  </span>
-                )}
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground tabular-nums">
+                  Pieza: {fmtMoney(piecePrice)}
+                </span>
                 {saleUnit === "boxpack" && packQty > 0 && (
                   <span className="rounded-full bg-secondary/20 px-2.5 py-0.5 text-xs font-semibold text-secondary-foreground tabular-nums">
                     Paquete: {fmtMoney(packPrice)}
                   </span>
                 )}
-                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground tabular-nums">
-                  Pieza: {fmtMoney(piecePrice)}
-                </span>
+                {boxQty > 0 && (
+                  <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary tabular-nums">
+                    {containerNoun}: {fmtMoney(boxPrice)}
+                  </span>
+                )}
               </div>
             </div>
 
