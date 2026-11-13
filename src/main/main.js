@@ -2759,148 +2759,29 @@ ipcMain.handle(
   "cancel-sale-item",
   async (
     event,
-    { saleId, itemId, cashierName, reason, role, cashierId, quantity },
+    { saleId, itemId, cashierName, reason, role, cashierId, quantity, cancelledAt },
   ) => {
     try {
       if (!saleId || !itemId)
         return { success: false, error: "Datos inválidos" };
+      // Reglas y devolución compartidas con la caja (sales-cancel-core).
       const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
-      if (!sale) return { success: false, error: "Venta no encontrada" };
-      if (sale.status === "cancelado")
-        return { success: false, error: "Esta venta ya fue cancelada" };
-
-      const item = db
-        .prepare("SELECT * FROM sale_items WHERE id = ? AND sale_id = ?")
-        .get(itemId, saleId);
-      if (!item) return { success: false, error: "Producto no encontrado" };
-      if (item.status === "cancelado")
-        return { success: false, error: "Este producto ya fue cancelado" };
-      if (item.service_transaction_id) {
-        return {
-          success: false,
-          code: "SERVICE_SALE_NOT_CANCELLABLE",
-          error:
-            "Esta línea es una recarga Taecel y no se puede cancelar desde el POS.",
-        };
-      }
-
-      const reg = sale.register_id
-        ? db
-            .prepare("SELECT status, closed_at, device_id FROM cash_register WHERE id = ?")
-            .get(sale.register_id)
+      const item = sale
+        ? db.prepare("SELECT * FROM sale_items WHERE id = ? AND sale_id = ?").get(itemId, saleId)
         : null;
-      // Bloque 4/A · misma regla que cancel-sale: la caja solo toca lo suyo.
       const caller = callerDeviceId();
-      if (caller) {
-        const owner = sale.device_id || (reg && reg.device_id) || null;
-        if (owner !== caller) {
-          return {
-            success: false,
-            code: "SALE_NOT_OWNED",
-            error: "Esa venta pertenece a otra caja y no se puede cancelar desde aquí",
-          };
-        }
-      }
-      const canCancel =
-        role === "admin" ||
-        (reg && reg.status === "open") ||
-        (reg && reg.status === "closed" && isWithinCancelWindow(reg.closed_at));
-      if (!canCancel)
-        return {
-          success: false,
-          error: "No se puede cancelar este producto fuera del plazo permitido",
-        };
-
-      const itemQuantity = Number(item.quantity || 0);
-      const alreadyReturned = Number(item.returned_qty || 0);
-      const remaining = Math.max(0, itemQuantity - alreadyReturned);
-      if (remaining <= 0)
-        return { success: false, error: "Este producto ya fue cancelado" };
-
-      const requested = Math.abs(Number(quantity) || 1);
-      const cancelQty = Math.min(
-        Math.max(0.001, Math.round(requested * 1000) / 1000),
-        remaining,
-      );
-
-      const isPartial = remaining - cancelQty > 0.0001;
-      const newReturned =
-        Math.round((alreadyReturned + cancelQty) * 1000) / 1000;
-
-      const unitPrice = Number(item.price_at_sale || 0);
-      const discount = Number(item.discount_percent || 0);
-      const refundAmount =
-        unitPrice *
-        cancelQty *
-        (1 - Math.min(100, Math.max(0, discount)) / 100);
-
-      const stockPerUnit =
-        itemQuantity > 0
-          ? (Number(item.stock_deducted || 0) || itemQuantity) / itemQuantity
-          : 1;
-      const restoreStock = Math.round(stockPerUnit * cancelQty * 1000) / 1000;
-
-      let saleCancelled = false;
-
-      const doCancel = db.transaction(() => {
-        if (newReturned + 0.0001 >= itemQuantity) {
-          db.prepare(
-            "UPDATE sale_items SET status='cancelado', returned_qty=?, cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
-          ).run(newReturned, cashierName || null, caller || null, itemId);
-        } else {
-          db.prepare(
-            "UPDATE sale_items SET status='parcial', returned_qty=?, cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
-          ).run(newReturned, cashierName || null, caller || null, itemId);
-        }
-
-        if (item.product_id && restoreStock > 0) {
-          db.prepare(
-            "UPDATE products SET stock = stock + ?, day_sold = MAX(COALESCE(day_sold, 0) - ?, 0) WHERE id = ?",
-          ).run(restoreStock, restoreStock, item.product_id);
-          db.prepare(
-            "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
-          ).run(
-            item.product_id,
-            restoreStock,
-            `${isPartial ? "Devolución parcial" : "Cancelación"} producto venta #${saleId}`,
-            reason || "",
-            cashierId || null,
-          );
-        }
-
-        const activeCount = db
-          .prepare(
-            "SELECT COUNT(*) as c FROM sale_items WHERE sale_id = ? AND (status IS NULL OR status != 'cancelado')",
-          )
-          .get(saleId).c;
-
-        // Fiado: se lee la venta dentro de la transacción (devoluciones
-        // previas ya pudieron bajar lo fiado).
-        const freshSale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
-        if (activeCount === 0) {
-          saleCancelled = true;
-          db.prepare(
-            "UPDATE sales SET status='cancelado', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancelled_by_device=? WHERE id=?",
-          ).run(cashierName || null, caller || null, saleId);
-          credit.reverseSale(db, freshSale, { cashierName, deviceId: caller });
-        } else {
-          db.prepare(
-            "UPDATE sales SET total = MAX(0, ROUND(total - ?, 2)) WHERE id = ?",
-          ).run(refundAmount, saleId);
-          credit.refundSalePart(db, freshSale, refundAmount, { cashierName, deviceId: caller });
-        }
+      const ok = salesCancelCore.checkItem(db, sale, item, { role, caller });
+      if (!ok.success) return ok;
+      const out = salesCancelCore.applyItem(db, sale, item, {
+        quantity,
+        cashierName,
+        reason,
+        cashierId,
+        caller,
+        cancelledAt,
       });
-      doCancel();
-      emitDbChanged(["sales"], {});
-      return {
-        success: true,
-        refundAmount: Number(refundAmount.toFixed(2)),
-        cancelledQty: cancelQty,
-        isPartial,
-        saleCancelled,
-        itemStatus:
-          newReturned + 0.0001 >= itemQuantity ? "cancelado" : "parcial",
-      };
+      if (out.success) emitDbChanged(["sales"], {});
+      return out;
     } catch (error) {
       return { success: false, error: error.message };
     }

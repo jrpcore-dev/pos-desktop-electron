@@ -63,8 +63,8 @@ const ROW_COLUMNS = Object.freeze({
   bundles: ["id", "uid", "name", "price", "start_date", "end_date", "is_active", "created_at"],
   // Cancelar una venta propia (sales-cancel-core): sólo el estado; la venta y
   // sus partidas ya existen (vienen del Host), nunca se crean desde aquí.
-  sales: ["id", "status", "cancelled_at", "cancelled_by", "cancelled_by_device"],
-  sale_items: ["id", "status", "cancelled_at", "cancelled_by", "cancelled_by_device"],
+  sales: ["id", "status", "total", "cancelled_at", "cancelled_by", "cancelled_by_device"],
+  sale_items: ["id", "status", "returned_qty", "cancelled_at", "cancelled_by", "cancelled_by_device"],
 });
 // Tablas donde una fila de la cola sólo actualiza: si falta (un resync aún no
 // la trae), no se inventa una fila a medias.

@@ -11,6 +11,9 @@
  *      Host, venta que aún no sube, ya cancelada.
  *   E) El administrador ya la canceló en el Host: la cola no queda en
  *      conflicto.
+ *   F) Devolver sólo un producto o parte: al momento en la caja (renglón,
+ *      total y stock), sin Host también; al devolver todo, la venta queda
+ *      cancelada. Fiado sin Host pide conexión.
  *
  * Uso:
  *   ELECTRON_RUN_AS_NODE=1 node_modules\electron\dist\electron.exe scripts\check-local-cancel.cjs
@@ -82,6 +85,20 @@ for (const id of [1, 2, 3, 6]) sale(id);
 sale(4, { device: "box-b", register: 2 });
 sale(5, { service: 99 });
 sale(7, { method: "credit" });
+host.prepare(
+  "INSERT INTO sales (id, folio, total, payment_method, status, register_id, device_id) VALUES (8, 'A-8', 80, 'cash', 'completado', 1, 'box-a')",
+).run();
+host.prepare("INSERT INTO sale_items (id, sale_id, product_id, quantity, price_at_sale, stock_deducted) VALUES (801, 8, 1, 3, 20, 3)").run();
+host.prepare("INSERT INTO sale_items (id, sale_id, product_id, quantity, price_at_sale, stock_deducted) VALUES (802, 8, 1, 1, 20, 1)").run();
+sale(9, { method: "credit" });
+ipcRegistry.set("cancel-sale-item", (e, { saleId, itemId, cashierName, reason, role, cashierId, quantity, cancelledAt } = {}) => {
+  const s = host.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
+  const it = s ? host.prepare("SELECT * FROM sale_items WHERE id = ? AND sale_id = ?").get(itemId, saleId) : null;
+  const caller = rpcContext.currentDeviceId();
+  const ok = salesCancelCore.checkItem(host, s, it, { role, caller });
+  if (!ok.success) return ok;
+  return salesCancelCore.applyItem(host, s, it, { quantity, cashierName, reason, cashierId, caller, cancelledAt });
+});
 // Handler del Host: el MISMO de main.js (sales-cancel-core).
 ipcRegistry.set("cancel-sale", (e, { saleId, cashierName, reason, role, cashierId, cancelledAt } = {}) => {
   const s = host.prepare("SELECT * FROM sales WHERE id = ?").get(saleId);
@@ -200,7 +217,7 @@ const cancel = (saleId) => boxRpc.forward(box, "cancel-sale", [{ saleId, cashier
   const again = await cancel(1);
   check(again.success === false && again.code === "ALREADY_CANCELLED", "ya cancelada", again);
   box.pragma("foreign_keys = OFF");
-  box.prepare("INSERT INTO sales (id, folio, total, payment_method, status, register_id, device_id) VALUES (-1, 'A-9', 10, 'cash', 'completado', 1, 'box-a')").run();
+  box.prepare("INSERT INTO sales (id, folio, total, payment_method, status, register_id, device_id) VALUES (-1, 'A-99', 10, 'cash', 'completado', 1, 'box-a')").run();
   box.pragma("foreign_keys = ON");
   const local = await cancel(-1);
   check(local.success === false && local.code === "NOT_YET_ON_HOST", "venta que aún no sube", local);
@@ -221,6 +238,43 @@ const cancel = (saleId) => boxRpc.forward(box, "cancel-sale", [{ saleId, cashier
   check(opQueue.countOpen(box) === 0 && opQueue.list(box, ["conflict"]).length === 0, "sube sin conflicto");
   check(status(host, 3) === "cancelado" && status(host, 6) === "cancelado", "todo lo pendiente subió");
   check(stock(host) === 18, "el stock del Host cuenta cada cancelación una vez", stock(host));
+
+  console.log("=== F · devolver un producto o parte ===");
+  const item = (db, id) => db.prepare("SELECT status, returned_qty FROM sale_items WHERE id = ?").get(id) || {};
+  const total = (db, id) => (db.prepare("SELECT total FROM sales WHERE id = ?").get(id) || {}).total;
+  const returnItem = (itemId, quantity, saleId = 8) =>
+    boxRpc.forward(box, "cancel-sale-item", [{ saleId, itemId, quantity, cashierName: "Ana", role: "cashier", cashierId: 1, reason: "Producto dañado" }]);
+  const s0box = stock(box);
+  const s0host = stock(host);
+  const f1 = await returnItem(801, 1);
+  check(f1.success === true && f1.queued === true && f1.isPartial === true && f1.refundAmount === 20, "se devuelve 1 de 3 al momento", f1);
+  check(item(box, 801).status === "parcial" && item(box, 801).returned_qty === 1, "el renglón queda parcial en la caja", item(box, 801));
+  check(total(box, 8) === 60 && stock(box) === s0box + 1, "baja el total y vuelve 1 al stock", [total(box, 8), stock(box)]);
+  await boxRpc.syncOps(box);
+  await waitFor(() => item(host, 801).returned_qty === 1);
+  check(item(host, 801).status === "parcial" && total(host, 8) === 60 && stock(host) === s0host + 1, "el Host hace lo mismo", [item(host, 801), total(host, 8), stock(host)]);
+  check(
+    host.prepare("SELECT notes FROM stock_movements WHERE reference = 'Devolución parcial producto venta #8' ORDER BY id DESC LIMIT 1").get()?.notes === "Producto dañado",
+    "con su motivo en el movimiento",
+  );
+
+  await apiServer.stopServer();
+  const f2 = await returnItem(801, 5);
+  check(f2.success === true && f2.cancelledQty === 2 && f2.saleCancelled === false, "sin Host: devuelve lo que queda (2, no 5)", f2);
+  check(item(box, 801).status === "cancelado" && total(box, 8) === 20, "el renglón queda cancelado y el total en 20", [item(box, 801), total(box, 8)]);
+  const f3 = await returnItem(802, 1);
+  check(f3.success === true && f3.saleCancelled === true, "al devolver lo último, la venta se cancela", f3);
+  check(status(box, 8) === "cancelado" && stock(box) === s0box + 4, "venta cancelada y las 4 Cocas de vuelta", [status(box, 8), stock(box)]);
+  const f4 = await returnItem(801, 1);
+  check(f4.success === false && f4.code === "ALREADY_CANCELLED", "lo ya devuelto no se vuelve a devolver", f4);
+  const credit2 = await boxRpc.forward(box, "cancel-sale-item", [{ saleId: 9, itemId: box.prepare("SELECT id FROM sale_items WHERE sale_id = 9").get().id, quantity: 1, role: "cashier" }]);
+  check(credit2.success === false && credit2.code === "HOST_REQUIRED", "fiado sin Host pide conexión", credit2);
+
+  check((await apiServer.startServer(host, PORT)).success === true, "(vuelve el Host)");
+  await boxRpc.syncOps(box);
+  await waitFor(() => opQueue.countOpen(box) === 0);
+  check(status(host, 8) === "cancelado" && item(host, 802).status === "cancelado", "sube y el Host cancela la venta", [status(host, 8), item(host, 802)]);
+  check(stock(host) === s0host + 4 && opQueue.countOpen(box) === 0, "el stock del Host cuenta cada devolución una vez", stock(host));
 
   await apiServer.stopServer();
   console.log(`\n=== cancelar venta local-first: ${pass} PASS / ${fail} FAIL ===`);

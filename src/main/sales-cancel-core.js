@@ -6,6 +6,7 @@
 //   · Una caja sólo cancela SUS ventas (el Host local puede todas).
 //   · Fuera del administrador: con la caja abierta, o cerrada hoy o ayer.
 // Fiado sigue en el Host (el saldo del cliente vive allá).
+// Lo mismo para devolver sólo un producto o parte (checkItem/planItem/applyItem).
 
 const credit = require("./credit");
 
@@ -90,4 +91,115 @@ const apply = (db, sale, { cashierName, reason, cashierId, caller, cancelledAt }
   })();
 };
 
-module.exports = { check, apply, withinCancelWindow };
+// ── Devolver un producto (o parte) de la venta ─────────────────────────────
+// Mismas reglas que la venta completa, pero la recarga se revisa sólo en ese
+// renglón (una venta con recarga sí puede devolver sus otros productos).
+const checkItem = (db, sale, item, { role, caller } = {}) => {
+  if (!sale) return fail("SALE_NOT_FOUND", "Venta no encontrada");
+  if (sale.status === "cancelado") return fail("ALREADY_CANCELLED", "Esta venta ya fue cancelada");
+  if (!item) return fail("ITEM_NOT_FOUND", "Producto no encontrado");
+  if (item.status === "cancelado") return fail("ALREADY_CANCELLED", "Este producto ya fue cancelado");
+  if (item.service_transaction_id) {
+    return fail("SERVICE_SALE_NOT_CANCELLABLE", "Esta línea es una recarga Taecel y no se puede cancelar desde el POS.");
+  }
+  const reg = sale.register_id
+    ? db.prepare("SELECT status, closed_at, device_id FROM cash_register WHERE id = ?").get(sale.register_id)
+    : null;
+  if (caller) {
+    const owner = sale.device_id || (reg && reg.device_id) || null;
+    if (owner !== caller) {
+      return fail("SALE_NOT_OWNED", "Esa venta pertenece a otra caja y no se puede cancelar desde aquí");
+    }
+  }
+  const canCancel =
+    role === "admin" ||
+    (reg && reg.status === "open") ||
+    (reg && reg.status === "closed" && withinCancelWindow(reg.closed_at));
+  if (!canCancel) return fail("OUT_OF_WINDOW", "No se puede cancelar este producto fuera del plazo permitido");
+  return { success: true, register: reg };
+};
+
+const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+
+// Cuánto se devuelve: cantidad (a 3 decimales, nunca más de lo que queda),
+// importe con el descuento del renglón y el stock que vuelve (por unidad
+// vendida, así caja/paquete regresan sus piezas).
+const planItem = (item, quantity) => {
+  const itemQuantity = Number(item.quantity || 0);
+  const alreadyReturned = Number(item.returned_qty || 0);
+  const remaining = Math.max(0, itemQuantity - alreadyReturned);
+  const requested = Math.abs(Number(quantity) || 1);
+  const cancelQty = Math.min(Math.max(0.001, r3(requested)), remaining);
+  const newReturned = r3(alreadyReturned + cancelQty);
+  const unitPrice = Number(item.price_at_sale || 0);
+  const discount = Number(item.discount_percent || 0);
+  const refundAmount = unitPrice * cancelQty * (1 - Math.min(100, Math.max(0, discount)) / 100);
+  const stockPerUnit =
+    itemQuantity > 0 ? (Number(item.stock_deducted || 0) || itemQuantity) / itemQuantity : 1;
+  const done = newReturned + 0.0001 >= itemQuantity;
+  return {
+    remaining,
+    cancelQty,
+    newReturned,
+    refundAmount,
+    restoreStock: r3(stockPerUnit * cancelQty),
+    isPartial: remaining - cancelQty > 0.0001,
+    itemStatus: done ? "cancelado" : "parcial",
+  };
+};
+
+// La devolución en el Host. Si ya no queda nada activo, la venta se cancela
+// (y el fiado se revierte); si no, baja su total (y lo fiado, en proporción).
+const applyItem = (db, sale, item, { quantity, cashierName, reason, cashierId, caller, cancelledAt } = {}) => {
+  const plan = planItem(item, quantity);
+  if (plan.remaining <= 0) return fail("ALREADY_CANCELLED", "Este producto ya fue cancelado");
+  const at = caller && SQLITE_TS.test(String(cancelledAt || "")) ? String(cancelledAt) : null;
+  const by = cashierName || null;
+  const device = caller || null;
+  let saleCancelled = false;
+  db.transaction(() => {
+    db.prepare(
+      "UPDATE sale_items SET status=?, returned_qty=?, cancelled_at=COALESCE(?, CURRENT_TIMESTAMP), cancelled_by=?, cancelled_by_device=? WHERE id=?",
+    ).run(plan.itemStatus, plan.newReturned, at, by, device, item.id);
+    if (item.product_id && plan.restoreStock > 0) {
+      db.prepare(
+        "UPDATE products SET stock = stock + ?, day_sold = MAX(COALESCE(day_sold, 0) - ?, 0) WHERE id = ?",
+      ).run(plan.restoreStock, plan.restoreStock, item.product_id);
+      db.prepare(
+        "INSERT INTO stock_movements (product_id, type, quantity, reference, notes, cashier_id) VALUES (?, 'devolution', ?, ?, ?, ?)",
+      ).run(
+        item.product_id,
+        plan.restoreStock,
+        `${plan.isPartial ? "Devolución parcial" : "Cancelación"} producto venta #${sale.id}`,
+        reason || "",
+        cashierId || null,
+      );
+    }
+    const activeCount = db
+      .prepare("SELECT COUNT(*) as c FROM sale_items WHERE sale_id = ? AND (status IS NULL OR status != 'cancelado')")
+      .get(sale.id).c;
+    // Fiado: la venta se lee dentro de la transacción (devoluciones previas
+    // ya pudieron bajar lo fiado).
+    const fresh = db.prepare("SELECT * FROM sales WHERE id = ?").get(sale.id);
+    if (activeCount === 0) {
+      saleCancelled = true;
+      db.prepare(
+        "UPDATE sales SET status='cancelado', cancelled_at=COALESCE(?, CURRENT_TIMESTAMP), cancelled_by=?, cancelled_by_device=? WHERE id=?",
+      ).run(at, by, device, sale.id);
+      credit.reverseSale(db, fresh, { cashierName, deviceId: caller });
+    } else {
+      db.prepare("UPDATE sales SET total = MAX(0, ROUND(total - ?, 2)) WHERE id = ?").run(plan.refundAmount, sale.id);
+      credit.refundSalePart(db, fresh, plan.refundAmount, { cashierName, deviceId: caller });
+    }
+  })();
+  return {
+    success: true,
+    refundAmount: Number(plan.refundAmount.toFixed(2)),
+    cancelledQty: plan.cancelQty,
+    isPartial: plan.isPartial,
+    saleCancelled,
+    itemStatus: plan.itemStatus,
+  };
+};
+
+module.exports = { check, apply, checkItem, planItem, applyItem, withinCancelWindow };

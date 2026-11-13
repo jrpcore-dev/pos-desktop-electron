@@ -488,8 +488,71 @@ const cancelSaleOp = (db, [payload = {}]) => {
   };
 };
 
+// Devolver un producto (o parte) de una venta propia · mismas reglas y
+// cálculo que el Host (sales-cancel-core). Aquí: el renglón con lo devuelto,
+// el total de la venta (o la venta cancelada si ya no queda nada) y el stock
+// que vuelve. Fiado va en línea.
+const ITEM_STATE_COLS = [...SALE_STATE_COLS, "returned_qty"];
+const cancelSaleItemOp = (db, [payload = {}]) => {
+  const { saleId, itemId, cashierName, role } = payload || {};
+  const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(Number(saleId));
+  if (sale && sale.id < 0) {
+    return fail("NOT_YET_ON_HOST", "Esta venta todavía se está guardando en el Host. Intenta en unos segundos.");
+  }
+  if (sale && sale.payment_method === "credit") return { online: true, what: "Devolver en una venta a crédito" };
+  const item = sale
+    ? db.prepare("SELECT * FROM sale_items WHERE id = ? AND sale_id = ?").get(Number(itemId), sale.id)
+    : null;
+  const deviceId = activation.getSetting(db, "box_device_id") || null;
+  const ok = salesCancelCore.checkItem(db, sale, item, { role, caller: deviceId });
+  if (!ok.success) return ok;
+  const plan = salesCancelCore.planItem(item, payload.quantity);
+  if (plan.remaining <= 0) return fail("ALREADY_CANCELLED", "Este producto ya fue cancelado");
+  const at = sqliteNowUtc();
+  const by = cashierName || null;
+  const itemAfter = {
+    ...pickCols(item, ITEM_STATE_COLS),
+    status: plan.itemStatus,
+    returned_qty: plan.newReturned,
+    cancelled_at: at,
+    cancelled_by: by,
+    cancelled_by_device: deviceId,
+  };
+  const othersActive = db
+    .prepare("SELECT COUNT(*) AS c FROM sale_items WHERE sale_id = ? AND id != ? AND (status IS NULL OR status != 'cancelado')")
+    .get(sale.id, item.id).c;
+  const saleCancelled = othersActive === 0 && plan.itemStatus === "cancelado";
+  const saleBefore = { ...pickCols(sale, SALE_STATE_COLS), total: sale.total };
+  const saleAfter = saleCancelled
+    ? { ...saleBefore, status: "cancelado", cancelled_at: at, cancelled_by: by, cancelled_by_device: deviceId }
+    : { ...saleBefore, total: Math.max(0, Math.round((Number(sale.total) - plan.refundAmount) * 100) / 100) };
+  return {
+    args: [{ ...payload, saleId: sale.id, itemId: item.id, quantity: plan.cancelQty, cancelledAt: at }],
+    effect: {
+      rows: [
+        { table: "sale_items", before: pickCols(item, ITEM_STATE_COLS), after: itemAfter },
+        { table: "sales", before: saleBefore, after: saleAfter },
+      ],
+      stock:
+        item.product_id != null && plan.restoreStock > 0
+          ? [{ productId: item.product_id, delta: plan.restoreStock }]
+          : [],
+    },
+    tables: ["sales", "sale_items", "products"],
+    label: `Devolución · ${item.product_name || "producto"} · ${sale.folio || "#" + sale.id}`,
+    result: {
+      refundAmount: Number(plan.refundAmount.toFixed(2)),
+      cancelledQty: plan.cancelQty,
+      isPartial: plan.isPartial,
+      saleCancelled,
+      itemStatus: plan.itemStatus,
+    },
+  };
+};
+
 const QUEUED_OPS = {
   "cancel-sale": cancelSaleOp,
+  "cancel-sale-item": cancelSaleItemOp,
   "save-group-promo": saveGroupPromoOp,
   "save-bundle": saveBundleOp,
   "set-bundle-active": setBundleActiveOp,
@@ -739,7 +802,9 @@ const syncOps = async (db) => {
   const send = (row) =>
     rpcCall(db, row.channel, row.args, null, { idempotencyKey: row.idempotencyKey }).then((r) =>
       // Ya la cancelaron en el Host (el administrador): quedó como se quería.
-      row.channel === "cancel-sale" && r && r.code === "ALREADY_CANCELLED" ? { success: true } : r,
+      (row.channel === "cancel-sale" || row.channel === "cancel-sale-item") && r && r.code === "ALREADY_CANCELLED"
+        ? { success: true }
+        : r,
     );
   let out = await opQueue.sync(db, send);
   // Si se unió a una subida que ya iba en curso, lo encolado después no estaba
