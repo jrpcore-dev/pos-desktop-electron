@@ -9,6 +9,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Hint } from "../ui/hint";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useToast } from "@/components/ToastProvider";
@@ -200,7 +201,7 @@ const ServicesScreen = () => {
               {pendingCount > 0 && (
                 <span
                   className="rounded-full bg-warning/15 px-1.5 text-[10.5px] font-bold leading-4 text-amber-700 tabular-nums dark:text-warning"
-                  title="Recargas por confirmar"
+                  aria-label={`${pendingCount} por confirmar`}
                 >
                   {pendingCount}
                 </span>
@@ -251,6 +252,7 @@ const ServicesScreen = () => {
               Reintentar
             </Button>
           )}
+          <Hint label="Actualizar catálogo de Taecel (1 vez por hora)">
           <Button
             type="button"
             variant="outline"
@@ -258,7 +260,6 @@ const ServicesScreen = () => {
             onClick={refreshCatalog}
             disabled={refreshing || checking}
             className="size-9"
-            title="Actualizar catálogo de Taecel (1 vez por hora)"
             aria-label="Actualizar catálogo"
           >
             {refreshing ? (
@@ -267,17 +268,19 @@ const ServicesScreen = () => {
               <RefreshCw size={15} aria-hidden />
             )}
           </Button>
+          </Hint>
+          <Hint label="Proveedor (Key y NIP de Taecel)">
           <Button
             type="button"
             variant="outline"
             size="icon"
             onClick={() => setConfigOpen(true)}
             className="size-9"
-            title="Proveedor (Key y NIP de Taecel)"
             aria-label="Proveedor"
           >
             <Settings2 size={15} aria-hidden />
           </Button>
+          </Hint>
         </div>
 
         <TabsContent value="cobrar" className="mt-3">
@@ -314,9 +317,10 @@ const LOW_BALANCE_CENTS = 200 * 100;
 const Balance = ({ label, cents = 0 }) => {
   const low = cents < LOW_BALANCE_CENTS;
   return (
+    <Hint label={low ? "Saldo bajo en Taecel: recarga la bolsa pronto" : undefined}>
     <span
+      tabIndex={low ? 0 : undefined}
       className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[9px] bg-card pl-2.5 pr-3 text-xs ring-1 ring-border"
-      title={low ? "Saldo bajo en Taecel" : undefined}
     >
       <span className={cn("size-2 rounded-full", low ? "bg-warning" : "bg-success")} aria-hidden />
       <span className="text-muted-foreground">{label}</span>
@@ -324,6 +328,7 @@ const Balance = ({ label, cents = 0 }) => {
         {money(cents || 0)}
       </b>
     </span>
+    </Hint>
   );
 };
 

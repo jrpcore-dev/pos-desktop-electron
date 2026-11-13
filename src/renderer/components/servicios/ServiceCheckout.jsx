@@ -563,7 +563,7 @@ const ServiceCheckout = ({
                                 focusNext(sku ? "charge" : "list");
                               }}
                               className="min-w-0 flex-1 cursor-pointer text-left"
-                              title="Usar este número"
+                              aria-label={`Usar el número ${r.number}`}
                             >
                               <span className="block text-[13px] font-bold tabular-nums text-foreground">
                                 {r.number.replace(/(\d{2})(\d{4})(\d{4})/, "$1 $2 $3")}

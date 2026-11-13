@@ -40,6 +40,7 @@ import {
 import PageHeader from "./PageHeader";
 import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/utils/format";
+import { Hint } from "./ui/hint";
 
 // PIN nuevo o cambiado: mínimo 4 dígitos. Los de 3 que ya existían siguen
 // sirviendo para entrar (el login y "sesión expirada" aceptan desde 3).
@@ -99,13 +100,15 @@ const LiveDot = () => (
 const StatusBadge = ({ cashier }) => {
   if (offline(cashier)) {
     return (
-      <span
-        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-warning/12 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-warning/30 dark:text-warning"
-        title="La caja quedó abierta pero no está conectada al Host"
-      >
-        <span className="size-[7px] rounded-full bg-warning" aria-hidden="true" />
-        Caja abierta · {boxLabel(cashier)} sin conexión
-      </span>
+      <Hint label="La caja quedó abierta pero no está conectada al Host">
+        <span
+          tabIndex={0}
+          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-warning/12 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-warning/30 dark:text-warning"
+        >
+          <span className="size-[7px] rounded-full bg-warning" aria-hidden="true" />
+          Caja abierta · {boxLabel(cashier)} sin conexión
+        </span>
+      </Hint>
     );
   }
   if (inRegister(cashier)) {

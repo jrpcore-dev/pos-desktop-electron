@@ -60,6 +60,7 @@ import { cn } from "@/lib/utils";
 import { isContainerUnit, unitLabels } from "../utils/unitLabels";
 import { fileToProductImage } from "../utils/productImage";
 import { fmtMoney } from "../utils/format";
+import { Hint } from "./ui/hint";
 import { useCashier } from "../contexts/CashierContext";
 import { useToast } from "./ToastProvider";
 
@@ -1603,12 +1604,12 @@ const AddProductModal = ({
                     <ImagePlus className="h-3.5 w-3.5" />
                     Fotos sugeridas del catálogo · toca una para usarla
                   </p>
+                  <STooltipProvider delayDuration={250}>
                   <div className="flex gap-2 overflow-x-auto pb-0.5">
                     {imageSuggestions.map((s) => (
+                      <Hint key={s.barcode} label={s.name}>
                       <button
-                        key={s.barcode}
                         type="button"
-                        title={s.name}
                         aria-label={`Usar la foto de ${s.name}`}
                         onClick={() => {
                           setProductImage(s.image);
@@ -1627,8 +1628,10 @@ const AddProductModal = ({
                           {s.name}
                         </span>
                       </button>
+                      </Hint>
                     ))}
                   </div>
+                  </STooltipProvider>
                 </div>
               )}
               {/* Proveedor y Categoría: fila completa debajo de la foto. */}
