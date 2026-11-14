@@ -502,8 +502,16 @@ const createTaecel = ({
       };
     }
     try {
+      const previous = readCredentials();
       const enc = cipher.encryptString(JSON.stringify({ key: k, nip: n })).toString("base64");
       setSetting(KEY_SETTING, enc);
+      // Otra cuenta (p. ej. pruebas → producción): su catálogo no sirve. Se
+      // borra para que la siguiente consulta baje el de la cuenta nueva sin
+      // esperar las 24 h ni el bloqueo de 1 h del refresco manual.
+      if (!previous || previous.key !== k) {
+        deleteSetting(CATALOG_SETTING);
+        deleteSetting(CATALOG_AT_SETTING);
+      }
       setSetting(KEY_AT_SETTING, new Date().toISOString());
       if (by != null) setSetting(KEY_BY_SETTING, String(by));
       deleteSetting(BALANCE_SETTING); // el saldo es por cuenta
