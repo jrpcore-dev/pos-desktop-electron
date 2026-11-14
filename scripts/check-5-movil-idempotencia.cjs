@@ -161,6 +161,29 @@ const movementsOf = (id) =>
   check(r.status === 200 && stockOf(2) === 50, "deshacer con clave", `${r.status} pan=${stockOf(2)}`);
   r = await req("DELETE", `/api/stock/movements/${mov.id}`, { key: `undo-${mov.id}` });
   check(r.status === 200 && r.replay && stockOf(2) === 50, "reenvío de deshacer → replay, no 404 ni doble resta", `${r.status} replay=${r.replay} pan=${stockOf(2)}`);
+  const undone = db.prepare("SELECT reverted_by FROM stock_movements WHERE id = ?").get(mov.id);
+  const reversal = undone && db.prepare("SELECT type, quantity, notes FROM stock_movements WHERE id = ?").get(undone.reverted_by);
+  check(!!undone && !!reversal && reversal.type === "out" && reversal.quantity === 3,
+    "deshacer no borra: deja una salida y marca la entrada", JSON.stringify({ undone, reversal }));
+  r = await req("DELETE", `/api/stock/movements/${mov.id}`, { key: "undo-otra-vez" });
+  check(r.status === 409 && stockOf(2) === 50, "deshacer dos veces con otra clave → 409", `${r.status} pan=${stockOf(2)}`);
+  r = await req("GET", "/api/stock/history/today");
+  check(r.status === 200 && !r.data.movements.some((m) => m.id === mov.id), "la entrada deshecha sale del historial de hoy");
+
+  // 8b · si ya salieron piezas, no se resta a ciegas
+  r = await req("PATCH", "/api/products/2/stock", { key: "k-pan-10", body: { quantity: 10, cost: 0, notes: "", registerExpense: false } });
+  const mov10 = db.prepare("SELECT id FROM stock_movements WHERE product_id = 2 AND type = 'in' ORDER BY id DESC LIMIT 1").get();
+  db.prepare("UPDATE products SET stock = 4 WHERE id = 2").run();
+  r = await req("DELETE", `/api/stock/movements/${mov10.id}`, { key: `undo-${mov10.id}` });
+  check(r.status === 409 && stockOf(2) === 4, "con piezas ya vendidas → 409 y el stock no cambia", `${r.status} ${JSON.stringify(r.data)} pan=${stockOf(2)}`);
+
+  // 8c · el costo vuelve al anterior al deshacer
+  r = await req("PATCH", "/api/products/1/stock", { key: "k-costo", body: { quantity: 5, cost: 30, notes: "", registerExpense: false, updateCostPrice: 6 } });
+  const movCost = db.prepare("SELECT id FROM stock_movements WHERE product_id = 1 AND type = 'in' ORDER BY id DESC LIMIT 1").get();
+  const costAfter = db.prepare("SELECT cost_price FROM products WHERE id = 1").get().cost_price;
+  r = await req("DELETE", `/api/stock/movements/${movCost.id}`, { key: `undo-${movCost.id}` });
+  const costBack = db.prepare("SELECT cost_price FROM products WHERE id = 1").get().cost_price;
+  check(costAfter === 6 && r.status === 200 && costBack === 5, "deshacer regresa el costo anterior", `después=${costAfter} vuelta=${costBack}`);
 
   // 9 · caja·paquete·pieza ("boxpack"): la búsqueda trae los datos del paquete
   // y el costo de una recepción sin costo capturado se calcula por caja.
@@ -176,6 +199,43 @@ const movementsOf = (id) =>
   check(r.status === 200 && stockOf(50) === 18, "boxpack: 3 paquetes (18 pz) suman 18 piezas", `${r.status} stock=${stockOf(50)}`);
   check(!!bpMov && Math.abs(bpMov.cost - 72) < 0.001, "boxpack: costo = $240/caja ÷ 60 × 18 = $72", JSON.stringify(bpMov));
   check(r.data && r.data.product && r.data.product.pack_qty === 6, "la respuesta del stock incluye pack_qty", JSON.stringify(r.data && r.data.product));
+
+  // 10 · editar y dar de baja: solo administradores, sin perder lo que el móvil no toca
+  const pc = hashPin("5678");
+  db.prepare(
+    "INSERT INTO cashiers (id, name, role, pin, is_active, pin_hash, pin_salt) VALUES (2,'Luis','cashier','',1,?,?)",
+  ).run(pc.hash, pc.salt);
+  db.prepare("INSERT INTO categories (id, name) VALUES (7, 'Lácteos')").run();
+  db.prepare("UPDATE products SET category_id = 7 WHERE id = 1").run();
+  db.prepare("INSERT INTO product_prices (product_id, type, qty, price, unit) VALUES (1, 'mayoreo', 6, 7.5, 'piece')").run();
+  const adminToken = token;
+  const loginLuis = await req("POST", "/api/auth", { body: { id: 2, pin: "5678" } });
+  token = loginLuis.data && loginLuis.data.token;
+  r = await req("PATCH", "/api/products/1", { key: "k-edit-cajero", body: { price: 1 } });
+  check(r.status === 403, "un cajero no puede editar", `${r.status}`);
+  r = await req("DELETE", "/api/products/1", { key: "k-del-cajero" });
+  check(r.status === 403, "un cajero no puede dar de baja", `${r.status}`);
+  token = adminToken;
+
+  const stockBefore = stockOf(1);
+  r = await req("PATCH", "/api/products/1", { key: "k-edit-1", body: { name: "Leche entera 1 L", price: 9.5, cost_price: 6 } });
+  const edited = db.prepare("SELECT name, price, cost_price, category_id, stock FROM products WHERE id = 1").get();
+  const tiers = db.prepare("SELECT COUNT(*) c FROM product_prices WHERE product_id = 1").get().c;
+  check(r.status === 200 && edited.name === "Leche entera 1 L" && edited.price === 9.5 && edited.cost_price === 6,
+    "el admin edita nombre, precio y costo", `${r.status} ${JSON.stringify(edited)}`);
+  check(edited.category_id === 7 && tiers === 1 && edited.stock === stockBefore,
+    "conserva categoría, precios de mayoreo y stock", JSON.stringify({ edited, tiers, stockBefore }));
+  check(r.data && r.data.product && r.data.product.category_name === "Lácteos", "devuelve el producto con su categoría", JSON.stringify(r.data));
+  r = await req("PATCH", "/api/products/1", { key: "k-edit-dup", body: { barcode: "002" } });
+  check(r.status === 409, "no deja repetir el código de otro producto", `${r.status} ${JSON.stringify(r.data)}`);
+  r = await req("PATCH", "/api/products/1", { key: "k-edit-neg", body: { price: -3 } });
+  check(r.status === 400, "rechaza precios negativos", `${r.status}`);
+
+  r = await req("DELETE", "/api/products/50", { key: "k-del-50" });
+  const gone = db.prepare("SELECT is_active FROM products WHERE id = 50").get();
+  check(r.status === 200 && gone.is_active === 0, "el admin da de baja (sin borrar la fila)", `${r.status} ${JSON.stringify(gone)}`);
+  r = await req("GET", "/api/products/search?q=Galletas");
+  check(r.status === 200 && r.data.products.length === 0, "el producto dado de baja ya no aparece en la búsqueda");
 
   await apiServer.stopServer();
   db.close();

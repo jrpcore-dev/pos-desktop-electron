@@ -714,6 +714,12 @@ const runMigrations = (db) => {
   ensureColumn("stock_movements", "cashier_id", "INTEGER");
   // Migration: add supplier_id to stock_movements (control de compras por proveedor)
   ensureColumn("stock_movements", "supplier_id", "INTEGER");
+  // Migration: deshacer desde el móvil sin borrar el historial. La entrada
+  // guarda el costo que había y el que dejó (para devolverlo solo si nadie lo
+  // cambió después) y, al deshacerse, el id del movimiento que la revirtió.
+  ensureColumn("stock_movements", "prev_cost_price", "REAL");
+  ensureColumn("stock_movements", "set_cost_price", "REAL");
+  ensureColumn("stock_movements", "reverted_by", "INTEGER");
   // Migration: comisión que cobra la tienda por recarga/servicio (aparte del
   // importe que va a Taecel). Se fija al pedir la operación.
   ensureColumn("service_transactions", "fee_cents", "INTEGER NOT NULL DEFAULT 0");

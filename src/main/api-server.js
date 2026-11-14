@@ -589,6 +589,70 @@ const startServer = async (
     return { status: 200, body: { success: true, product, message: "Producto registrado correctamente" } };
   })));
 
+  // ─── Editar / dar de baja desde el móvil: solo administradores ─────────────
+  const isAdmin = (req) =>
+    !!db.prepare("SELECT 1 FROM cashiers WHERE id = ? AND is_active = 1 AND role = 'admin'").get(req.cashierId);
+  const ADMIN_ONLY = { status: 403, body: { success: false, code: "FORBIDDEN", error: "Solo un administrador puede hacer esto" } };
+  const MOBILE_PRODUCT_COLS =
+    "p.id, p.barcode, p.name, p.price, p.stock, p.cost_price, p.sale_unit, p.min_stock, p.box_qty, p.box_price, p.pack_qty, p.pack_price, c.name AS category_name, s.name AS supplier_name";
+  const mobileProduct = (id) =>
+    db.prepare(`
+      SELECT ${MOBILE_PRODUCT_COLS}
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE p.id = ?
+    `).get(id);
+
+  // Campos que el móvil puede cambiar. Unidad, piezas por caja/paquete, stock,
+  // promociones y precios de mayoreo se quedan en el escritorio.
+  const EDITABLE = {
+    name: (v) => String(v || "").trim(),
+    barcode: (v) => String(v || "").trim(),
+    price: (v) => parseFloat(v),
+    cost_price: (v) => parseFloat(v),
+    box_price: (v) => parseFloat(v),
+    pack_price: (v) => parseFloat(v),
+    min_stock: (v) => parseFloat(v),
+  };
+
+  app.patch("/api/products/:id", protect(scopeDefs.SCOPE.CATALOG_WRITE), requireProtocolWrite, safe(idempotent("PATCH /api/products/:id", (req) => {
+    if (!isAdmin(req)) return ADMIN_ONLY;
+    const id = parseInt(req.params.id);
+    const current = db.prepare("SELECT * FROM products WHERE id = ? AND is_active = 1").get(id);
+    if (!current) return { status: 404, body: { success: false, error: "Producto no encontrado" } };
+
+    const changes = {};
+    for (const [key, parse] of Object.entries(EDITABLE)) {
+      if (!(key in (req.body || {}))) continue;
+      const v = parse(req.body[key]);
+      if (typeof v === "number" && (!Number.isFinite(v) || v < 0))
+        return { status: 400, body: { success: false, error: `Valor inválido en ${key}` } };
+      changes[key] = v;
+    }
+    if ("name" in changes && !changes.name)
+      return { status: 400, body: { success: false, error: "Nombre requerido" } };
+
+    // productsCore.update escribe la fila completa: se parte del producto y sus
+    // precios de mayoreo actuales para no borrar lo que el móvil no edita.
+    const prices = db.prepare("SELECT type, qty, price, unit FROM product_prices WHERE product_id = ?").all(id);
+    const out = productsCore.update(db, id, { ...current, prices, ...changes, stock: undefined });
+    if (!out.success) return { status: out.code === "BARCODE_TAKEN" ? 409 : 400, body: out };
+
+    if (typeof onDataChanged === "function") onDataChanged(["products"], {});
+    return { status: 200, body: { success: true, product: mobileProduct(id), message: "Producto actualizado" } };
+  })));
+
+  // Baja lógica, igual que el escritorio: el historial y las ventas lo conservan.
+  app.delete("/api/products/:id", protect(scopeDefs.SCOPE.CATALOG_WRITE), requireProtocolWrite, safe(idempotent("DELETE /api/products/:id", (req) => {
+    if (!isAdmin(req)) return ADMIN_ONLY;
+    const id = parseInt(req.params.id);
+    const info = db.prepare("UPDATE products SET is_active = 0 WHERE id = ? AND is_active = 1").run(id);
+    if (!info.changes) return { status: 404, body: { success: false, error: "Producto no encontrado" } };
+    if (typeof onDataChanged === "function") onDataChanged(["products"], {});
+    return { status: 200, body: { success: true, message: "Producto eliminado" } };
+  })));
+
   app.patch("/api/products/:id/stock", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe(idempotent("PATCH /api/products/:id/stock", (req) => {
     const { quantity, notes, cost, supplierId, registerExpense, updateCostPrice } = req.body;
     const id = parseInt(req.params.id);
@@ -617,9 +681,11 @@ const startServer = async (
             : (product.cost_price || 0) * qty;
 
       // Optional cost price update (the user confirmed the new unit/box cost)
+      let costChange = null;
       if (req.body.updateCostPrice !== undefined && !isNaN(parseFloat(req.body.updateCostPrice))) {
         const rounded = Math.round((parseFloat(req.body.updateCostPrice) + Number.EPSILON) * 100) / 100;
         db.prepare("UPDATE products SET cost_price = ? WHERE id = ?").run(rounded, id);
+        costChange = { prev: product.cost_price || 0, set: rounded };
       }
 
       const supplier = supplierId
@@ -630,9 +696,14 @@ const startServer = async (
       db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?")
         .run(qty, id);
       db.prepare(`
-        INSERT INTO stock_movements (product_id, type, quantity, cost, reference, notes, cashier_id, supplier_id)
-        VALUES (?, 'in', ?, ?, 'App móvil', ?, ?, ?)
-      `).run(id, qty, totalCost, supplierName ? `Compra de inventario — ${supplierName}` : (notes || "Movil"), req.cashierId || null, supplier ? supplier.id : null);
+        INSERT INTO stock_movements (product_id, type, quantity, cost, reference, notes, cashier_id, supplier_id, prev_cost_price, set_cost_price)
+        VALUES (?, 'in', ?, ?, 'App móvil', ?, ?, ?, ?, ?)
+      `).run(
+        id, qty, totalCost,
+        supplierName ? `Compra de inventario — ${supplierName}` : (notes || "Movil"),
+        req.cashierId || null, supplier ? supplier.id : null,
+        costChange ? costChange.prev : null, costChange ? costChange.set : null,
+      );
 
       // Register cost as expense (even if no cash register is open)
       // unless the user opted to not deduct from the register (registerExpense=false).
@@ -1014,6 +1085,7 @@ const startServer = async (
         JOIN products p ON p.id = m.product_id
         WHERE m.type = 'in'
           AND m.reference = 'App móvil'
+          AND m.reverted_by IS NULL
           AND m.cashier_id = ?
           AND date(m.created_at, 'localtime') = date('now', 'localtime')
         ORDER BY m.id DESC
@@ -1026,7 +1098,7 @@ const startServer = async (
   app.delete("/api/stock/movements/:movementId", protect(scopeDefs.SCOPE.STOCK_WRITE), requireProtocolWrite, safe(idempotent("DELETE /api/stock/movements/:movementId", (req) => {
     const id = parseInt(req.params.movementId);
     const movement = db
-      .prepare("SELECT id, product_id, quantity, type, reference, cashier_id FROM stock_movements WHERE id = ?")
+      .prepare("SELECT id, product_id, quantity, cost, type, reference, cashier_id, prev_cost_price, set_cost_price, reverted_by FROM stock_movements WHERE id = ?")
       .get(id);
     if (!movement)
       return { status: 404, body: { success: false, error: "Movimiento no encontrado" } };
@@ -1034,10 +1106,32 @@ const startServer = async (
       return { status: 400, body: { success: false, error: "Este movimiento no se puede deshacer desde la app móvil" } };
     if (movement.cashier_id != null && String(movement.cashier_id) !== String(req.cashierId))
       return { status: 403, body: { success: false, error: "No autorizado para deshacer este movimiento" } };
+    if (movement.reverted_by != null)
+      return { status: 409, body: { success: false, error: "Este movimiento ya se deshizo" } };
 
+    // Si ya salieron piezas de esta entrada, restarla dejaría el stock mal: se
+    // pide ajustarlo desde el escritorio en vez de esconder la diferencia.
+    const current = db.prepare("SELECT stock, cost_price FROM products WHERE id = ?").get(movement.product_id);
+    if (!current || (current.stock || 0) < movement.quantity)
+      return {
+        status: 409,
+        body: {
+          success: false,
+          error: `Solo quedan ${current ? current.stock || 0 : 0} pz y esta entrada fue de ${movement.quantity}. Ajusta el stock desde el escritorio.`,
+        },
+      };
+
+    // Deshacer no borra: deja una salida que lo explica y marca la entrada.
     db.transaction(() => {
-      db.prepare("UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?").run(movement.quantity, movement.product_id);
-      db.prepare("DELETE FROM stock_movements WHERE id = ?").run(id);
+      db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(movement.quantity, movement.product_id);
+      const reversal = db.prepare(`
+        INSERT INTO stock_movements (product_id, type, quantity, cost, reference, notes, cashier_id)
+        VALUES (?, 'out', ?, ?, 'App móvil', ?, ?)
+      `).run(movement.product_id, movement.quantity, movement.cost || 0, `Deshecho: entrada #${movement.id}`, req.cashierId || null);
+      db.prepare("UPDATE stock_movements SET reverted_by = ? WHERE id = ?").run(reversal.lastInsertRowid, movement.id);
+      // El costo vuelve al anterior solo si sigue siendo el que puso esta entrada.
+      if (movement.set_cost_price != null && Math.abs((current.cost_price || 0) - movement.set_cost_price) < 0.005)
+        db.prepare("UPDATE products SET cost_price = ? WHERE id = ?").run(movement.prev_cost_price || 0, movement.product_id);
     })();
 
     const product = db
