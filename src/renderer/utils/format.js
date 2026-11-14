@@ -18,6 +18,18 @@ export const fmtNumber = (n) => {
   return (Number.isFinite(v) ? v : 0).toLocaleString("es-MX", MX);
 };
 
+/**
+ * Cantidades vendidas / en existencia: "5" para piezas y "5.450" para granel.
+ * Nunca más de 3 decimales (evita "5.450000000000001" por sumas en coma flotante).
+ */
+export const fmtQty = (n) => {
+  const v = Number(n);
+  const r = Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
+  return Number.isInteger(r)
+    ? r.toLocaleString("es-MX")
+    : r.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+};
+
 /** "1,234" (enteros, sin decimales). */
 export const fmtInt = (n) => {
   const v = Number(n);

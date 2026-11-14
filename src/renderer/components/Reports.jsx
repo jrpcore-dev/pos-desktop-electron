@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { fmtMoney } from "@/utils/format";
+import { fmtMoney, fmtQty } from "@/utils/format";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -169,6 +169,15 @@ const fmtUnits = (n) => {
     return `${v < 100000 ? (v / 1000).toFixed(1).replace(/\.0$/, "") : Math.round(v / 1000)}k`;
   return `${v}`;
 };
+
+// "5 unidades" o "5.450 kg" según cómo se vende el producto.
+const fmtSold = (p, piezas = "unidades") =>
+  p?.sale_unit === "weight"
+    ? `${fmtQty(p.total_sold)} kg`
+    : `${fmtQty(p?.total_sold)} ${piezas}`.trim();
+
+// Para CSV: número crudo sin separador de miles, máx. 3 decimales.
+const rawQty = (n) => String(Math.round(Number(n || 0) * 1000) / 1000);
 
 const pctOf = (cur, prev) =>
   prev === 0 ? (cur > 0 ? 100 : 0) : ((cur - prev) / prev) * 100;
@@ -399,7 +408,9 @@ const UnitTooltip = ({ active, payload, label }) => {
           />
           <span className="min-w-14 text-muted-foreground">{p.name}</span>
           <span className="ml-auto font-bold text-foreground">
-            {Number(p.value || 0).toLocaleString("es-MX")} uds
+            {p.payload?.sale_unit === "weight"
+              ? `${fmtQty(p.value)} kg`
+              : `${fmtQty(p.value)} uds`}
           </span>
         </p>
       ))}
@@ -1570,7 +1581,7 @@ const Reports = () => {
     rows.push("");
     rows.push("PRODUCTOS MAS VENDIDOS");
     rows.push("Producto,Unidades");
-    topProducts.slice(0, 10).forEach((p) => rows.push(`${p.name},${p.total_sold}`));
+    topProducts.slice(0, 10).forEach((p) => rows.push(`${p.name},${rawQty(p.total_sold)}${p.sale_unit === "weight" ? " kg" : ""}`));
     const blob = new Blob(["\uFEFF" + rows.join("\n")], {
       type: "text/csv;charset=utf-8;",
     });
@@ -1734,7 +1745,7 @@ const Reports = () => {
       doc.autoTable({
         startY: yy + 3,
         head: [["Producto", "Unidades"]],
-        body: topProducts.slice(0, 10).map((p, i) => [`${i + 1}. ${p.name}`, String(p.total_sold)]),
+        body: topProducts.slice(0, 10).map((p, i) => [`${i + 1}. ${p.name}`, fmtSold(p, "")]),
         margin: { left: margin, right: margin },
         styles: tblBase,
         headStyles: tblHead,
@@ -1896,7 +1907,7 @@ const Reports = () => {
             vs período anterior)
             . Tu producto estrella fue{" "}
             <span className="font-semibold">{bestProduct ? bestProduct.name : "—"}</span>
-            {bestProduct ? ` con ${bestProduct.total_sold} unidades` : ""}, y tu hora pico es{" "}
+            {bestProduct ? ` con ${fmtSold(bestProduct)}` : ""}, y tu hora pico es{" "}
             <span className="font-semibold tabular-nums">
               {summary.peakHour != null ? `${summary.peakHour}:00` : "—"}
             </span>
@@ -2012,7 +2023,7 @@ const Reports = () => {
             value={bestProduct ? bestProduct.name : "—"}
             caption={
               bestProduct
-                ? `${bestProduct.total_sold} unidades vendidas`
+                ? `${fmtSold(bestProduct, "unidades vendidas")}${bestProduct.sale_unit === "weight" ? " vendidos" : ""}`
                 : "Sin datos"
             }
           />
