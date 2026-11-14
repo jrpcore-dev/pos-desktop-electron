@@ -61,6 +61,7 @@ const CHECKS = [
   { file: "check-promos.mjs", node: true },
   // Auditoría multicaja (fases 0-4).
   { file: "check-0-taecel-folio.cjs" },
+  { file: "check-taecel-cycle.cjs" },
   { file: "check-service-fees.cjs" },
   { file: "check-1-security.cjs" },
   { file: "check-2-queue-folio.cjs" },

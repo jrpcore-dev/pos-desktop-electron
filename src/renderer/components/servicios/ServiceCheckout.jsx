@@ -355,13 +355,15 @@ const ServiceCheckout = ({
     if (canCharge) charge();
   };
 
-  // Consulta el estado de la operación en curso (no cobra).
-  const reconcile = useCallback(async () => {
+  // Consulta el estado de la operación en curso (no cobra). Las lecturas
+  // automáticas sólo leen la fila; `manual` deja al main consultar a Taecel.
+  const reconcile = useCallback(async (manual = false) => {
     const cur = tx;
     if (!cur?.clientRequestId) return;
     try {
       const r = await window.api.invoke("taecel:transaction-status", {
         clientRequestId: cur.clientRequestId,
+        manual,
       });
       if (!r?.ok || !r.transaction) return;
       const next = display(r.transaction, cur);
@@ -388,7 +390,7 @@ const ServiceCheckout = ({
   const retry = useCallback(() => {
     if (tx?.status === "unknown" || tx?.status === "pending") {
       polls.current = 0;
-      reconcile();
+      reconcile(true);
       return;
     }
     charge();

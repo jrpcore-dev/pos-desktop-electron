@@ -41,6 +41,9 @@ const BALANCE_TTL_MS = 5 * 60 * 1000; // 5 min (doc: 5–10 min)
 const CATALOG_TTL_MS = 24 * 60 * 60 * 1000; // 1 vez al día
 const CATALOG_COOLDOWN_MS = 60 * 60 * 1000; // refresco manual: 1/hora
 const SALES_TTL_MS = 5 * 60 * 1000;
+// Tiempos exigidos por Taecel en la certificación.
+const REQUEST_TIMEOUT_MS = 30 * 1000;
+const STATUS_TIMEOUT_MS = 10 * 1000;
 
 const CATEGORY_META = {
   1: { key: "telefonia", kind: "airtime", variant: "recarga", label: "Tiempo aire" },
@@ -761,7 +764,7 @@ const createTaecel = ({
     if (ref) params.refCte = ref;
 
     try {
-      const { httpStatus, json } = await call("RequestTXN", params, 25000);
+      const { httpStatus, json } = await call("RequestTXN", params, REQUEST_TIMEOUT_MS);
       if (json.success && Number(json.error) === 0 && json.data && json.data.transID) {
         clearLastError();
         return {
@@ -795,7 +798,9 @@ const createTaecel = ({
     }
   };
 
-  const statusTxn = async (transId) => {
+  // Taecel: cada StatusTXN espera de 5 a 10 s como máximo. Quien orquesta el
+  // ciclo puede pedir menos para no rebasar la ventana de 60 s.
+  const statusTxn = async (transId, { timeoutMs = STATUS_TIMEOUT_MS } = {}) => {
     const creds = readCredentials();
     if (!creds) {
       return {
@@ -810,10 +815,15 @@ const createTaecel = ({
       const { httpStatus, json } = await call(
         "StatusTXN",
         { key: creds.key, nip: creds.nip, transID: String(transId || "").trim() },
-        15000,
+        Math.min(Math.max(Number(timeoutMs) || STATUS_TIMEOUT_MS, 1000), STATUS_TIMEOUT_MS),
       );
-      if (json.success && Number(json.error) === 0) {
-        const data = json.data && typeof json.data === "object" ? json.data : {};
+      // Una TXN fracasada llega con success:false/error:1 pero con
+      // data.Status "Fracasada": eso es un estatus final, no un error de consulta.
+      const data = json.data && typeof json.data === "object" && !Array.isArray(json.data) ? json.data : {};
+      const finalInData = ["applied", "failed"].includes(
+        normalizeStatus(getField(data, ["Status", "status", "Estatus"])),
+      );
+      if ((json.success && Number(json.error) === 0) || finalInData) {
         const normalized = normalizeStatusData(data, json.message);
         clearLastError();
         return { ok: true, ...normalized, envelope: json, httpStatus };
@@ -828,7 +838,9 @@ const createTaecel = ({
     }
   };
 
-  const getSales = async ({ date, bolsa = 1 } = {}) => {
+  // `force` salta el cache: el seguimiento de una TXN sin estatus final
+  // necesita el listado actual, no el de hace 5 min.
+  const getSales = async ({ date, bolsa = 1, force = false } = {}) => {
     const creds = readCredentials();
     if (!creds) {
       return {
@@ -848,7 +860,7 @@ const createTaecel = ({
     const b = String(bolsa) === "2" ? 2 : 1;
     const cacheKey = `${fecha}:${b}`;
     const cached = salesCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < SALES_TTL_MS) {
+    if (!force && cached && Date.now() - cached.at < SALES_TTL_MS) {
       return { ...cached.result, cached: true };
     }
     try {

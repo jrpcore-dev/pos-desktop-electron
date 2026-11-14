@@ -9,6 +9,17 @@
 //   failed     → el operador rechazó; NO se crea venta
 //   unknown    → no sabemos; NO se crea venta y se marca para revisión
 //
+// Ciclo de confirmación (tiempos exigidos por Taecel en la certificación):
+//   · StatusTXN se consulta en cuanto RequestTXN devuelve el transID.
+//   · Cada StatusTXN espera 10 s como máximo; entre consultas se esperan 3 s.
+//   · "En proceso", timeout o respuesta mal formada → se vuelve a consultar.
+//   · Se consulta mientras no pasen 60 s desde RequestTXN; ninguna consulta
+//     espera más allá de los 65 s. Después se da
+//     seguimiento con getSales: al cerrar la ventana y a los 1.5, 3.5, 8.5 y
+//     18.5 min. Sin estatus final tras el último, queda `unknown` para
+//     revisión. Ni el poller ni la UI consultan StatusTXN fuera
+//     de este ciclo.
+//
 // Reglas que sostienen el negocio:
 //   · RequestTXN NUNCA se reenvía automáticamente.
 //   · StatusTXN.success sólo dice que la consulta funcionó; el resultado es
@@ -27,9 +38,21 @@ const { normalizeReference, maskReference } = require("./taecel-errors");
 
 const POLL_INTERVAL_MS = 5000;
 const POLL_MAX_AGE_SEC = 60;
+// Ventana de StatusTXN (Taecel: 60–65 s desde RequestTXN). Se sigue enviando
+// mientras no hayan pasado 60 s; ninguna respuesta se espera más allá de 65 s.
+// Así una consulta enviada justo antes de los 60 s conserva 5 s de timeout.
+const STATUS_CYCLE_MS = POLL_MAX_AGE_SEC * 1000;
+const STATUS_HARD_LIMIT_MS = 65 * 1000;
+const STATUS_RETRY_MS = 3000;
+const STATUS_TIMEOUT_MS = 10000;
+const AGE_CUTOFF_REASONS = new Set(["TIMEOUT_60S", "TXN_NOT_FOUND", "STATUS_UNCONFIRMED"]);
+// Seguimiento con getSales tras la ventana de StatusTXN: uno al cerrar la
+// ventana y luego a estos segundos desde RequestTXN (1.5, 3.5, 8.5 y 18.5 min).
+const FOLLOWUP_AT_SEC = [90, 210, 510, 1110];
 const RATE_LIMIT_MAX_AGE_SEC = 300;
 const REQUEST_STALE_SEC = 120;
-const PENDING_STALE_SEC = 10 * 60;
+// Red de seguridad: más allá del último getSales agendado.
+const PENDING_STALE_SEC = 25 * 60;
 const HISTORY_LIMIT = 200;
 
 const sha256 = (value) =>
@@ -48,6 +71,15 @@ const ageSeconds = (requestedAt) => {
   const d = parseSqlDate(requestedAt);
   if (!d) return 0;
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// getSales pide la fecha local (YYYY-MM-DD); requested_at viene en UTC.
+const localDate = (value) => {
+  const d = value instanceof Date ? value : parseSqlDate(value) || new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
 const moneyCents = (cents) => {
@@ -107,6 +139,8 @@ const createServiceTransactions = ({
   if (!taecel) throw new Error("createServiceTransactions requiere taecel");
 
   const inFlight = new Map();
+  // id de fila -> promesa del ciclo StatusTXN en curso (uno por transacción).
+  const cycles = new Map();
   let poller = null;
   let ticking = false;
 
@@ -622,7 +656,122 @@ const createServiceTransactions = ({
     return getForSettlement(current);
   };
 
-  const checkRow = async (row) => {
+  // Seguimiento tras la ventana de 60 s: se busca el transID en el listado de
+  // ventas del día. Bolsa 2 = servicios; el resto sale de tiempo aire (1). Si
+  // no aparece en la esperada se prueba la otra. Sin estatus final, la fila
+  // sigue `pending` y se agenda el siguiente getSales (FOLLOWUP_AT_SEC); al
+  // agotarse la agenda queda `unknown` para revisión.
+  const followUpWithSales = async (row) => {
+    const current = getForSettlement(row);
+    if (!current || !current.provider_trans_id) return current;
+    const following =
+      current.status === "pending" ||
+      (current.status === "unknown" && AGE_CUTOFF_REASONS.has(current.review_reason));
+    const date = localDate(current.requested_at);
+    const first = Number(current.category_id) === 3 ? 2 : 1;
+    let sale = null;
+    let lastError = null;
+    for (const bolsa of [first, first === 1 ? 2 : 1]) {
+      const res = await taecel.getSales({ date, bolsa, force: true });
+      if (!res || !res.ok) {
+        lastError = res;
+        continue;
+      }
+      sale = (res.sales || []).find(
+        (s) => s.transId && String(s.transId) === String(current.provider_trans_id),
+      );
+      if (sale) break;
+    }
+    if (sale && (sale.status === "applied" || sale.status === "failed")) {
+      return applyStatus(current, { ok: true, ...sale });
+    }
+    if (!following) return getForSettlement(current);
+
+    const age = ageSeconds(current.requested_at);
+    const next = FOLLOWUP_AT_SEC.find((sec) => sec > age + 1);
+    if (next != null) {
+      db.prepare(
+        `UPDATE service_transactions SET
+          status = 'pending',
+          provider_status = COALESCE(?, provider_status),
+          provider_message = ?,
+          next_check_at = datetime(requested_at, ?),
+          needs_review = 0,
+          review_reason = NULL,
+          last_checked_at = CURRENT_TIMESTAMP,
+          check_attempts = check_attempts + 1,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      ).run(
+        sale ? sale.rawStatus : null,
+        "Sigue en proceso; confirmando con el listado de ventas de Taecel",
+        `+${next} seconds`,
+        current.id,
+      );
+      touch();
+      return getForSettlement(current);
+    }
+
+    return markUnknown(current, "TIMEOUT_60S", {
+      rawStatus: sale ? sale.rawStatus : null,
+      message: sale
+        ? "Taecel sigue sin estatus final; revisar en el listado de ventas"
+        : lastError
+          ? `Sin confirmar y no se pudo consultar getSales: ${lastError.error || lastError.message || "error"}`
+          : "Sin confirmar; no aparece en el listado de ventas de Taecel",
+    });
+  };
+
+  // StatusTXN inmediato, reintento cada 3 s y timeout de 10 s por consulta.
+  // Se envían consultas hasta los 60 s desde RequestTXN y ninguna espera más
+  // allá de los 65 s; después, getSales.
+  const runStatusCycle = async (rowId, startedAtMs) => {
+    for (;;) {
+      const current = getById(rowId);
+      if (!current || current.status !== "pending") return current;
+      if (!current.provider_trans_id) {
+        return markUnknown(current, "NO_TRANSID", { message: "Taecel no devolvió transID" });
+      }
+      const elapsed = Date.now() - startedAtMs;
+      if (elapsed >= STATUS_CYCLE_MS) return followUpWithSales(current);
+
+      const result = await taecel.statusTxn(current.provider_trans_id, {
+        timeoutMs: Math.min(STATUS_TIMEOUT_MS, STATUS_HARD_LIMIT_MS - elapsed),
+      });
+      const updated = applyStatus(current, result);
+      // applyStatus corta por edad (requested_at, al segundo); ese corte
+      // también debe pasar por getSales.
+      if (updated && updated.status === "unknown" && AGE_CUTOFF_REASONS.has(updated.review_reason)) {
+        return followUpWithSales(updated);
+      }
+      if (!updated || updated.status !== "pending") return updated;
+
+      if (Date.now() + STATUS_RETRY_MS - startedAtMs >= STATUS_CYCLE_MS) {
+        return followUpWithSales(updated);
+      }
+      await sleep(STATUS_RETRY_MS);
+    }
+  };
+
+  const ensureStatusCycle = (row, startedAtMs = null) => {
+    if (!row) return null;
+    if (cycles.has(row.id)) return cycles.get(row.id);
+    const start = startedAtMs ?? (parseSqlDate(row.requested_at) || new Date()).getTime();
+    const promise = runStatusCycle(row.id, start)
+      .catch((err) => {
+        logger("status-cycle", err);
+        return getById(row.id);
+      })
+      .finally(() => {
+        cycles.delete(row.id);
+      });
+    cycles.set(row.id, promise);
+    return promise;
+  };
+
+  // `manual`: el cajero pidió revisar. Las revisiones automáticas de la UI no
+  // llaman al proveedor; el ciclo de arriba es el único que consulta StatusTXN.
+  const checkRow = async (row, { manual = false } = {}) => {
     const current = getForSettlement(row);
     if (!current) return null;
 
@@ -660,13 +809,29 @@ const createServiceTransactions = ({
     }
 
     if (!current.provider_trans_id) {
+      if (current.status === "unknown") return current;
       return markUnknown(current, "NO_TRANSID", {
         message: "Taecel no devolvió transID",
       });
     }
 
-    const result = await taecel.statusTxn(current.provider_trans_id);
-    return applyStatus(current, result);
+    if (current.status === "pending") {
+      if (cycles.has(current.id)) return current;
+      // En seguimiento (pasados los 60 s): el cajero puede adelantar el
+      // siguiente getSales; las lecturas automáticas esperan su turno.
+      if (manual && ageSeconds(current.requested_at) >= POLL_MAX_AGE_SEC) {
+        return followUpWithSales(current);
+      }
+      const due = parseSqlDate(current.next_check_at);
+      if (!due || due.getTime() <= Date.now()) ensureStatusCycle(current);
+      return current;
+    }
+
+    // unknown con transID: pasada la ventana de 60 s ya no se usa StatusTXN.
+    if (current.status === "unknown" && manual) {
+      return followUpWithSales(current);
+    }
+    return current;
   };
 
   const safeParse = (value) => {
@@ -867,6 +1032,7 @@ const createServiceTransactions = ({
     touch();
 
     let result;
+    const requestSentAt = Date.now();
     try {
       result = await taecel.requestTxn({
         productCode: product.sku,
@@ -902,6 +1068,7 @@ const createServiceTransactions = ({
         ledgerId,
       );
       touch();
+      ensureStatusCycle(getById(ledgerId), requestSentAt);
       return resultFromRow(getById(ledgerId), {
         ok: true,
         message: "Recarga enviada; estamos confirmando con el operador",
@@ -1004,14 +1171,14 @@ const createServiceTransactions = ({
     return { ok: true, transaction: toUiRow(row) };
   };
 
-  const checkTransaction = async ({ transactionId, clientRequestId } = {}) => {
+  const checkTransaction = async ({ transactionId, clientRequestId, manual = false } = {}) => {
     const row = transactionId
       ? getById(transactionId)
       : getByClientRequestId(clientRequestId);
     if (!row) {
       return { ok: false, code: "SERVICE_TX_NOT_FOUND", error: "No se encontró la operación" };
     }
-    const updated = await checkRow(row);
+    const updated = await checkRow(row, { manual: manual === true });
     return { ok: true, transaction: toUiRow(updated || row) };
   };
 
@@ -1197,9 +1364,9 @@ const createServiceTransactions = ({
     }
     const stalePending = db
       .prepare(
-        "SELECT * FROM service_transactions WHERE status = 'pending' AND requested_at <= datetime('now','-10 minutes')",
+        "SELECT * FROM service_transactions WHERE status = 'pending' AND requested_at <= datetime('now', ?)",
       )
-      .all();
+      .all(`-${PENDING_STALE_SEC} seconds`);
     for (const row of stalePending) {
       markUnknown(row, "POLL_STALE", {
         message: "No se pudo confirmar la recarga con el operador",
@@ -1212,21 +1379,20 @@ const createServiceTransactions = ({
     ticking = true;
     try {
       recoverAmbiguous();
+      // Retoma las pendientes sin ciclo cuando les toca: el siguiente getSales
+      // agendado o, tras reiniciar la app, el ciclo interrumpido. Si ya pasaron
+      // 60 s, el ciclo va directo a getSales.
       const rows = db
         .prepare(
           `SELECT * FROM service_transactions
            WHERE status = 'pending'
              AND provider_trans_id IS NOT NULL
              AND (next_check_at IS NULL OR next_check_at <= CURRENT_TIMESTAMP)
-           ORDER BY id ASC LIMIT 5`,
+           ORDER BY id ASC`,
         )
         .all();
       for (const row of rows) {
-        try {
-          await checkRow(row);
-        } catch (err) {
-          logger("poller", err);
-        }
+        if (!cycles.has(row.id)) ensureStatusCycle(row);
       }
     } catch (err) {
       logger("poller", err);

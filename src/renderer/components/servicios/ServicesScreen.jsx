@@ -171,6 +171,7 @@ const ServicesScreen = () => {
         const res = await window.api.invoke("taecel:transaction-status", {
           transactionId: tx.transactionId,
           clientRequestId: tx.clientRequestId,
+          manual: true,
         });
         if (res?.ok && res.transaction) {
           const next = toUiTransaction(res.transaction);
