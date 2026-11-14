@@ -90,27 +90,6 @@ function StateTile({ icon: Icon, label, status, tone, onClick, title, dot = true
   );
 }
 
-// Paso 4 · nombres legibles de lo que más se pide al Host.
-const CHANNEL_LABELS = {
-  "get-cash-register-status": "Estado de caja",
-  "get-sales-for-today": "Ventas del día",
-  "get-sales-by-date": "Transacciones",
-  "get-sales-by-range": "Transacciones (rango)",
-  "get-stock-movements": "Movimientos",
-  "get-cash-register-expenses": "Retiros",
-  "get-suppliers": "Proveedores",
-  "get-today-tasks": "Tareas",
-  "get-insights": "Avisos",
-  "open-cash-register": "Abrir caja",
-  "close-cash-register": "Cerrar caja",
-  "register-cash-expense": "Salida de dinero",
-  "register-cash-income": "Entrada de dinero",
-  "add-stock": "Llegó mercancía",
-  "remove-stock": "Sacar mercancía",
-  "/api/sales": "Venta",
-  "/api/auth": "Inicio de sesión",
-};
-
 const SystemStatus = ({
   register,
   clock,
@@ -128,15 +107,6 @@ const SystemStatus = ({
 }) => {
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
-  // Paso 4 · en la caja: tiempos de respuesta del Host (p50 / p95 por canal).
-  const [timing, setTiming] = React.useState(null);
-  React.useEffect(() => {
-    if (!open || !hostStatus) return;
-    window.api
-      .invoke("rpc-timing-stats")
-      .then((r) => setTiming(r || null))
-      .catch(() => {});
-  }, [open, hostStatus]);
   const isOpen = register?.status === "open";
   const closedAt = register?.closed_at ? formatMXTime(register.closed_at) : null;
 
@@ -398,30 +368,6 @@ const openRegister = () => {
               title={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
             />
           </div>
-          {hostStatus && timing?.channels?.length > 0 && (
-            <div className="mt-2 rounded-md border border-border/60 px-2.5 py-2">
-              <p className="mb-1 text-xs font-semibold text-muted-foreground">
-                Respuesta del Host (normal · lento)
-              </p>
-              <ul className="space-y-0.5">
-                {timing.channels.slice(0, 6).map((c) => (
-                  <li key={c.channel} className="flex justify-between gap-3 text-xs">
-                    <span className="truncate text-foreground">
-                      {CHANNEL_LABELS[c.channel] || c.channel}
-                    </span>
-                    <span
-                      className={cn(
-                        "shrink-0 tabular-nums",
-                        c.p95 > 1000 ? "font-semibold text-destructive" : c.p95 > 400 ? "text-warning" : "text-muted-foreground",
-                      )}
-                    >
-                      {c.p50} · {c.p95} ms
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
       </PopoverContent>
     </Popover>
