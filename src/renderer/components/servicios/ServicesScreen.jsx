@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  BadgePercent,
   History,
   Loader2,
   RefreshCw,
@@ -19,6 +20,7 @@ import { useCashier } from "@/contexts/CashierContext";
 import ServiceCheckout from "./ServiceCheckout";
 import ServiceHistory from "./ServiceHistory";
 import ServiceProviderDialog from "./ServiceProviderDialog";
+import ServiceFeesDialog from "./ServiceFeesDialog";
 
 // Pantalla de Servicios: cobro e historial en la misma ruta.
 // Este archivo es el único dueño del estado compartido entre las dos pestañas.
@@ -38,6 +40,8 @@ const ServicesScreen = () => {
   const [provider, setProvider] = useState({ state: "loading" });
   const [checking, setChecking] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [feesOpen, setFeesOpen] = useState(false);
+  const isAdmin = cashier?.role === "admin";
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
 
@@ -102,6 +106,17 @@ const ServicesScreen = () => {
     const t = setInterval(checkProvider, 6 * 60 * 1000);
     return () => clearInterval(t);
   }, [checkProvider, loadHistory]);
+
+  // Vuelve a leer el catálogo del Host (sin ir a Taecel): trae la comisión
+  // vigente después de cambiarla o si el Host avisó que cambió al cobrar.
+  const reloadCatalog = useCallback(async () => {
+    try {
+      const catalog = await window.api.invoke("taecel:get-catalog", { force: false });
+      if (mounted.current && catalog?.ok) setOperators(toUiOperators(catalog));
+    } catch (e) {
+      // Se queda el catálogo que había; el próximo chequeo lo trae.
+    }
+  }, []);
 
   // Fuerza la baja del catálogo a Taecel (el Host aplica su cooldown de
   // 1 hora). Sirve cuando se activan servicios o tarjetas en el panel de
@@ -269,6 +284,20 @@ const ServicesScreen = () => {
             )}
           </Button>
           </Hint>
+          {isAdmin && (
+            <Hint label="Comisión de la tienda">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => setFeesOpen(true)}
+                className="size-9"
+                aria-label="Comisión de la tienda"
+              >
+                <BadgePercent size={15} aria-hidden />
+              </Button>
+            </Hint>
+          )}
           <Hint label="Proveedor (Key y NIP de Taecel)">
           <Button
             type="button"
@@ -291,6 +320,7 @@ const ServicesScreen = () => {
             providerLive={provider.state === "live"}
             cashierId={cashier?.id ?? null}
             loading={provider.state === "loading" && operators.length === 0}
+            onCatalogStale={reloadCatalog}
           />
         </TabsContent>
 
@@ -307,6 +337,15 @@ const ServicesScreen = () => {
         open={configOpen}
         onOpenChange={setConfigOpen}
         onSaved={() => checkProvider(true)}
+      />
+      <ServiceFeesDialog
+        open={feesOpen}
+        onOpenChange={setFeesOpen}
+        operators={operators}
+        onSaved={() => {
+          reloadCatalog();
+          notify("Comisión guardada", "success");
+        }}
       />
     </div>
   );

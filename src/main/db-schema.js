@@ -714,6 +714,9 @@ const runMigrations = (db) => {
   ensureColumn("stock_movements", "cashier_id", "INTEGER");
   // Migration: add supplier_id to stock_movements (control de compras por proveedor)
   ensureColumn("stock_movements", "supplier_id", "INTEGER");
+  // Migration: comisión que cobra la tienda por recarga/servicio (aparte del
+  // importe que va a Taecel). Se fija al pedir la operación.
+  ensureColumn("service_transactions", "fee_cents", "INTEGER NOT NULL DEFAULT 0");
 
   // Index on cashier_id must be created AFTER the column is ensured
   // (avoids "no such column: cashier_id" on fresh installs / old DBs)

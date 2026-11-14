@@ -64,6 +64,39 @@ const makeRefCte = (clientRequestId) => {
   return clean ? `R${clean}` : `R${crypto.randomBytes(12).toString("hex").toUpperCase()}`;
 };
 
+// ─── Comisión de la tienda ──────────────────────────────────────────────────
+// Lo que la tienda cobra ENCIMA del importe (no viaja a Taecel). Se configura
+// por tipo (categoría de Taecel) y, opcionalmente, por compañía. Vive en
+// `settings` del Host; las cajas la reciben ya calculada en el catálogo.
+const FEES_KEY = "service_fees";
+const FEE_CATEGORIES = Object.freeze({ 1: "recargas", 2: "paquetes", 3: "servicios", 4: "tarjetas" });
+const MAX_FEE_CENTS = 100000; // $1,000: más es casi seguro un error de captura
+
+const cleanFee = (value) => {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(n, MAX_FEE_CENTS);
+};
+
+const normalizeFees = (raw) => {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const byCategory = {};
+  for (const key of Object.values(FEE_CATEGORIES)) {
+    byCategory[key] = cleanFee(src.byCategory && src.byCategory[key]);
+  }
+  const byCarrier = {};
+  if (src.byCarrier && typeof src.byCarrier === "object") {
+    for (const [id, cents] of Object.entries(src.byCarrier)) {
+      const key = String(id || "").trim();
+      if (!key || cents == null || cents === "") continue;
+      // 0 explícito sí vale: "a esta compañía no se le cobra".
+      const n = Math.round(Number(cents));
+      if (Number.isFinite(n) && n >= 0) byCarrier[key] = Math.min(n, MAX_FEE_CENTS);
+    }
+  }
+  return { byCategory, byCarrier };
+};
+
 const createServiceTransactions = ({
   db,
   taecel,
@@ -76,6 +109,47 @@ const createServiceTransactions = ({
   const inFlight = new Map();
   let poller = null;
   let ticking = false;
+
+  const readFees = () => {
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(FEES_KEY);
+      return normalizeFees(row ? JSON.parse(row.value) : null);
+    } catch (err) {
+      logger("fees-read", err);
+      return normalizeFees(null);
+    }
+  };
+
+  const feeFor = (operator, fees = readFees()) => {
+    if (!operator) return 0;
+    const id = String(operator.id ?? operator.key ?? "");
+    if (id && Object.prototype.hasOwnProperty.call(fees.byCarrier, id)) {
+      return fees.byCarrier[id];
+    }
+    const cat = FEE_CATEGORIES[Number(operator.categoryId)];
+    return cat ? fees.byCategory[cat] || 0 : 0;
+  };
+
+  const getFees = () => ({ ok: true, fees: readFees() });
+
+  const setFees = (payload = {}) => {
+    const fees = normalizeFees(payload.fees || payload);
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(FEES_KEY, JSON.stringify(fees));
+    return { ok: true, fees };
+  };
+
+  // El catálogo sale con la comisión vigente de cada compañía: la caja la
+  // muestra y la manda de vuelta para confirmar que cobra el mismo total.
+  const withFees = (catalog) => {
+    if (!catalog || !Array.isArray(catalog.operators)) return catalog;
+    const fees = readFees();
+    return {
+      ...catalog,
+      operators: catalog.operators.map((op) => ({ ...op, feeCents: feeFor(op, fees) })),
+    };
+  };
 
   const getById = (id) =>
     db.prepare("SELECT * FROM service_transactions WHERE id = ?").get(id) || null;
@@ -102,6 +176,7 @@ const createServiceTransactions = ({
     // `reversed` ya no existe en Taecel; el estado queda por compatibilidad de
     // la UI si alguna fila vieja lo tuviera.
     const amountCents = Number(row.amount_cents) || 0;
+    const feeCents = Number(row.fee_cents) || 0;
     return {
       id: row.id,
       transactionId: row.id,
@@ -123,8 +198,9 @@ const createServiceTransactions = ({
       sku: row.product_code || null,
       inputValue: row.reference_masked || "",
       referenceMasked: row.reference_masked || "",
-      quote: { amountCents, feeCents: 0, totalCents: amountCents },
+      quote: { amountCents, feeCents, totalCents: amountCents + feeCents },
       amountCents,
+      feeCents,
       paymentMethod: row.payment_method || "cash",
       folio: row.sale_folio || row.provider_folio || row.ref_cte || null,
       refCte: row.ref_cte || null,
@@ -350,22 +426,37 @@ const createServiceTransactions = ({
         needsReview = 1;
         reviewReason = "REGISTER_OWNER_MISMATCH";
       } else {
-        const desc = `Recarga ${current.carrier_name || ""} ${moneyCents(
+        const isBill = Number(current.category_id) === 3;
+        const desc = `${isBill ? "Pago" : "Recarga"} ${current.carrier_name || ""} ${moneyCents(
           current.amount_cents,
         )}${current.reference_masked ? ` · ${current.reference_masked}` : ""}`.trim();
+        const feeCents = Number(current.fee_cents) || 0;
+        const cart = [
+          {
+            isManual: true,
+            name: desc,
+            quantity: 1,
+            price: Number(current.amount_cents) / 100,
+            finalPrice: Number(current.amount_cents) / 100,
+            serviceTransactionId: current.id,
+          },
+        ];
+        // La comisión es ganancia de la tienda: renglón propio, sin enlace al
+        // ledger (así sí cuenta en utilidades) y con costo 0.
+        if (feeCents > 0) {
+          cart.push({
+            isManual: true,
+            name: `Comisión ${isBill ? "pago" : "recarga"} ${current.carrier_name || ""}`.trim(),
+            quantity: 1,
+            price: feeCents / 100,
+            finalPrice: feeCents / 100,
+            serviceFee: true,
+          });
+        }
         try {
           sale = salesCore.createSaleTx(db, {
-            cart: [
-              {
-                isManual: true,
-                name: desc,
-                quantity: 1,
-                price: Number(current.amount_cents) / 100,
-                finalPrice: Number(current.amount_cents) / 100,
-                serviceTransactionId: current.id,
-              },
-            ],
-            total: Number(current.amount_cents) / 100,
+            cart,
+            total: (Number(current.amount_cents) + feeCents) / 100,
             paymentMethod: current.payment_method || "cash",
             cashierName: current.cashier_name || "Usuario Principal",
             cashierId: current.cashier_id || null,
@@ -696,6 +787,18 @@ const createServiceTransactions = ({
       };
     }
 
+    // La comisión la decide el Host. Si la caja mostró otra (alguien la cambió
+    // mientras cobraba), no se cobra un total distinto al que vio el cliente.
+    const feeCents = feeFor(operator);
+    if (payload.feeCents != null && Math.round(Number(payload.feeCents)) !== feeCents) {
+      return {
+        ok: false,
+        code: "FEE_CHANGED",
+        feeCents,
+        error: `La comisión cambió a ${moneyCents(feeCents)}. Revisa el total y cobra de nuevo.`,
+      };
+    }
+
     const register = salesCore.findOpenRegister(
       db,
       context.cashierId || null,
@@ -737,8 +840,8 @@ const createServiceTransactions = ({
         client_request_id, ref_cte, provider, status, category_id, carrier_id,
         carrier_name, carrier_logo, product_code, product_name, reference_masked,
         reference_hash, reference_enc, amount_cents, payment_method, register_id,
-        cashier_id, cashier_name, device_id, requested_at, updated_at
-      ) VALUES (?, ?, 'taecel', 'requesting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        cashier_id, cashier_name, device_id, fee_cents, requested_at, updated_at
+      ) VALUES (?, ?, 'taecel', 'requesting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
     const info = insert.run(
       clientRequestId,
@@ -758,6 +861,7 @@ const createServiceTransactions = ({
       context.cashierId || null,
       cashierName,
       context.deviceId || null,
+      feeCents,
     );
     const ledgerId = Number(info.lastInsertRowid);
     touch();
@@ -914,7 +1018,8 @@ const createServiceTransactions = ({
   const pendingSummary = (registerId) => {
     const rows = db
       .prepare(
-        `SELECT status, payment_method, COUNT(*) AS count, COALESCE(SUM(amount_cents),0) AS total_cents
+        `SELECT status, payment_method, COUNT(*) AS count,
+                COALESCE(SUM(amount_cents + COALESCE(fee_cents, 0)),0) AS total_cents
          FROM service_transactions
          WHERE register_id = ?
            AND (status IN ('requesting','pending','unknown')
@@ -1146,6 +1251,9 @@ const createServiceTransactions = ({
 
   return {
     createRecharge,
+    getFees,
+    setFees,
+    withFees,
     getTransaction,
     checkTransaction,
     pendingSummary,

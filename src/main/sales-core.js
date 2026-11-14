@@ -442,7 +442,9 @@ const createSaleTx = (
         // Recarga Taecel: enlaza la línea de venta con el ledger del proveedor.
         // Nunca desde el carrito de un cliente: sólo la llamada interna.
         allowServiceLink ? item.serviceTransactionId || null : null,
-        null, // manual o servicio: sin costo conocido
+        // Manual o servicio: sin costo conocido. La comisión de un servicio
+        // (sólo desde la llamada interna) es ganancia completa: costo 0.
+        allowServiceLink && item.serviceFee ? 0 : null,
       );
       continue;
     }

@@ -53,6 +53,13 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
           </span>
         </div>
 
+        {tx.quote.feeCents > 0 && (
+          <div className="flex items-center justify-between border-b border-border px-2.5 py-2 text-xs text-muted-foreground">
+            <span>Importe {money(tx.quote.amountCents)} + comisión</span>
+            <span className="font-semibold tabular-nums text-foreground">{money(tx.quote.feeCents)}</span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between px-2.5 py-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Folio

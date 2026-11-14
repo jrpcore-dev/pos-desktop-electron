@@ -79,7 +79,7 @@ const ServiceSummary = ({
             </p>
             <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
               {quote
-                ? `Importe ${money(quote.amountCents)} · ${noFee ? "comisión incluida" : `comisión ${money(quote.feeCents)}`}`
+                ? `Importe ${money(quote.amountCents)}${noFee ? "" : ` + comisión ${money(quote.feeCents)}`}`
                 : "Elige un monto o paquete"}
             </p>
           </div>

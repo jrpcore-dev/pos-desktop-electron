@@ -269,12 +269,15 @@ ipcMain.handle("taecel:status", async () => taecel.getStatus());
 ipcMain.handle("taecel:get-balance", async (e, opts) =>
   taecel.getBalance({ force: !!(opts && opts.force) }),
 );
+// El catálogo sale con la comisión de la tienda ya puesta en cada compañía.
 ipcMain.handle("taecel:get-catalog", async (e, opts) =>
-  taecel.getCatalog({ force: !!(opts && opts.force) }),
+  serviceTx.withFees(await taecel.getCatalog({ force: !!(opts && opts.force) })),
 );
 ipcMain.handle("taecel:refresh-catalog", async () =>
-  taecel.getCatalog({ force: true }),
+  serviceTx.withFees(await taecel.getCatalog({ force: true })),
 );
+ipcMain.handle("taecel:get-fees", async () => serviceTx.getFees());
+ipcMain.handle("taecel:set-fees", async (e, payload) => serviceTx.setFees(payload || {}));
 ipcMain.handle("taecel:set-credentials", async (e, creds) =>
   taecel.saveCredentials(
     creds && creds.key,

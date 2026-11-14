@@ -144,6 +144,8 @@ const RPC_CHANNELS = new Set([
   "taecel:history",
   "taecel:get-recent-numbers",
   "taecel:reconcile",
+  "taecel:get-fees",
+  "taecel:set-fees",
 ]);
 
 // Canales de la lista blanca que sólo un cajero ADMIN puede pedir desde una
@@ -157,6 +159,7 @@ const RPC_ADMIN_CHANNELS = new Set([
   "import-products-content",
   "resolve-stock-conflict",
   "taecel:reconcile",
+  "taecel:set-fees",
 ]);
 
 // Claves de `save-setting` que una caja puede escribir en el Host: sólo las de

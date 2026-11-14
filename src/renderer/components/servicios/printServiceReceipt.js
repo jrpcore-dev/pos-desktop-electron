@@ -17,6 +17,8 @@ export const printServiceReceipt = async (tx, { cashierName } = {}) => {
     get("paper_width_mm"),
   ]);
   const total = (Number(tx?.quote?.totalCents) || 0) / 100;
+  const fee = (Number(tx?.quote?.feeCents) || 0) / 100;
+  const amount = fee > 0 ? (Number(tx?.quote?.amountCents) || 0) / 100 : total;
   const number = tx?.inputValue ? maskInput(tx.inputValue) : "";
   const name = `${tx?.operatorName || "Recarga"}${number ? ` ${number}` : ""}`;
   const proof = [
@@ -36,15 +38,19 @@ export const printServiceReceipt = async (tx, { cashierName } = {}) => {
     ticketNum: tx?.saleFolio || tx?.folio || "",
     date: tx?.createdAt ? new Date(tx.createdAt) : new Date(),
     cashierName: cashierName || tx?.cashierName || "Usuario",
+    // Igual que la venta: el importe y, aparte, la comisión de la tienda.
     items: [
       {
         name: name.length > 24 ? `${name.slice(0, 22)}..` : name,
         qtyDisplay: 1,
         unit: "",
-        unitPrice: total,
-        lineTotal: total,
+        unitPrice: amount,
+        lineTotal: amount,
         discountLabel: null,
       },
+      ...(fee > 0
+        ? [{ name: "Comisión", qtyDisplay: 1, unit: "", unitPrice: fee, lineTotal: fee, discountLabel: null }]
+        : []),
     ],
     subtotal: total,
     showDiscounts: false,

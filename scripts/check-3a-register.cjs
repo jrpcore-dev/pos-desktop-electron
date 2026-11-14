@@ -183,10 +183,13 @@ const cashRegisterRow = (db, id) =>
   // Local-first · retiros y entradas (`cash_register_expenses.uid` y su índice) ya está en HEAD.
   // Local-first · promos y paquetes (`group_promos.uid`, `bundles.uid` y sus índices) ya está en HEAD.
   // Reportes · `sale_items.cost_at_sale` (costo al vender) ya está en HEAD.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  // Servicios · comisión de la tienda (`service_transactions.fee_cents`):
+  // SQLite reescribe el CREATE TABLE, una alta y una baja. Al commitearse
+  // queda en HEAD y esto vuelve a 0 / 0.
+  const DDL_AGREGADO = [/CREATE TABLE\s+"?service_transactions"?/i];
+  const DDL_AGREGADO_TOTAL = 1;
+  const DDL_BORRADO = [/CREATE TABLE\s+"?service_transactions"?/i];
+  const DDL_BORRADO_TOTAL = 1;
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -281,6 +284,11 @@ const cashRegisterRow = (db, id) =>
       ...(colDe(before.cols.sale_items, "service_transaction_id")
         ? []
         : ["+ sale_items.service_transaction_id|INTEGER|nn=0|dflt=null"]),
+      // Comisión de la tienda por recarga/servicio.
+      ...(!Array.isArray(before.cols.service_transactions) ||
+      colDe(before.cols.service_transactions, "fee_cents")
+        ? []
+        : ["+ service_transactions.fee_cents|INTEGER|nn=1|dflt=0"]),
     ];
     // Alertas inteligentes · lotes con caducidad y `insights.payload`. Si la
     // app ya corrió con esta entrega en esta máquina, el delta es 0.

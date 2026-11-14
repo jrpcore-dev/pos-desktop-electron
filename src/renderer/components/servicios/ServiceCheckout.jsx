@@ -56,6 +56,7 @@ const ServiceCheckout = ({
   providerLive = false,
   cashierId = null,
   loading = false,
+  onCatalogStale,
 }) => {
   const notify = useToast();
   const [category, setCategory] = useState("all");
@@ -314,9 +315,19 @@ const ServiceCheckout = ({
         productCode: chargeProduct.sku,
         reference: inputValue,
         amountCents: chargeCents,
+        // La comisión que vio el cliente: el Host rechaza si ya es otra.
+        feeCents: quoteData.feeCents || 0,
         paymentMethod,
         cashierId,
       });
+      if (r?.code === "FEE_CHANGED") {
+        // No se cobró nada: se trae la comisión nueva y el cajero revisa.
+        setTx(null);
+        setBusy(false);
+        notify(r.error || "La comisión cambió; revisa el total", "error");
+        onCatalogStale?.();
+        return;
+      }
       next =
         r && r.status
           ? display(r, base)
@@ -337,7 +348,7 @@ const ServiceCheckout = ({
     setTx(next);
     setBusy(false);
     onTransaction?.(next);
-  }, [operator, chargeProduct, inputValue, quoteData, chargeCents, paymentMethod, cashierId, tx, display, onTransaction]);
+  }, [operator, chargeProduct, inputValue, quoteData, chargeCents, paymentMethod, cashierId, tx, display, onTransaction, notify, onCatalogStale]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
