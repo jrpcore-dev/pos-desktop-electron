@@ -18,6 +18,7 @@ import {
   CircleOff,
   TriangleAlert,
   CheckCircle2,
+  CircleDashed,
   Landmark,
   HandCoins,
   Eye,
@@ -116,6 +117,11 @@ const MOV_METHOD_OPTIONS = [
   { value: "transfer", label: "Transferencia" },
 ];
 
+// El sistema cerró esta caja solo (se abrió otra sin hacer el corte): nadie
+// contó el efectivo, así que su "diferencia 0" no significa que cuadró.
+const UNCOUNTED_NAME = "Cierre automático";
+const isUncounted = (cr) => cr?.name === UNCOUNTED_NAME;
+
 const registerName = (cr) => {
   const n = cr.name;
   if (n && n !== "Cierre por cambio de turno" && !/^Cierre \d/.test(n)) {
@@ -131,11 +137,23 @@ const RegisterRow = memo(function RegisterRow({
   onView,
 }) {
   const diff = Number(cr.difference || 0);
-  const status = diff === 0
-    ? { tone: "success", label: "Completo" }
-    : { tone: "error", label: "Diferencia" };
+  const status = isUncounted(cr)
+    ? { tone: "warning", label: "Sin contar" }
+    : diff === 0
+      ? { tone: "success", label: "Completo" }
+      : { tone: "error", label: "Diferencia" };
   const badge =
-    status.tone === "success" ? (
+    status.tone === "warning" ? (
+      <ShBadge
+        variant="outline"
+        className={cn(
+          "whitespace-nowrap border-amber-500/60 text-amber-700 dark:border-amber-400/50 dark:text-amber-400",
+          variant === "list" && "shrink-0",
+        )}
+      >
+        <CircleDashed size={12} className={variant === "list" ? "mr-1" : ""} /> Sin contar
+      </ShBadge>
+    ) : status.tone === "success" ? (
       <ShBadge
         variant="outline"
         className={cn(
@@ -755,8 +773,14 @@ const RegisterHistory = () => {
       head: [["Verificación", "Valor"]],
       body: [
         ["Cierre Esperado", `$${fmtNumber(r.expected_close)}`],
-        ["Declarado", `$${fmtNumber(r.declared_close)}`],
-        ["Diferencia", `$${fmtNumber(r.difference)}`],
+        [
+          "Declarado",
+          isUncounted(r) ? "Sin contar" : `$${fmtNumber(r.declared_close)}`,
+        ],
+        [
+          "Diferencia",
+          isUncounted(r) ? "—" : `$${fmtNumber(r.difference)}`,
+        ],
       ],
       styles: tblBase,
       headStyles: tblHead,
@@ -809,13 +833,18 @@ const RegisterHistory = () => {
   };
 
   const difference = Number(detail?.register?.difference || 0);
-  const hasDifference = Math.abs(difference) >= 0.005;
-  const diffTone = hasDifference
-    ? "text-red-600 dark:text-red-400 bg-red-500/10"
-    : "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10";
-  const diffText = hasDifference
-    ? "text-red-600 dark:text-red-400"
-    : "text-emerald-600 dark:text-emerald-400";
+  const uncounted = isUncounted(detail?.register);
+  const hasDifference = !uncounted && Math.abs(difference) >= 0.005;
+  const diffTone = uncounted
+    ? "text-amber-700 dark:text-amber-400 bg-amber-500/10"
+    : hasDifference
+      ? "text-red-600 dark:text-red-400 bg-red-500/10"
+      : "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10";
+  const diffText = uncounted
+    ? "text-amber-700 dark:text-amber-400"
+    : hasDifference
+      ? "text-red-600 dark:text-red-400"
+      : "text-emerald-600 dark:text-emerald-400";
   const postCloseDeltas = (() => {
     const live = detail?.live;
     const reg = detail?.register;
@@ -842,7 +871,14 @@ const RegisterHistory = () => {
     movMethod !== "all" ||
     movStatus !== "all" ||
     movSort !== "recent";
-  const statusBadge = hasDifference ? (
+  const statusBadge = uncounted ? (
+    <ShBadge
+      variant="outline"
+      className="shrink-0 whitespace-nowrap border-amber-500/60 text-amber-700 dark:border-amber-400/50 dark:text-amber-400"
+    >
+      <CircleDashed size={12} className="mr-1" /> Sin contar
+    </ShBadge>
+  ) : hasDifference ? (
     <ShBadge
       variant="outline"
       className="shrink-0 whitespace-nowrap border-red-500/60 text-red-600 dark:border-red-400/50 dark:text-red-400"
@@ -1146,7 +1182,9 @@ const RegisterHistory = () => {
                     },
                     {
                       label: "Diferencia",
-                      value: `$${fmtNumber(detail.register.difference)}`,
+                      value: uncounted
+                        ? "Sin contar"
+                        : `$${fmtNumber(detail.register.difference)}`,
                       tone: diffTone,
                     },
                   ].map((k) => (
@@ -1331,17 +1369,21 @@ const RegisterHistory = () => {
                     {[
                       {
                         label: "Cierre Esperado",
-                        value: fmtNumber(detail.register.expected_close),
+                        value: `$${fmtNumber(detail.register.expected_close)}`,
                         tone: "text-foreground",
                       },
                       {
                         label: "Declarado",
-                        value: fmtNumber(detail.register.declared_close),
-                        tone: "text-foreground",
+                        value: uncounted
+                          ? "Sin contar"
+                          : `$${fmtNumber(detail.register.declared_close)}`,
+                        tone: uncounted ? diffText : "text-foreground",
                       },
                       {
                         label: "Diferencia",
-                        value: fmtNumber(detail.register.difference),
+                        value: uncounted
+                          ? "—"
+                          : `$${fmtNumber(detail.register.difference)}`,
                         tone: diffText,
                       },
                     ].map((row) => (
@@ -1351,7 +1393,7 @@ const RegisterHistory = () => {
                       >
                         <span className="text-sm text-muted-foreground">{row.label}</span>
                         <span className={`text-sm font-bold tabular-nums ${row.tone}`}>
-                          ${row.value}
+                          {row.value}
                         </span>
                       </div>
                     ))}
