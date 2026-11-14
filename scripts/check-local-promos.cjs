@@ -121,7 +121,9 @@ const startLive = () =>
   const a = await boxRpc.forward(box, "save-group-promo", [{ name: "Bebidas 10%", scope: "category", category_id: 1, percent: 10 }]);
   const ms = performance.now() - t0;
   check(a.success === true && a.id < 0, "se crea al momento", a);
-  check(ms < 100, "sin esperar al Host", `${ms.toFixed(0)} ms`);
+  // 250 ms: sigue siendo muy por debajo de un viaje real al Host, pero tolera
+  // un runner de CI cargado (ahí llegó a medir 106 ms).
+  check(ms < 250, "sin esperar al Host", `${ms.toFixed(0)} ms`);
   const aUid = box.prepare("SELECT uid FROM group_promos WHERE id = ?").get(a.id).uid;
   await boxRpc.syncOps(box);
   check(byUid(host, "group_promos", aUid).length === 1, "el Host la guarda");

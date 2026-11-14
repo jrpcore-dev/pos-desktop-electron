@@ -320,7 +320,14 @@ clientLink.setSecretCipher(testCipher);
   check(activation.getSetting(dbOld, "box_paired_token") === null, "y además se BORRA de settings", null);
 
   // emparejamiento con código incorrecto desde client-link
-  const badPair = await clientLink.pairAsBox(dbBox1, { hostUrl: URL_A, code: "NO-ES-EL-CODIGO", deviceName: "Caja 1" });
+  // Un reintento si el Host local no contestó a tiempo la verificación previa
+  // (runner de CI cargado): el Host sigue encendido aquí, así que HOST_NOT_FOUND
+  // sólo puede ser lentitud. El rate limit ya está agotado, el resultado esperado
+  // no cambia.
+  let badPair = await clientLink.pairAsBox(dbBox1, { hostUrl: URL_A, code: "NO-ES-EL-CODIGO", deviceName: "Caja 1" });
+  if (badPair.code === "HOST_NOT_FOUND") {
+    badPair = await clientLink.pairAsBox(dbBox1, { hostUrl: URL_A, code: "NO-ES-EL-CODIGO", deviceName: "Caja 1" });
+  }
   check(badPair.success === false && badPair.code === "PAIR_RATE_LIMITED", "pairAsBox distingue el rate limit del Host", JSON.stringify(badPair));
 
   // ─── C3 · descubrimiento UDP en loopback + IP manual ────────────────────
