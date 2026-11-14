@@ -4143,44 +4143,51 @@ ipcMain.handle(
   async (event, { openingBalance, cashierId, role }) => {
     try {
       const today = mxToday();
-      const openRegisters = db
-        .prepare(
-          "SELECT * FROM cash_register WHERE status = 'open' AND device_id = ? ORDER BY id ASC",
-        )
-        .all(callerDeviceId());
-      for (const existing of openRegisters) {
-        // Auto-close the previous register before opening new one
-        const { cashSales, cardSales, transferSales, collected } =
-          registerMoney(existing.id);
-        const totalExpenses = existing.expenses || 0;
-        const expectedClose =
-          (existing.opening_balance || 0) +
-          cashSales +
-          collected.cash +
-          (existing.cash_in || 0) -
-          totalExpenses;
+      // Cerrar las cajas previas y abrir la nueva debe ser atómico: si algo
+      // falla a mitad, no debe quedar un turno sin caja o una caja cerrada
+      // sin su reemplazo.
+      const openRegister = db.transaction(() => {
+        const openRegisters = db
+          .prepare(
+            "SELECT * FROM cash_register WHERE status = 'open' AND device_id = ? ORDER BY id ASC",
+          )
+          .all(callerDeviceId());
+        for (const existing of openRegisters) {
+          // Auto-close the previous register before opening new one
+          const { cashSales, cardSales, transferSales, collected } =
+            registerMoney(existing.id);
+          const totalExpenses = existing.expenses || 0;
+          const expectedClose =
+            (existing.opening_balance || 0) +
+            cashSales +
+            collected.cash +
+            (existing.cash_in || 0) -
+            totalExpenses;
+
+          db.prepare(
+            `UPDATE cash_register SET
+              cash_sales=?, card_sales=?, transfer_sales=?, expenses=?,
+              expected_close=?, declared_close=?, difference=?, name='Cierre automático', status='closed', closed_at=CURRENT_TIMESTAMP, closed_by=?
+              WHERE id=?`,
+          ).run(
+            cashSales,
+            cardSales,
+            transferSales,
+            totalExpenses,
+            expectedClose,
+            expectedClose,
+            0,
+            cashierId || null,
+            existing.id,
+          );
+        }
 
         db.prepare(
-          `UPDATE cash_register SET
-            cash_sales=?, card_sales=?, transfer_sales=?, expenses=?,
-            expected_close=?, declared_close=?, difference=?, name='Cierre automático', status='closed', closed_at=CURRENT_TIMESTAMP, closed_by=?
-            WHERE id=?`,
-        ).run(
-          cashSales,
-          cardSales,
-          transferSales,
-          totalExpenses,
-          expectedClose,
-          expectedClose,
-          0,
-          cashierId || null,
-          existing.id,
-        );
-      }
+          "INSERT INTO cash_register (date, opening_balance, cashier_id, opened_by, device_id) VALUES (?, ?, ?, ?, ?)",
+        ).run(today, openingBalance || 0, cashierId || null, cashierId || null, callerDeviceId());
+      });
 
-      db.prepare(
-        "INSERT INTO cash_register (date, opening_balance, cashier_id, opened_by, device_id) VALUES (?, ?, ?, ?, ?)",
-      ).run(today, openingBalance || 0, cashierId || null, cashierId || null, callerDeviceId());
+      openRegister();
       emitDbChanged(["cash_register"], {});
       return { success: true };
     } catch (error) {
