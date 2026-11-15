@@ -46,7 +46,10 @@ const addCustomer = (db, data = {}) => {
       .prepare("INSERT INTO customers (name, phone, tier_id, uid) VALUES (?, ?, ?, ?)")
       .run(n.name, n.phone, n.tier_id, uid);
     const id = Number(info.lastInsertRowid);
-    db.prepare("UPDATE customers SET qr_code = ? WHERE id = ?").run(`CLI-${id}`, id);
+    // `created_at` sin default en bases anteriores a la v2 (ver db-schema).
+    db.prepare(
+      "UPDATE customers SET qr_code = ?, created_at = COALESCE(created_at, CURRENT_TIMESTAMP) WHERE id = ?",
+    ).run(`CLI-${id}`, id);
     return { success: true, customer: db.prepare("SELECT * FROM customers WHERE id = ?").get(id) };
   })();
 };

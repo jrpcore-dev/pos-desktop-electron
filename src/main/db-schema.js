@@ -486,6 +486,21 @@ const createTables = (db) => {
     last_seen_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  // Instalaciones de antes de la v2 ya traían su propia `customers` (y a veces
+  // `customer_tiers`) con otra forma: el `IF NOT EXISTS` de arriba no las toca y
+  // guardar un cliente reventaba con "no such column: tier_id". Se completan
+  // aquí, ANTES del índice por teléfono, que también fallaría sin `phone`.
+  // ALTER TABLE no admite UNIQUE ni defaults no constantes: el QR se rellena
+  // con `CLI-<id>` (único por construcción) y `created_at` a mano.
+  ensureColumn("customer_tiers", "position", "INTEGER DEFAULT 0");
+  ensureColumn("customer_tiers", "created_at", "DATETIME");
+  ensureColumn("customers", "phone", "TEXT DEFAULT ''");
+  ensureColumn("customers", "tier_id", "INTEGER REFERENCES customer_tiers(id)");
+  ensureColumn("customers", "qr_code", "TEXT");
+  ensureColumn("customers", "last_seen_at", "DATETIME");
+  ensureColumn("customers", "created_at", "DATETIME");
+  db.exec("UPDATE customers SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
+  db.exec("UPDATE customers SET qr_code = 'CLI-' || id WHERE qr_code IS NULL OR qr_code = ''");
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)`,
   );
