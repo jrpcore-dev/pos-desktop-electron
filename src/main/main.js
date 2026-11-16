@@ -1581,6 +1581,19 @@ ipcMain.handle("get-credit-balances", async () => {
     return { success: false, error: error.message, byCustomer: {}, receivable: 0, debtors: 0 };
   }
 });
+// Historial general de fiado (todos los clientes) en un rango de días de MX.
+ipcMain.handle(
+  "get-credit-movements",
+  async (event, { startDate, endDate, type, query } = {}) => {
+    try {
+      const { start } = toUTCDateRange(startDate);
+      const { end } = toUTCDateRange(endDate || startDate);
+      return { success: true, ...credit.movementsAll(db, { start, end, type, query }) };
+    } catch (error) {
+      return { success: false, error: error.message, movements: [], totals: null };
+    }
+  },
+);
 
 // Abono desde Clientes: entra a la caja abierta de quien lo cobra.
 ipcMain.handle(

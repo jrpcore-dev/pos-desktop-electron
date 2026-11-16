@@ -280,23 +280,78 @@ const summary = (db, customerId) => {
   if (!customer) throw fail("NOT_FOUND", "Cliente no encontrado");
   const movements = db
     .prepare(
-      `SELECT m.id, m.type, m.amount, m.method, m.sale_id, s.folio, m.note,
-              m.cashier_name, m.created_at
-       FROM customer_credit_movements m
-       LEFT JOIN sales s ON s.id = m.sale_id
+      `SELECT * FROM (${WITH_BALANCE}) m
        WHERE m.customer_id = ?
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 300`,
     )
     .all(customerId);
+  const totals = db
+    .prepare(
+      `SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount END), 0) AS charged,
+              COALESCE(SUM(CASE WHEN type = 'payment' THEN -amount END), 0) AS paid
+       FROM customer_credit_movements WHERE customer_id = ?`,
+    )
+    .get(customerId);
   return {
     customerId,
     enabled: !!customer.credit_enabled,
     limit: round2(customer.credit_limit || 0),
     balance: balanceOf(db, customerId),
     oldestDebtAt: oldestDebtDate(db, customerId),
+    totalCharged: round2(totals.charged),
+    totalPaid: round2(totals.paid),
     hasMovements: movements.length > 0,
     movements,
+  };
+};
+
+// Cada movimiento con el saldo del cliente justo después de él (`balance_after`),
+// calculado sobre TODO su historial antes de filtrar o limitar.
+const WITH_BALANCE = `
+  SELECT m.id, m.customer_id, m.type, m.amount, m.method, m.sale_id, s.folio,
+         m.note, m.cashier_name, m.created_at,
+         ROUND(SUM(m.amount) OVER (
+           PARTITION BY m.customer_id ORDER BY m.created_at, m.id
+         ), 2) AS balance_after
+  FROM customer_credit_movements m
+  LEFT JOIN sales s ON s.id = m.sale_id`;
+
+const MOVEMENT_TYPES = ["initial", "charge", "payment", "reversal", "adjustment"];
+
+// Historial general (todos los clientes) en un rango UTC [start, end).
+// `type`: uno de MOVEMENT_TYPES o vacío; `query`: parte del nombre del cliente.
+const movementsAll = (db, { start, end, type, query, limit = 500 } = {}) => {
+  const where = ["m.created_at >= @start", "m.created_at < @end"];
+  const args = { start, end, limit: Math.min(Number(limit) || 500, 1000) };
+  if (MOVEMENT_TYPES.includes(type)) {
+    where.push("m.type = @type");
+    args.type = type;
+  }
+  const q = String(query || "").trim();
+  if (q) {
+    where.push("c.name LIKE @q");
+    args.q = `%${q}%`;
+  }
+  const from = `FROM (${WITH_BALANCE}) m LEFT JOIN customers c ON c.id = m.customer_id
+                WHERE ${where.join(" AND ")}`;
+  const movements = db
+    .prepare(
+      `SELECT m.*, c.name AS customer_name ${from}
+       ORDER BY m.created_at DESC, m.id DESC LIMIT @limit`,
+    )
+    .all(args);
+  const t = db
+    .prepare(
+      `SELECT COUNT(*) AS count,
+              COALESCE(SUM(CASE WHEN m.type = 'charge' THEN m.amount END), 0) AS charged,
+              COALESCE(SUM(CASE WHEN m.type = 'payment' THEN -m.amount END), 0) AS paid
+       ${from}`,
+    )
+    .get(args);
+  return {
+    movements,
+    totals: { count: t.count, charged: round2(t.charged), paid: round2(t.paid) },
   };
 };
 
@@ -373,6 +428,7 @@ module.exports = {
   recordPayment,
   adjust,
   summary,
+  movementsAll,
   balances,
   registerCredit,
 };

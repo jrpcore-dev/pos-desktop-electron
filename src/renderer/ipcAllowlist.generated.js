@@ -62,6 +62,7 @@ export const invoke = [
   "get-categories",
   "get-closed-registers",
   "get-credit-balances",
+  "get-credit-movements",
   "get-customer",
   "get-customer-by-qr",
   "get-customer-credit",

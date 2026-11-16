@@ -16,6 +16,7 @@ import {
   Wallet,
   HandCoins,
   Layers,
+  History,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { useToast } from "./ToastProvider";
@@ -67,6 +68,8 @@ import { InitialsAvatar } from "./ui/initials-avatar";
 import { StatCard } from "./ui/stat-card";
 import { Hint } from "./ui/hint";
 import CustomerCreditSheet, { debtAge } from "./CustomerCreditSheet";
+import CreditHistory from "./credit/CreditHistory";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { useCashier } from "../contexts/CashierContext";
 import { useFeatures } from "../lib/useFeatures";
 
@@ -302,6 +305,7 @@ const Customers = () => {
   const [accountCustomer, setAccountCustomer] = useState(null);
   const [tiersOpen, setTiersOpen] = useState(false);
   const [accountPanel, setAccountPanel] = useState(null);
+  const [view, setView] = useState("clientes");
   const location = useLocation();
   const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
@@ -539,6 +543,26 @@ const Customers = () => {
         }
       />
 
+      {/* Con fiado: la lista de clientes o el historial de todos sus movimientos. */}
+      {creditOn && (
+        <Tabs value={view} onValueChange={setView} className="mb-4">
+          <TabsList aria-label="Vista">
+            <TabsTrigger value="clientes">
+              <Users className="size-4" aria-hidden />
+              Clientes
+            </TabsTrigger>
+            <TabsTrigger value="movimientos">
+              <History className="size-4" aria-hidden />
+              Movimientos
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {creditOn && view === "movimientos" ? (
+        <CreditHistory onOpenCustomer={setAccountCustomer} />
+      ) : (
+      <>
       {creditOn && (
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard
@@ -765,6 +789,8 @@ const Customers = () => {
           </div>
         )}
       </div>
+      </>
+      )}
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent

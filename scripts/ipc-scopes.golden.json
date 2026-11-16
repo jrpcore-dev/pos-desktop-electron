@@ -60,6 +60,7 @@
   "get-categories": "host_read",
   "get-closed-registers": "rpc",
   "get-credit-balances": "rpc",
+  "get-credit-movements": "rpc",
   "get-customer": "host_read",
   "get-customer-by-qr": "host_read",
   "get-customer-credit": "rpc",

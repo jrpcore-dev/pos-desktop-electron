@@ -128,6 +128,7 @@ const RPC_CHANNELS = new Set([
   "set-customer-credit",
   "get-customer-credit",
   "get-credit-balances",
+  "get-credit-movements",
   "credit-payment",
   "credit-adjust",
   "run-weekly-pulse",

@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   Banknote,
   CreditCard,
   HandCoins,
@@ -26,6 +24,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Checkbox } from "./ui/checkbox";
 import { Skeleton } from "./ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { CreditMovementList, METHOD_LABEL } from "./credit/CreditMovementList";
 import { fmtMoney } from "../utils/format";
 import { buildCreditPaymentHTML } from "../utils/receiptTemplate";
 
@@ -37,15 +37,13 @@ export const PAY_METHODS = [
   { key: "card", label: "Tarjeta", icon: CreditCard },
   { key: "transfer", label: "Transf.", icon: Landmark },
 ];
-const METHOD_LABEL = { cash: "EFECTIVO", card: "TARJETA", transfer: "TRANSFERENCIA" };
 
-const TYPE_LABEL = {
-  initial: "Saldo inicial",
-  charge: "Venta fiada",
-  payment: "Abono",
-  reversal: "Cancelación / devolución",
-  adjustment: "Ajuste",
-};
+// Filtro rápido de la lista de movimientos.
+const FILTERS = [
+  { key: "all", label: "Todo", match: () => true },
+  { key: "sales", label: "Ventas", match: (m) => m.type === "charge" || m.type === "reversal" },
+  { key: "payments", label: "Abonos", match: (m) => m.type === "payment" },
+];
 
 // "hace 45 días" desde un DATETIME de SQLite (UTC).
 export const debtAge = (sqlDate) => {
@@ -55,15 +53,6 @@ export const debtAge = (sqlDate) => {
   if (days === 1) return "desde ayer";
   return `desde hace ${days} días`;
 };
-
-const fmtWhen = (sqlDate) =>
-  new Date(`${String(sqlDate).replace(" ", "T")}Z`).toLocaleString("es-MX", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/Mexico_City",
-  });
 
 const money2 = (v) => /^\d*\.?\d{0,2}$/.test(v);
 
@@ -79,6 +68,7 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
   const [adjustSign, setAdjustSign] = useState(-1);
   const [adjustNote, setAdjustNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("all");
 
   const load = useCallback(async () => {
     if (!customer) return;
@@ -96,6 +86,7 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
     setPanel(null);
     setAmount("");
     setAdjustNote("");
+    setFilter("all");
     load();
   }, [open, load]);
 
@@ -188,6 +179,8 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
   };
 
   const balance = data?.balance || 0;
+  const activeFilter = FILTERS.find((f) => f.key === filter) || FILTERS[0];
+  const shown = data ? data.movements.filter(activeFilter.match) : [];
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -226,6 +219,18 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
                 {data.limit > 0 ? `Límite ${fmtMoney(data.limit)}` : "Sin límite"}
                 {!data.enabled && " · Fiado desactivado"}
               </p>
+              {data.hasMovements && (
+                <div className="mt-3 flex gap-4 border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
+                  <span>
+                    Fiado total{" "}
+                    <b className="font-semibold tabular-nums text-foreground">{fmtMoney(data.totalCharged)}</b>
+                  </span>
+                  <span>
+                    Abonado{" "}
+                    <b className="font-semibold tabular-nums text-foreground">{fmtMoney(data.totalPaid)}</b>
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -370,67 +375,35 @@ const CustomerCreditSheet = ({ customer, open, onClose, cashier, onChanged, init
           )}
 
           {/* ─── Movimientos ─── */}
-          <h3 className="mb-2 mt-6 text-sm font-semibold text-muted-foreground">Movimientos</h3>
+          <div className="mb-2 mt-6 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-muted-foreground">Movimientos</h3>
+            {data?.hasMovements && (
+              <Tabs value={filter} onValueChange={setFilter}>
+                <TabsList className="h-8" aria-label="Filtrar movimientos">
+                  {FILTERS.map((f) => (
+                    <TabsTrigger key={f.key} value={f.key} className="px-2.5 text-xs">
+                      {f.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            )}
+          </div>
           {!data ? (
             <div className="space-y-2">
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-14 w-full rounded-lg" />
               ))}
             </div>
-          ) : data.movements.length === 0 ? (
+          ) : shown.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-              Sin movimientos todavía
+              {data.hasMovements ? "Nada en este filtro" : "Sin movimientos todavía"}
             </p>
           ) : (
-            <ul className="space-y-1.5">
-              {data.movements.map((m) => {
-                const up = m.amount > 0;
-                return (
-                  <li
-                    key={m.id}
-                    className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2.5"
-                  >
-                    <span
-                      className={cn(
-                        "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg",
-                        up
-                          ? "bg-destructive/10 text-destructive dark:text-red-400"
-                          : "bg-success/12 text-success",
-                      )}
-                    >
-                      {up ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground">
-                        {TYPE_LABEL[m.type] || m.type}
-                        {m.method && (
-                          <span className="font-normal text-muted-foreground">
-                            {" "}
-                            · {METHOD_LABEL[m.method]?.toLowerCase()}
-                          </span>
-                        )}
-                      </p>
-                      {m.note && m.note !== TYPE_LABEL[m.type] && (
-                        <p className="truncate text-xs text-muted-foreground">{m.note}</p>
-                      )}
-                      <p className="text-[11px] text-muted-foreground">
-                        {fmtWhen(m.created_at)}
-                        {m.cashier_name ? ` · ${m.cashier_name}` : ""}
-                      </p>
-                    </div>
-                    <span
-                      className={cn(
-                        "shrink-0 text-sm font-semibold tabular-nums",
-                        up ? "text-destructive dark:text-red-400" : "text-success",
-                      )}
-                    >
-                      {up ? "+" : "−"}
-                      {fmtMoney(Math.abs(m.amount))}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+            <CreditMovementList
+              movements={shown}
+              className="overflow-clip rounded-xl border border-border bg-card"
+            />
           )}
         </div>
       </SheetContent>
