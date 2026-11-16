@@ -1,23 +1,23 @@
 import { useMemo, useState } from "react";
 import { Inbox, RefreshCw } from "lucide-react";
 import { Button } from "../ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../ui/table";
 import { EmptyState } from "../ui/empty-state";
 import { Spinner } from "../ui/spinner";
 import { cn } from "@/lib/utils";
-import { formatMXDate, formatMXTime } from "@/utils/dateUtils";
+import { formatMXDate, formatMXTime, mxToday, toUTC } from "@/utils/dateUtils";
 import { money, sumBy } from "./serviceMoney";
 import { NEEDS_ATTENTION, maskInput } from "./serviceStatus";
 import { ServicesEmptyArt } from "./serviceIcons";
 import ServiceStatusBadge from "./ServiceStatusBadge";
 import { OperatorIcon } from "./OperatorIcon";
+
+// "hoy 14:32" para lo de hoy; "14/11 09:10" para lo anterior.
+const whenLabel = (at) => {
+  if (!at) return "";
+  const day = new Date(toUTC(at)).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+  const prefix = day === mxToday() ? "hoy" : formatMXDate(at, { day: "2-digit", month: "2-digit" });
+  return `${prefix} ${formatMXTime(at)}`;
+};
 
 const FILTERS = [
   { key: "all", label: "Todas" },
@@ -102,90 +102,64 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
             }
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-[6rem]">Fecha</TableHead>
-                <TableHead>Operador</TableHead>
-                <TableHead className="w-[10rem]">Folio</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="w-[8rem]">Estado</TableHead>
-                <TableHead className="w-14" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((t) => {
-                const retryable = t.status === "unknown" || t.status === "pending";
-                return (
-                  <TableRow key={t.folio}>
-                    <TableCell className="text-[11px] text-muted-foreground">
-                      <span className="block tabular-nums">
-                        {formatMXDate(t.createdAt, {
-                          day: "2-digit",
-                          month: "2-digit",
-                        })}
+          <ul className="divide-y divide-border">
+            {filtered.map((t) => {
+              const retryable = t.status === "unknown" || t.status === "pending";
+              return (
+                <li key={t.folio} className="flex items-center gap-3 px-4 py-3">
+                  <OperatorIcon
+                    id={t.operatorLogo || t.operatorKey}
+                    remote={t.operatorRemoteLogo}
+                    name={t.operatorName}
+                    size="md"
+                    className="w-14"
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {t.operatorName}
+                      {t.productName ? (
+                        <span className="font-normal text-muted-foreground"> · {t.productName}</span>
+                      ) : null}
+                    </p>
+                    {t.inputValue ? (
+                      <p className="mt-0.5 truncate text-[13px] tabular-nums text-muted-foreground">
+                        {maskInput(t.inputValue)}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="shrink-0 text-right">
+                    <div className="flex items-center justify-end gap-2.5">
+                      <span className="text-[15px] font-bold tabular-nums text-foreground">
+                        {money(t.quote?.totalCents)}
                       </span>
-                      <span className="block tabular-nums">
-                        {formatMXTime(t.createdAt)}
-                      </span>
-                    </TableCell>
-
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <OperatorIcon
-                          id={t.operatorLogo || t.operatorKey}
-                          remote={t.operatorRemoteLogo}
-                          name={t.operatorName}
-                          size="sm"
-                          className="w-10"
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-foreground">
-                            {t.operatorName}
-                          </p>
-                          <p className="truncate text-[11px] text-muted-foreground">
-                            {t.productName}
-                            {t.inputValue ? ` · ${maskInput(t.inputValue)}` : ""}
-                          </p>
-                        </div>
-                      </div>
-                    </TableCell>
-
-                    <TableCell className="text-[11px] tabular-nums text-muted-foreground">
-                      {t.folio}
-                    </TableCell>
-
-                    <TableCell className="text-right text-xs font-semibold tabular-nums text-foreground">
-                      {money(t.quote?.totalCents)}
-                    </TableCell>
-
-                    <TableCell>
                       <ServiceStatusBadge status={t.status} />
-                    </TableCell>
+                    </div>
+                    <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                      {whenLabel(t.createdAt)} · folio {t.folio}
+                    </p>
+                  </div>
 
-                    <TableCell className="text-right">
-                      {retryable && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busyFolio === t.folio}
-                          onClick={() => onRetry?.(t)}
-                          title="Consultar el estado con Taecel"
-                          aria-label={`Consultar estado del folio ${t.folio}`}
-                        >
-                          {busyFolio === t.folio ? (
-                            <Spinner size={13} />
-                          ) : (
-                            <RefreshCw size={13} />
-                          )}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                  <div className="flex w-9 shrink-0 justify-end">
+                    {retryable && (
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="size-9"
+                        disabled={busyFolio === t.folio}
+                        onClick={() => onRetry?.(t)}
+                        title="Consultar el estado con Taecel"
+                        aria-label={`Consultar estado del folio ${t.folio}`}
+                      >
+                        {busyFolio === t.folio ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
 
