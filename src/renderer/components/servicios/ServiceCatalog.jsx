@@ -161,7 +161,7 @@ const ServiceCatalog = ({
       <div className="flex shrink-0 items-center justify-between gap-2">
         <Tabs value={category} onValueChange={onCategoryChange}>
           <TabsList aria-label="Categorías">
-            {CAT_TABS.filter((tab) => tab.key === "all" || counts[tab.key] > 0).map((tab) => (
+            {CAT_TABS.filter((tab) => tab.key === category || counts[tab.key] > 0).map((tab) => (
               <TabsTrigger key={tab.key} value={tab.key} className="font-semibold">
                 {tab.name}
                 <span className="text-xs tabular-nums opacity-70">{counts[tab.key] ?? 0}</span>
@@ -183,7 +183,7 @@ const ServiceCatalog = ({
         className="-mr-1 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1"
       >
         {/* Frecuentes de hoy */}
-        {!searching && category === "all" && frequent.length > 0 && (
+        {!searching && category === "telefonia" && frequent.length > 0 && (
           <section className="flex flex-col gap-2">
             <SectionTitle icon={Sparkles}>Más cobradas hoy</SectionTitle>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -247,7 +247,7 @@ const ServiceCatalog = ({
         {/* Compañías */}
         {result.families.length > 0 && (
           <section className="flex flex-col gap-2">
-            {(searching || (category === "all" && frequent.length > 0)) && (
+            {(searching || (category === "telefonia" && frequent.length > 0)) && (
               <SectionTitle>Compañías</SectionTitle>
             )}
             <div

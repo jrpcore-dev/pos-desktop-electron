@@ -59,7 +59,7 @@ const ServiceCheckout = ({
   onCatalogStale,
 }) => {
   const notify = useToast();
-  const [category, setCategory] = useState("all");
+  const [category, setCategory] = useState("telefonia");
   const [query, setQuery] = useState("");
   const [operatorKey, setOperatorKey] = useState("");
   const [sku, setSku] = useState("");

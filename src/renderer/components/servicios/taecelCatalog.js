@@ -20,7 +20,6 @@ export const KIND_LABEL = {
 // tarjetas de regalo (4). El Host ya no filtra; estas pestañas se muestran
 // sólo si el catálogo trae algo de esa categoría.
 export const CAT_TABS = [
-  { key: "all", name: "Todas" },
   { key: "telefonia", name: "Recargas" },
   { key: "paquetes", name: "Paquetes" },
   { key: "servicios", name: "Servicios" },
@@ -279,9 +278,12 @@ export const parseQuery = (query) => {
 
 const MAX_HITS = 40;
 
-export const searchCatalog = (families, query, category = "all") => {
-  const inCat = (families || []).filter((f) => familyInCategory(f, category));
+// Con texto en el buscador se busca en todas las categorías, sin importar la
+// pestaña abierta (ya no hay pestaña "Todas").
+export const searchCatalog = (families, query, tab = "all") => {
   const q = parseQuery(query);
+  const category = q.empty ? tab : "all";
+  const inCat = (families || []).filter((f) => familyInCategory(f, category));
   if (q.empty) return { families: inCat, hits: [], query: q };
 
   const hits = [];
