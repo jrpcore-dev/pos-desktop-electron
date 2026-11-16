@@ -172,7 +172,6 @@ const SalesTerminal = () => {
   const [creditDialogOpen, setCreditDialogOpen] = useState(false);
   const [creditBusy, setCreditBusy] = useState(false);
   const [cashAmount, setCashAmount] = useState("");
-  const [change, setChange] = useState(0);
   const [waitingDrawer, setWaitingDrawer] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -316,6 +315,10 @@ const processSaleRef = useRef(null);
     ? roundCash(cartSummary.total)
     : cartSummary.total;
   const displayDiscountTotal = displaySubtotal - displayTotal;
+  // El cambio se deriva del total vigente: si el carrito cambia con el cobro
+  // cerrado, al volver a abrirlo ya refleja el total nuevo (antes se quedaba
+  // el de la primera vez y dejaba confirmar con efectivo insuficiente).
+  const change = Math.round(((parseFloat(cashAmount) || 0) - displayTotal) * 100) / 100;
 
   const itemCount = `${cart.length} ${cart.length === 1 ? "producto" : "productos"}`;
 
@@ -398,7 +401,6 @@ const processSaleRef = useRef(null);
         setPaymentMethod(lastSavedPaymentMethod());
         setCashDialogOpen(false);
         setCashAmount("");
-        setChange(0);
         setBarcode("");
       }
       window.dispatchEvent(new CustomEvent("sale-registered"));
@@ -1581,7 +1583,6 @@ if (e.key === "Tab" && !isEditable) {
     setCustomer(null, null);
     setPaymentMethod(lastSavedPaymentMethod());
     setCashAmount("");
-    setChange(0);
     setBarcode("");
     refocusBarcode();
   };
@@ -2088,10 +2089,7 @@ if (e.key === "Tab" && !isEditable) {
         }}
         total={displayTotal}
         cashAmount={cashAmount}
-        onCashAmountChange={(val) => {
-          setCashAmount(val);
-          setChange((parseFloat(val) || 0) - displayTotal);
-        }}
+        onCashAmountChange={setCashAmount}
         change={change}
         waitingDrawer={waitingDrawer}
         processing={saleBusy && !waitingDrawer}
