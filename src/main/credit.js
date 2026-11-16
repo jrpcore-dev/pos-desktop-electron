@@ -162,22 +162,31 @@ const chargeSale = (db, prep, { saleId, folio, total, registerId, deviceId, cash
   };
 };
 
-// Cancelación total: revierte lo que quede fiado de la venta.
+// Lo que se puede revertir sin dejar el saldo bajo cero: si el cliente ya
+// abonó esa venta, sólo se deshace lo que todavía debe (lo pagado no vuelve a
+// su cuenta como saldo negativo).
+const reversible = (db, customerId, amount) =>
+  round2(Math.min(amount, Math.max(balanceOf(db, customerId), 0)));
+
+// Cancelación total: revierte lo que quede fiado de la venta. Ya pagada, queda
+// el renglón en su historial (en $0) para que se vea que se canceló.
 const reverseSale = (db, sale, { cashierName, deviceId, note } = {}) => {
   if (sale.payment_method !== "credit" || !sale.customer_id) return 0;
   const amount = round2(sale.credit_amount || 0);
   if (amount <= 0) return 0;
+  const value = reversible(db, sale.customer_id, amount);
+  const base = note || `Cancelación venta ${sale.folio || "#" + sale.id}`;
   insertMovement(db, {
     customerId: sale.customer_id,
     type: "reversal",
-    amount: -amount,
+    amount: -value,
     saleId: sale.id,
     deviceId,
     cashierName,
-    note: note || `Cancelación venta ${sale.folio || "#" + sale.id}`,
+    note: value < amount ? `${base} (${value > 0 ? "ya pagada en parte" : "ya estaba pagada"})` : base,
   });
   db.prepare(`UPDATE sales SET credit_amount = 0 WHERE id = ?`).run(sale.id);
-  return amount;
+  return value;
 };
 
 // Devolución parcial de una venta fiada: primero baja lo fiado y, si sobra,
@@ -187,14 +196,16 @@ const refundSalePart = (db, sale, refund, { cashierName, deviceId } = {}) => {
   const credit = round2(Math.min(refund, sale.credit_amount || 0));
   const paidPart = round2(Math.min(Math.max(refund - credit, 0), sale.credit_paid || 0));
   if (credit > 0) {
+    const value = reversible(db, sale.customer_id, credit);
+    const base = `Devolución en venta ${sale.folio || "#" + sale.id}`;
     insertMovement(db, {
       customerId: sale.customer_id,
       type: "reversal",
-      amount: -credit,
+      amount: -value,
       saleId: sale.id,
       deviceId,
       cashierName,
-      note: `Devolución en venta ${sale.folio || "#" + sale.id}`,
+      note: value < credit ? `${base} (${value > 0 ? "ya pagada en parte" : "ya estaba pagada"})` : base,
     });
   }
   db.prepare(

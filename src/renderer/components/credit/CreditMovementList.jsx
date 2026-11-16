@@ -185,13 +185,18 @@ export const CreditMovementItem = ({ m, showCustomer = false, onOpenCustomer }) 
       </div>
 
       <div className="shrink-0 text-right">
+        {/* $0: cancelación de una venta que ya estaba pagada (no mueve el saldo). */}
         <p
           className={cn(
             "text-[15px] font-bold tabular-nums",
-            up ? "text-destructive dark:text-red-400" : "text-success",
+            m.amount === 0
+              ? "text-muted-foreground"
+              : up
+                ? "text-destructive dark:text-red-400"
+                : "text-success",
           )}
         >
-          {up ? "+" : "−"}
+          {m.amount === 0 ? "" : up ? "+" : "−"}
           {fmtMoney(Math.abs(m.amount))}
         </p>
         {m.balance_after != null && (

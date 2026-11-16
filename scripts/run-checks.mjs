@@ -81,6 +81,7 @@ const CHECKS = [
   { file: "check-local-prices.cjs" },
   { file: "check-local-promos.cjs" },
   { file: "check-local-cancel.cjs" },
+  { file: "check-credit-reversal.cjs" },
   { file: "check-reports.cjs" },
   { file: "check-pair-notify.cjs" },
   { file: "check-sale-fast.cjs" },
