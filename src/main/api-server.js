@@ -563,10 +563,15 @@ const startServer = async (
     const exists = db.prepare("SELECT id FROM products WHERE barcode = ?").get(barcode);
     if (exists) return { status: 409, body: { success: false, error: "Ya existe un producto con ese código" } };
 
-    const stockNum = parseInt(stock) || 0;
+    // Granel (kilos) con sus decimales: parseInt dejaba 0.5 kg en 0. Las piezas,
+    // enteras como siempre.
+    const isWeight = (sale_unit || "piece") === "weight";
+    const toQty = (v) =>
+      isWeight ? Math.round((parseFloat(v) || 0) * 1000) / 1000 : parseInt(v) || 0;
+    const stockNum = toQty(stock);
     const minStock =
-      parseInt(min_stock) > 0
-        ? parseInt(min_stock)
+      toQty(min_stock) > 0
+        ? toQty(min_stock)
         : Math.max(1, Math.floor(stockNum * 0.4));
 
     const result = db.prepare(`

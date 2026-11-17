@@ -6005,8 +6005,14 @@ const runImportProductsFile = async (filePath) => {
             }
           }
 
-          const impStock = Math.round(toNum(getVal(row, "stock")));
-          const impMin = Math.round(toNum(getVal(row, "min_stock")));
+          // Granel (kilos) conserva sus decimales: redondear a enteros dejaba
+          // 1.518 kg en 2 y 0.4 kg en 0. Las piezas siguen siendo enteras.
+          const toQty = (v) =>
+            saleUnit === "weight"
+              ? Math.round(toNum(v) * 1000) / 1000
+              : Math.round(toNum(v));
+          const impStock = toQty(getVal(row, "stock"));
+          const impMin = toQty(getVal(row, "min_stock"));
           insert.run(
             barcode || null,
             name,
