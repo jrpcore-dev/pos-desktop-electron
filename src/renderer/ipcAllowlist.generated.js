@@ -155,6 +155,7 @@ export const invoke = [
   "save-setting",
   "search-customers",
   "search-products",
+  "select-backup-file",
   "select-catalog-file",
   "select-import-file",
   "set-activation-enabled",

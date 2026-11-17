@@ -164,6 +164,7 @@ const CLASSIFICATION_BASE = {
   "import-catalog-data": SCOPES.HOST_WRITE,
   "import-products-data": SCOPES.HOST_WRITE,
   "restore-backup": SCOPES.HOST_WRITE,
+  "select-backup-file": SCOPES.HOST_WRITE,
   "revoke-device": SCOPES.HOST_WRITE,
   "rename-device": SCOPES.HOST_WRITE,
   "rotate-activation-code": SCOPES.HOST_WRITE,

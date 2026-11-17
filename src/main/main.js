@@ -5451,6 +5451,34 @@ ipcMain.handle("promote-to-host", async (event, { backupPath, confirm } = {}) =>
   }
 });
 
+// Respaldo traído de fuera (USB, otra PC): se copia a la carpeta de respaldos
+// para que pase por la MISMA validación y restauración que los propios
+// (`restore-backup` sólo acepta rutas dentro de esa carpeta). El prefijo
+// `pos-importado-` no coincide con ninguna regla de retención: no se borra solo.
+ipcMain.handle("select-backup-file", async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: "Seleccionar respaldo para restaurar",
+      properties: ["openFile"],
+      filters: [{ name: "Respaldo de Vendia", extensions: ["db"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0)
+      return { success: false, cancelled: true };
+    const source = result.filePaths[0];
+    const base = path
+      .basename(source, path.extname(source))
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .slice(0, 60);
+    const dest = uniqueFilePath(
+      path.join(getBackupDir(), `pos-importado-${base || "respaldo"}.db`),
+    );
+    fs.copyFileSync(source, dest);
+    return { success: true, path: dest, name: path.basename(dest) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("restore-backup", async (event, backupPath) => {  try {
     const resolved = resolveBackupPath(backupPath);
     if (!resolved)

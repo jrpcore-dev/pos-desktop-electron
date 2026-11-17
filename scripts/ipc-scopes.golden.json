@@ -153,6 +153,7 @@
   "save-setting": "rpc",
   "search-customers": "host_read",
   "search-products": "host_read",
+  "select-backup-file": "host_write",
   "select-catalog-file": "system",
   "select-import-file": "system",
   "set-activation-enabled": "host_write",

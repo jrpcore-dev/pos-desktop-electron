@@ -213,6 +213,17 @@ const BackupRestore = () => {
     }
   };
 
+  // Respaldo de otra PC: se copia a la lista y se abre la misma confirmación.
+  const restoreFromFile = async () => {
+    const result = await window.api.invoke("select-backup-file");
+    if (result.success) {
+      fetchBackups();
+      setRestoreConfirm({ name: result.name, path: result.path });
+    } else if (!result.cancelled) {
+      setMessage({ type: "error", text: result.error });
+    }
+  };
+
   const downloadBackup = async (b) => {
     const result = await window.api.invoke("download-backup", b.path);
     if (result.success) {
@@ -356,6 +367,10 @@ const BackupRestore = () => {
             >
               <Upload size={16} />
               {importing ? "Importando..." : "Importar Datos"}
+            </Button>
+            <Button variant="outline" onClick={restoreFromFile}>
+              <ArchiveRestore size={16} />
+              Restaurar desde archivo
             </Button>
             <Button onClick={createBackup}>
               <DatabaseBackup size={16} />
@@ -709,8 +724,9 @@ const BackupRestore = () => {
           <>
             ¿Restaurar el respaldo "{restoreConfirm?.name}"?
             <br /><br />
-            <strong>Advertencia:</strong> Esta acción reemplazará TODOS los datos actuales de la base de datos.
-            Los datos existentes se perderán permanentemente. Se recomienda crear un respaldo antes de restaurar.
+            <strong>Advertencia:</strong> Esta acción reemplazará TODOS los datos actuales de la base de datos
+            (productos, ventas, cortes y clientes). Antes de reemplazarlos se guarda una copia automática
+            ("pos-pre-restore") en la lista de respaldos.
           </>
         }
         onCancel={() => setRestoreConfirm(null)}
