@@ -391,6 +391,27 @@ const balances = (db) => {
   return { byCustomer: out, receivable: round2(receivable), debtors };
 };
 
+// Saldos que quedaron bajo cero por cancelar o devolver una venta fiada que ya
+// estaba pagada (antes de `reversible`): un ajuste los deja en $0. Idempotente:
+// después de correr ya no hay saldos negativos.
+const repairNegativeBalances = (db) => {
+  const rows = db
+    .prepare(
+      `SELECT customer_id, ROUND(SUM(amount), 2) AS balance
+       FROM customer_credit_movements GROUP BY customer_id HAVING balance < -0.004`,
+    )
+    .all();
+  for (const r of rows) {
+    insertMovement(db, {
+      customerId: r.customer_id,
+      type: "adjustment",
+      amount: -r.balance,
+      note: "Corrección: saldo negativo por cancelar una venta ya pagada",
+    });
+  }
+  return rows.length;
+};
+
 // ─── Corte de caja ───────────────────────────────────────────────────────────
 
 // Lo que el fiado aporta a una caja: ventas fiadas (sólo la parte fiada),
@@ -442,4 +463,5 @@ module.exports = {
   movementsAll,
   balances,
   registerCredit,
+  repairNegativeBalances,
 };

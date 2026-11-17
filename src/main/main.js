@@ -170,6 +170,18 @@ const isBoxDevice = () =>
 
 runMigrations(db);
 
+// Fiado: saldos que quedaron negativos por cancelar una venta ya pagada (antes
+// de que la cancelación respetara lo abonado) se corrigen a $0. Sólo en el
+// Host, que es donde vive el fiado.
+if (!isBoxDevice()) {
+  try {
+    const fixed = credit.repairNegativeBalances(db);
+    if (fixed) console.log(`[fiado] ${fixed} saldo(s) negativo(s) corregido(s) a $0`);
+  } catch (e) {
+    console.error("[fiado] no se pudieron corregir saldos negativos:", e.message);
+  }
+}
+
 // 3a.i · device_id del Host, generado en el primer arranque (settings).
 const hostDeviceId = dbSchema.ensureHostDeviceId(db);
 

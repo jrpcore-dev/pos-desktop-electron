@@ -4,7 +4,8 @@
  *
  * El bug: venta fiada de $9, el cliente la abona, se cancela la venta → la
  * reversa volvía a restar los $9 y la cuenta quedaba en −$9 ("Al corriente"
- * con "Saldo −$9.00"). Ahora sólo se revierte lo que todavía debe.
+ * con "Saldo −$9.00"). Ahora sólo se revierte lo que todavía debe, y los
+ * saldos que ya quedaron negativos se corrigen a $0 al arrancar.
  *
  * Uso:
  *   ELECTRON_RUN_AS_NODE=1 node_modules\electron\dist\electron.exe scripts\check-credit-reversal.cjs
@@ -83,6 +84,13 @@ const se = fiar(e, 12, "V-12");
 pay(e, 12);
 credit.refundSalePart(db, se, 5, {});
 check(credit.balanceOf(db, e) === 0, "devolución de una venta ya pagada → saldo $0", credit.balanceOf(db, e));
+
+// Saldos que ya quedaron negativos (antes del arreglo) → $0 y nada más.
+const f = customer("F");
+db.prepare("INSERT INTO customer_credit_movements (customer_id, type, amount) VALUES (?, 'reversal', -9)").run(f);
+check(credit.repairNegativeBalances(db) === 1, "corrige el saldo negativo existente");
+check(credit.balanceOf(db, f) === 0 && last(f).type === "adjustment", "queda en $0 con un ajuste", JSON.stringify(last(f)));
+check(credit.repairNegativeBalances(db) === 0, "segunda corrida no hace nada");
 
 console.log(`\n=== fiado cancelaciones: ${pass} PASS / ${fail} FAIL ===`);
 process.exit(fail ? 1 : 0);
