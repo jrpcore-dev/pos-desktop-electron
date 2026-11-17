@@ -151,3 +151,6 @@ skills-lock.json
 # Bocetos de logo (solo locales)
 /design-preview/
 /scripts/generate-preview.js
+
+# Token de GitHub para publicar releases (nunca se sube)
+gh_token.txt
