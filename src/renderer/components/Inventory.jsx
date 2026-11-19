@@ -685,6 +685,7 @@ const Inventory = () => {
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [stockQuantity, setStockQuantity] = useState("");
   const [stockQtyError, setStockQtyError] = useState("");
+  const [confirmedStockQuantity, setConfirmedStockQuantity] = useState(false);
   const [stockCost, setStockCost] = useState("");
   // Configuración → Funciones: sin caducidades no se muestra el campo.
   const { expiry: expiryOn } = useFeatures();
@@ -998,6 +999,7 @@ const Inventory = () => {
     setSelectedProduct(product);
     setStockQuantity("");
     setStockQtyError("");
+    setConfirmedStockQuantity(false);
     setStockCost("");
     setStockExpiry("");
     setStockRegisterExpense(false);
@@ -1050,6 +1052,10 @@ const Inventory = () => {
         ? stockQuantity *
           entryUnit(selectedProduct, stockUnitMode).factor
         : stockQuantity;
+    if (stockQuantityWarning && !confirmedStockQuantity) {
+      setStockQtyError("Confirma la cantidad antes de guardar.");
+      return;
+    }
     const costNum = parseFloat(stockCost) || 0;
     const totalCost =
       costNum > 0
@@ -1064,6 +1070,8 @@ const Inventory = () => {
       const result = await window.api.invoke("add-stock", {
         productId: selectedProduct.id,
         quantity: actualQty,
+        enteredQuantity: stockQuantity,
+        confirmedStockQuantity,
         cost: costNum,
         cashierId: cashier?.id,
         registerExpense: stockRegisterExpense,
@@ -1089,6 +1097,10 @@ const Inventory = () => {
 
   const confirmAddStock = async () => {
     if (!selectedProduct || stockQuantity <= 0) return;
+    if (stockQuantityWarning && !confirmedStockQuantity) {
+      setStockQtyError("Confirma la cantidad antes de continuar.");
+      return;
+    }
     if (
       selectedProduct.sale_unit !== "weight" &&
       !/^\d+$/.test(String(stockQuantity).trim())
@@ -1188,6 +1200,9 @@ const Inventory = () => {
       ? (parseFloat(stockQuantity) || 0) *
         entryUnit(selectedProduct, stockUnitMode).factor
       : parseFloat(stockQuantity) || 0;
+  const stockBarcode = String(selectedProduct?.barcode ?? "").trim();
+  const stockQuantityWarning = addPiezas >= 1_000_000 ||
+    (/^\d{6,}$/.test(stockBarcode) && /^\d+$/.test(stockQuantity) && stockQuantity.endsWith(stockBarcode));
 
   const exportInventoryCSV = async () => {
     const result = await window.api.invoke("get-all-products");
@@ -2047,7 +2062,10 @@ const Inventory = () => {
                   <StockUnitToggle
                     product={selectedProduct}
                     value={stockUnitMode}
-                    onChange={setStockUnitMode}
+                    onChange={(unit) => {
+                      setStockUnitMode(unit);
+                      setConfirmedStockQuantity(false);
+                    }}
                   />
                   <Label htmlFor="add-stock-qty">
                     ¿Cuánto llegó?
@@ -2062,10 +2080,23 @@ const Inventory = () => {
                     onChange={(e) => {
                       setStockQuantity(e.target.value);
                       setStockQtyError("");
+                      setConfirmedStockQuantity(false);
                     }}
                     className="h-11 text-base tabular-nums"
                     autoFocus
                   />
+                  {stockQuantityWarning && (
+                    <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs">
+                      <p>Parece que se escaneó un código de barras en el campo de cantidad. Revisa cuánto llegó.</p>
+                      <label className="flex items-center gap-2 font-medium">
+                        <Checkbox
+                          checked={confirmedStockQuantity}
+                          onCheckedChange={(checked) => setConfirmedStockQuantity(checked === true)}
+                        />
+                        Confirmo que esta cantidad es correcta
+                      </label>
+                    </div>
+                  )}
                   {stockQtyError && (
                     <p className="text-xs font-semibold text-red-600 dark:text-red-400">
                       {stockQtyError}

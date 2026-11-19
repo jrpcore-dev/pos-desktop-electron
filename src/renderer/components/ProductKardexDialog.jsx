@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useDbChanges } from "../lib/useDbChanges";
 import { formatMXDate, formatMXTime, mxToday, mxWeekRange } from "../utils/dateUtils";
-import { fmtStockQty } from "@/utils/format";
+import { fmtQty as fmtQuantity } from "@/utils/format";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -158,7 +158,9 @@ const ProductKardexDialog = ({ open, onOpenChange, periodsRef }) => {
   );
 
   const unit = unitOf(product);
-  const fmtQty = (quantity) => fmtStockQty(quantity, product?.sale_unit);
+  const fmtQty = (quantity) => quantity == null
+    ? "—"
+    : `${fmtQuantity(quantity, product?.sale_unit)} ${unit}`;
 
   const applyPreset = (key) => {
     periodsRef.current.set(product.id, { preset: key });
@@ -195,6 +197,7 @@ const ProductKardexDialog = ({ open, onOpenChange, periodsRef }) => {
     data && Math.abs((Number(data.closing) || 0) - (Number(data.current) || 0)) < 0.0001;
   const unconfirmedHistory = data?.opening < 0;
   const unconfirmedClosing = unconfirmedHistory && !(reachesToday && matchesCurrent);
+  const movementBalance = (quantity) => unconfirmedHistory ? "Sin confirmar" : fmtQty(quantity);
 
   const totals = data?.totals || { in: 0, out: 0, sales: 0, devolution: 0 };
 
@@ -349,19 +352,20 @@ const ProductKardexDialog = ({ open, onOpenChange, periodsRef }) => {
                         {data.truncated ? "Últimos " : ""}{data.rows.length} {data.rows.length === 1 ? "registro" : "registros"}
                       </span>
                     </div>
-                    <Table className="min-w-[25rem]" containerClassName="max-h-[46vh]">
+                    <Table className="min-w-[34rem]" containerClassName="max-h-[46vh]">
                       <TableHeader>
                         <TableRow className="hover:bg-transparent">
                           <TableHead className="w-28">Fecha</TableHead>
                           <TableHead>Concepto</TableHead>
+                          <TableHead className="w-28 text-right">Antes</TableHead>
                           <TableHead className="w-24 text-right">Cambio</TableHead>
-                          <TableHead className="w-28 text-right">Existencia</TableHead>
+                          <TableHead className="w-28 text-right">Después</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {data.rows.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                            <TableCell colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">
                               No hubo movimientos ni ventas en este rango.
                             </TableCell>
                           </TableRow>
@@ -386,11 +390,15 @@ const ProductKardexDialog = ({ open, onOpenChange, periodsRef }) => {
                                     row.type === "sale"
                                       ? PAYMENT_LABEL[row.notes] || row.notes
                                       : row.notes,
-                                    row.cashier_name,
+                                    row.device_name,
+                                    row.cashier_name !== row.device_name && row.cashier_name,
                                   ]
                                     .filter(Boolean)
                                     .join(" · ")}
                                 </p>
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap px-4 py-2.5 text-right text-xs tabular-nums text-muted-foreground">
+                                {movementBalance(row.balance_before)}
                               </TableCell>
                               <TableCell className={cn(
                                 "whitespace-nowrap px-4 py-2.5 text-right text-sm font-bold tabular-nums",
@@ -398,12 +406,11 @@ const ProductKardexDialog = ({ open, onOpenChange, periodsRef }) => {
                               )}>
                                 {row.delta ? `${row.delta < 0 ? "−" : "+"}${fmtQty(row.quantity)}` : fmtQty(0)}
                               </TableCell>
-                              <TableCell className="whitespace-nowrap bg-muted/25 px-4 py-2.5 text-right text-sm">
-                                {unconfirmedHistory ? (
-                                  <span className="text-xs font-medium text-muted-foreground">Sin confirmar</span>
-                                ) : (
-                                  <span className="font-bold tabular-nums">{fmtQty(row.balance)}</span>
-                                )}
+                              <TableCell className={cn(
+                                "whitespace-nowrap bg-muted/25 px-4 py-2.5 text-right tabular-nums",
+                                unconfirmedHistory ? "text-xs font-medium text-muted-foreground" : "text-sm font-bold",
+                              )}>
+                                {movementBalance(row.balance)}
                               </TableCell>
                             </TableRow>
                           ))

@@ -114,6 +114,8 @@ check(
       "returned_qty",
       // Reportes · costo de la partida al vender (ganancia real).
       "cost_at_sale",
+      "base_price_at_sale",
+      "discount_label_at_sale",
     ]),
   "sale_items en su forma final (columnas y orden)",
   JSON.stringify(si.map((c) => c.name)),

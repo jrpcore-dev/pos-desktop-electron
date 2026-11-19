@@ -192,6 +192,23 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
         <span className="text-sm font-semibold text-foreground">
           {sale.folio || `#${sale.id}`}
         </span>
+        {sale.matching_items?.length > 0 && (
+          <ul className="mt-1.5 w-40 space-y-1.5 text-xs text-muted-foreground sm:w-52">
+            {sale.matching_items.map((item) => (
+              <li key={item.id}>
+                <span className="block break-words font-semibold text-foreground">{item.name || "Producto"}</span>
+                <span className="tabular-nums">
+                  {qtyText(item.quantity, item.sale_unit === "weight")} · {fmtMoney(item.quantity * item.price)}
+                </span>
+                {(isCanceled || item.status === "cancelado") ? (
+                  <span className="block text-destructive">Partida cancelada</span>
+                ) : item.returned_qty > 0 && (
+                  <span className="block">Devuelto {qtyText(item.returned_qty, item.sale_unit === "weight")}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </TableCell>
       <TableCell className="px-4 py-3">
         <p className="text-sm font-medium text-foreground">{formatMXDate(sale.created_at)}</p>
@@ -224,7 +241,7 @@ const SaleRow = memo(function SaleRow({ sale, onOpenDetail }) {
               variant="outline"
               size="icon"
               aria-label="Ver detalle de la venta"
-              onClick={() => onOpenDetail(sale.id)}
+              onClick={() => onOpenDetail(sale.id, sale.matching_items)}
             >
               <Eye className="h-4 w-4" />
             </Button>
@@ -295,12 +312,21 @@ const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => 
         qtyDisplay: qty,
         unit: "",
         unitPrice: price,
+        baseUnitPrice: it.base_price_at_sale,
         lineTotal: qty * price,
-        discountLabel: Number(it.discount_percent) > 0 ? `-${it.discount_percent}%` : null,
+        promoLabel: it.discount_label_at_sale,
+        discountLabel: !it.discount_label_at_sale && Number(it.discount_percent) > 0
+          ? `-${it.discount_percent}%` : null,
       };
     });
     const discountTotal = Number(saleDetail.discount_total ?? 0);
     const total = Number(saleDetail.total || 0);
+    const hasOriginalPrices = saleItems.length > 0 && saleItems.every(
+      (it) => it.base_price_at_sale != null && !it.returned_qty && it.status !== "cancelado",
+    );
+    const subtotal = discountTotal > 0 && hasOriginalPrices
+      ? items.reduce((sum, it) => sum + it.baseUnitPrice * it.qtyDisplay, 0)
+      : total + discountTotal;
     const html = buildReceiptHTML({
       store: {
         name: (storeName || "MI TIENDA").toUpperCase(),
@@ -308,13 +334,14 @@ const printSaleTicket = async (saleDetail, saleItems, setPrinting, setError) => 
       },
       headerNote: headerNote || "",
       footerNote: footerNote || "",
-      ticketNum: saleDetail.pending ? saleDetail.folio : saleDetail.id,
+      ticketNum: saleDetail.folio || saleDetail.id,
       date: new Date(saleDetail.created_at),
       cashierName: saleDetail.cashier_name || "Usuario",
       items,
-      subtotal: total + discountTotal,
+      subtotal,
       showDiscounts: discountTotal > 0,
       discountTotal,
+      cashRounding: saleDetail.payment_method === "cash" ? total + discountTotal - subtotal : 0,
       total,
       methodLabel: (
         methodNames[saleDetail.payment_method] || saleDetail.payment_method || ""
@@ -561,6 +588,11 @@ const Transacciones = () => {
   const rowsClass = useRowsEntering(loading);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [searchedSales, setSearchedSales] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchRevision, setSearchRevision] = useState(0);
   const [method, setMethod] = useState("");
   const [activeTab, setActiveTab] = useState("ventas");
   const [dateRange, setDateRange] = useState(() => {
@@ -576,6 +608,7 @@ const Transacciones = () => {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [matchedItemIds, setMatchedItemIds] = useState([]);
   const [printing, setPrinting] = useState(false);
   // Regla 5 · venta/gasto nuevo (aquí o en otra caja) NO mueve la tabla
   // debajo del usuario: aparece el chip y él decide cuándo refrescar.
@@ -584,6 +617,42 @@ const Transacciones = () => {
     () => setFreshData(true),
     ["sales", "cash_register_expenses"],
   );
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const salesSearch = activeTab === "ventas" ? debouncedSearch : "";
+  const filterSales = activeTab === "ventas" && Boolean(salesSearch || method);
+  useEffect(() => {
+    let active = true;
+    setSearchError("");
+    if (!filterSales) {
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    setPage(0);
+    window.api.invoke("get-sales-by-range", {
+      startDate: dateRange?.from || undefined,
+      endDate: dateRange?.to || undefined,
+      search: salesSearch,
+      method,
+      listOnly: true,
+    }).then((result) => {
+      if (!result?.success) throw new Error(result?.error || "No se pudieron buscar las ventas.");
+      if (active) setSearchedSales(result.sales || []);
+    }).catch((error) => {
+      if (active) {
+        setSearchedSales([]);
+        setSearchError(error.message);
+      }
+    }).finally(() => {
+      if (active) setSearchLoading(false);
+    });
+    return () => { active = false; };
+  }, [dateRange?.from, dateRange?.to, filterSales, method, salesSearch, searchRevision]);
 
   const load = useCallback(async () => {
     const skipFlash = initialLoadRef.current;
@@ -634,6 +703,7 @@ const Transacciones = () => {
 
   const refreshNow = useCallback(() => {
     setFreshData(false);
+    setSearchRevision((value) => value + 1);
     load();
   }, [load]);
 
@@ -665,16 +735,10 @@ const Transacciones = () => {
     }
   };
 
-  const sortedSales = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    const filtered = sales.filter((s) => {
-      if (method && s.payment_method !== method) return false;
-      if (!term) return true;
-      const text = `${s.cashier_name || ""} #${s.id}`.toLowerCase();
-      return text.includes(term);
-    });
-    return sortRows(filtered, saleSortKey, saleSortDir);
-  }, [sales, search, method, saleSortKey, saleSortDir]);
+  const sortedSales = useMemo(
+    () => sortRows(filterSales ? searchedSales : sales, saleSortKey, saleSortDir),
+    [filterSales, sales, searchedSales, saleSortKey, saleSortDir],
+  );
 
   const sortedExpenses = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -739,7 +803,8 @@ const Transacciones = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
-  const openDetail = useCallback(async (saleId) => {
+  const openDetail = useCallback(async (saleId, matches = []) => {
+    setMatchedItemIds(matches.map((item) => item.id));
     setDetailOpen(true);
     setDetailLoading(true);
     setDetail(null);
@@ -902,7 +967,7 @@ const Transacciones = () => {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={activeTab === "gastos" ? "Descripción o caja" : "Cajero o # de venta"}
+                placeholder={activeTab === "gastos" ? "Descripción o caja" : "Producto, código, folio o cajero"}
                 className="pl-10 rounded-lg"
               />
             </div>
@@ -934,6 +999,11 @@ const Transacciones = () => {
       </div>
 
         <TabsContent value="ventas" className="space-y-4">
+          {searchError && (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {searchError}
+            </p>
+          )}
           <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
             <Table>
               <TableHeader>
@@ -944,12 +1014,12 @@ const Transacciones = () => {
                   <TableHead>Caja</TableHead>
                   <SortHead label="Método" k="payment_method" active={saleSortKey === "payment_method"} dir={saleSortDir} onSort={handleSaleSort} />
                   <TableHead>Estado</TableHead>
-                  <SortHead label="Monto" k="total" align="right" active={saleSortKey === "total"} dir={saleSortDir} onSort={handleSaleSort} />
+                  <SortHead label="Total del ticket" k="total" align="right" active={saleSortKey === "total"} dir={saleSortDir} onSort={handleSaleSort} />
                   <TableHead className="text-center">Detalle</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody key={loading ? "cargando" : "lista"} className={rowsClass}>
-                {loading ? (
+              <TableBody key={loading || searchLoading ? "cargando" : "lista"} className={rowsClass}>
+                {loading || searchLoading ? (
                   Array.from({ length: PAGE_SIZE }).map((_, i) => (
                     <TableRow key={i}>
                       <TableCell className="px-4 py-3"><Skeleton className="h-4 w-16" /></TableCell>
@@ -1174,6 +1244,10 @@ const Transacciones = () => {
                 {[
                   ["Cajero", saleDetail.cashier_name || "—"],
                   ["Caja", saleDetail.device_name || saleDetail.device_code || "—"],
+                  ...(saleDetail.client_created_at && saleDetail.synced_at ? [
+                    ["Cobro en caja", `${formatMXDate(saleDetail.client_created_at)} ${formatMXTime(saleDetail.client_created_at)}`],
+                    ["Recibida en principal", `${formatMXDate(saleDetail.synced_at)} ${formatMXTime(saleDetail.synced_at)}`],
+                  ] : []),
                   ["Cliente", saleDetail.customer_name || "Público general"],
                   [
                     "Productos",
@@ -1206,8 +1280,9 @@ const Transacciones = () => {
                     const returned = round3(it.returned_qty);
                     const cancelled = it.status === "cancelado";
                     const active = cancelled ? 0 : round3(Math.max(0, sold - returned));
-                    const disc = Number(it.discount_percent || 0);
+                    const disc = it.base_price_at_sale == null ? Number(it.discount_percent || 0) : 0;
                     const price = Number(it.price_at_sale || 0);
+                    const savings = (Number(it.base_price_at_sale) - price) * active;
                     const full = price * sold * (1 - disc / 100);
                     const real = price * active * (1 - disc / 100);
                     const backQty = cancelled ? sold : returned;
@@ -1218,6 +1293,7 @@ const Transacciones = () => {
                         className={cn(
                           "grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 py-2.5",
                           idx > 0 && "border-t",
+                          matchedItemIds.includes(it.id) && "rounded-md bg-primary/10 px-2",
                         )}
                       >
                         <span className="flex size-10 items-center justify-center overflow-hidden rounded-[9px] bg-muted text-muted-foreground">
@@ -1242,6 +1318,12 @@ const Transacciones = () => {
                             {disc > 0 ? ` · −${disc} %` : ""}
                             {it.barcode ? ` · ${it.barcode}` : ""}
                           </p>
+                          {savings >= 0.005 && (
+                            <p className="mt-0.5 text-xs text-success">
+                              Antes {fmtMoney(it.base_price_at_sale)} por unidad · Ahorro {fmtMoney(savings)}
+                              {it.discount_label_at_sale ? ` · ${it.discount_label_at_sale}` : ""}
+                            </p>
+                          )}
                           {backQty > 0 && (
                             <div className="mt-1.5 inline-flex items-start gap-2 rounded-[9px] bg-warning/12 px-2.5 py-1.5 text-xs">
                               <Undo2 size={14} className="mt-px shrink-0 text-amber-700 dark:text-warning" />
@@ -1286,20 +1368,21 @@ const Transacciones = () => {
                       : Math.max(0, round3(it.quantity) - round3(it.returned_qty));
                   return (
                     acc +
-                    Number(it.price_at_sale || 0) * active * (1 - Number(it.discount_percent || 0) / 100)
+                    Number(it.price_at_sale || 0) * active *
+                      (it.base_price_at_sale == null ? 1 - Number(it.discount_percent || 0) / 100 : 1)
                   );
                 }, 0);
                 const saleDiscount = Number(saleDetail.discount_total || 0);
                 return (
                   <div className="mt-2 rounded-xl bg-muted/60 px-3.5 py-2.5 text-sm">
                     <div className="flex justify-between py-0.5">
-                      <span className="text-muted-foreground">Productos</span>
+                      <span className="text-muted-foreground">{saleDiscount > 0 ? "Productos con descuento aplicado" : "Productos"}</span>
                       <b className="tabular-nums">{fmtMoney(lines)}</b>
                     </div>
                     {saleDiscount > 0 && (
                       <div className="flex justify-between py-0.5">
-                        <span className="text-muted-foreground">Descuento de la venta</span>
-                        <b className="tabular-nums text-success">−{fmtMoney(saleDiscount)}</b>
+                        <span className="text-muted-foreground">Ahorro registrado</span>
+                        <b className="tabular-nums text-success">{fmtMoney(saleDiscount)}</b>
                       </div>
                     )}
                     <div className="mt-1.5 flex justify-between border-t pt-2 text-[15px] font-bold">

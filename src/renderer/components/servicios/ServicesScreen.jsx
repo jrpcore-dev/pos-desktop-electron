@@ -111,7 +111,7 @@ const ServicesScreen = () => {
   // vigente después de cambiarla o si el Host avisó que cambió al cobrar.
   const reloadCatalog = useCallback(async () => {
     try {
-      const catalog = await window.api.invoke("taecel:get-catalog", { force: false });
+      const catalog = await window.api.invoke("taecel:get-catalog", { fresh: true });
       if (mounted.current && catalog?.ok) setOperators(toUiOperators(catalog));
     } catch (e) {
       // Se queda el catálogo que había; el próximo chequeo lo trae.

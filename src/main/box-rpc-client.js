@@ -654,6 +654,10 @@ const QUEUED_OPS = {
         product.sale_unit === "weight" ? "Cantidad no válida" : "Cantidad no válida. Solo números enteros.",
       );
     }
+    if (productsCore.stockEntryNeedsConfirmation(qty, product.barcode, payload.enteredQuantity) &&
+        payload.confirmedStockQuantity !== true) {
+      return fail("STOCK_QUANTITY_CONFIRMATION", "Revisa y confirma la cantidad. Podría ser un código de barras.");
+    }
     return {
       args: [{ ...payload, productId: product.id, ...productRef(product) }],
       effect: { stock: [{ productId: product.id, ...productRef(product), delta: qty }] },
@@ -1664,8 +1668,9 @@ const forward = (db, channel, args = []) => {
     };
     const saved = readSaved();
     const savedAt = Number(activation.getSetting(db, TAECEL_CATALOG_AT_KEY) || 0);
-    const force = !!(args[0] && args[0].force);
-    if (saved && !force) {
+    // `fresh` evita la caché de la caja sin forzar una descarga desde Taecel.
+    const bypassLocalCache = !!(args[0] && (args[0].force || args[0].fresh));
+    if (saved && !bypassLocalCache) {
       if (Date.now() - savedAt > TAECEL_CATALOG_FRESH_MS) fetchFresh().catch(() => {});
       return Promise.resolve(saved);
     }

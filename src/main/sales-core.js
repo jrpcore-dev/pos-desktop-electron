@@ -397,7 +397,7 @@ const createSaleTx = (
   const saleId = saleInfo.lastInsertRowid;
 
   const itemStmt = db.prepare(
-    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted, service_transaction_id, cost_at_sale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, price_at_sale, discount_percent, stock_deducted, service_transaction_id, cost_at_sale, base_price_at_sale, discount_label_at_sale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   // `day_sold` mantiene el contador "vendido hoy" de la línea base compartida:
   // se escribe junto al stock, así que la fila cambia igual que antes y viaja
@@ -425,6 +425,10 @@ const createSaleTx = (
     if (!Number.isFinite(unitPrice) || unitPrice < 0) {
       throw fail("INVALID_PRICE", "Precio inválido");
     }
+    const basePrice = Number.isFinite(item.basePriceAtSale) && item.basePriceAtSale >= 0
+      ? item.basePriceAtSale : null;
+    const discountLabel = basePrice > unitPrice && typeof item.discountLabelAtSale === "string"
+      ? item.discountLabelAtSale.trim().slice(0, 160) || null : null;
 
     if (isManual) {
       const productName = item.name;
@@ -445,6 +449,8 @@ const createSaleTx = (
         // Manual o servicio: sin costo conocido. La comisión de un servicio
         // (sólo desde la llamada interna) es ganancia completa: costo 0.
         allowServiceLink && item.serviceFee ? 0 : null,
+        basePrice,
+        discountLabel,
       );
       continue;
     }
@@ -502,6 +508,8 @@ const createSaleTx = (
       stockDeducted,
       null,
       lineCostOf(product, stockDeducted),
+      basePrice,
+      discountLabel,
     );
 
     if (stockAfter < 0) {

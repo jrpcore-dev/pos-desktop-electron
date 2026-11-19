@@ -52,8 +52,9 @@ export const filterOperators = (operators, category, query) => {
 
 export const quote = (operator, amountCents) => {
   if (!operator || !Number.isFinite(amountCents) || amountCents <= 0) return null;
-  const feeCents = operator.feeCents || 0;
-  return { amountCents, feeCents, totalCents: amountCents + feeCents };
+  const feeWaived = operator.feeWaiverCents > 0 && amountCents >= operator.feeWaiverCents;
+  const feeCents = feeWaived ? 0 : operator.feeCents || 0;
+  return { amountCents, feeCents, totalCents: amountCents + feeCents, feeWaived };
 };
 
 // Servicios como CFE se cobran por monto libre: el cajero captura el importe

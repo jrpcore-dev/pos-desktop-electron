@@ -126,7 +126,9 @@ const normalizeFees = (raw) => {
       if (Number.isFinite(n) && n >= 0) byCarrier[key] = Math.min(n, MAX_FEE_CENTS);
     }
   }
-  return { byCategory, byCarrier };
+  const threshold = Math.round(Number(src.airtimeFeeWaiverCents));
+  const airtimeFeeWaiverCents = Number.isSafeInteger(threshold) && threshold > 0 ? threshold : 0;
+  return { byCategory, byCarrier, airtimeFeeWaiverCents };
 };
 
 const createServiceTransactions = ({
@@ -167,7 +169,11 @@ const createServiceTransactions = ({
   const getFees = () => ({ ok: true, fees: readFees() });
 
   const setFees = (payload = {}) => {
-    const fees = normalizeFees(payload.fees || payload);
+    const incoming = payload.fees || payload;
+    const fees = normalizeFees({
+      airtimeFeeWaiverCents: readFees().airtimeFeeWaiverCents,
+      ...incoming,
+    });
     db.prepare(
       "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(FEES_KEY, JSON.stringify(fees));
@@ -181,7 +187,11 @@ const createServiceTransactions = ({
     const fees = readFees();
     return {
       ...catalog,
-      operators: catalog.operators.map((op) => ({ ...op, feeCents: feeFor(op, fees) })),
+      operators: catalog.operators.map((op) => ({
+        ...op,
+        feeCents: feeFor(op, fees),
+        feeWaiverCents: Number(op.categoryId) === 1 ? fees.airtimeFeeWaiverCents : 0,
+      })),
     };
   };
 
@@ -954,7 +964,9 @@ const createServiceTransactions = ({
 
     // La comisión la decide el Host. Si la caja mostró otra (alguien la cambió
     // mientras cobraba), no se cobra un total distinto al que vio el cliente.
-    const feeCents = feeFor(operator);
+    const fees = readFees();
+    const threshold = Number(operator.categoryId) === 1 ? fees.airtimeFeeWaiverCents : 0;
+    const feeCents = threshold > 0 && amountCents >= threshold ? 0 : feeFor(operator, fees);
     if (payload.feeCents != null && Math.round(Number(payload.feeCents)) !== feeCents) {
       return {
         ok: false,

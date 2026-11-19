@@ -59,6 +59,7 @@ const MoneyField = ({ id, value, onChange, label, className = "" }) => (
 
 const ServiceFeesDialog = ({ open, onOpenChange, operators = [], onSaved }) => {
   const [byType, setByType] = useState({});
+  const [airtimeFeeWaiver, setAirtimeFeeWaiver] = useState("");
   const [byCarrier, setByCarrier] = useState({});
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -76,6 +77,7 @@ const ServiceFeesDialog = ({ open, onOpenChange, operators = [], onSaved }) => {
       .then((r) => {
         if (!alive) return;
         const fees = r?.fees || {};
+        setAirtimeFeeWaiver(toPesos(fees.airtimeFeeWaiverCents));
         setByType(
           Object.fromEntries(TYPES.map((t) => [t.key, toPesos(fees.byCategory?.[t.key])])),
         );
@@ -123,6 +125,7 @@ const ServiceFeesDialog = ({ open, onOpenChange, operators = [], onSaved }) => {
     setError("");
     try {
       const fees = {
+        airtimeFeeWaiverCents: toCents(airtimeFeeWaiver),
         byCategory: Object.fromEntries(TYPES.map((t) => [t.key, toCents(byType[t.key])])),
         byCarrier: Object.fromEntries(
           Object.entries(byCarrier).map(([id, pesos]) => [id, toCents(pesos)]),
@@ -171,22 +174,36 @@ const ServiceFeesDialog = ({ open, onOpenChange, operators = [], onSaved }) => {
                 </h3>
                 <div className="divide-y divide-border rounded-lg border border-border">
                   {TYPES.map((t) => (
-                    <label
-                      key={t.key}
-                      htmlFor={`fee-${t.key}`}
-                      className="flex items-center gap-3 px-3 py-2"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-semibold text-foreground">{t.label}</span>
-                        <span className="block truncate text-[11.5px] text-muted-foreground">{t.hint}</span>
-                      </span>
-                      <MoneyField
-                        id={`fee-${t.key}`}
-                        label={`Comisión ${t.label}`}
-                        value={byType[t.key] || ""}
-                        onChange={(v) => setByType((prev) => ({ ...prev, [t.key]: v }))}
-                      />
-                    </label>
+                    <div key={t.key}>
+                      <label htmlFor={`fee-${t.key}`} className="flex items-center gap-3 px-3 py-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-foreground">{t.label}</span>
+                          <span className="block truncate text-[11.5px] text-muted-foreground">{t.hint}</span>
+                        </span>
+                        <MoneyField
+                          id={`fee-${t.key}`}
+                          label={`Comisión ${t.label}`}
+                          value={byType[t.key] || ""}
+                          onChange={(v) => setByType((prev) => ({ ...prev, [t.key]: v }))}
+                        />
+                      </label>
+                      {t.key === "recargas" && (
+                        <label htmlFor="fee-airtime-waiver" className="mx-3 mb-2.5 flex items-center gap-3 rounded-md bg-muted/60 px-2.5 py-2">
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-semibold">Sin comisión desde</span>
+                            <span className="block text-[11.5px] text-muted-foreground">
+                              Aplica a todas las compañías. Déjalo vacío para desactivar el límite.
+                            </span>
+                          </span>
+                          <MoneyField
+                            id="fee-airtime-waiver"
+                            label="Recargas sin comisión desde"
+                            value={airtimeFeeWaiver}
+                            onChange={setAirtimeFeeWaiver}
+                          />
+                        </label>
+                      )}
+                    </div>
                   ))}
                 </div>
                 <p className="text-[11px] text-muted-foreground">

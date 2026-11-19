@@ -460,6 +460,8 @@ const createTables = (db) => {
   // Costo de la partida al momento de vender (costo por pieza × piezas que
   // salieron del stock). Sin él la ganancia se calculaba con el costo de hoy.
   ensureColumn("sale_items", "cost_at_sale", "REAL");
+  ensureColumn("sale_items", "base_price_at_sale", "REAL");
+  ensureColumn("sale_items", "discount_label_at_sale", "TEXT");
 
   // Vendesaldo quedó reemplazado por Taecel. Se borran sus credenciales en
   // claro para que no queden en la BD ni en los respaldos.

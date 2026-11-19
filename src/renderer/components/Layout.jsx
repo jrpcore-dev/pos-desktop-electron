@@ -1633,6 +1633,12 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           style={{ marginLeft: sideWidth, transition: resizing ? "none" : undefined }}
         >
           <HostStatusBanner />
+          {location.pathname === "/" && hostStatus && (hostStatus.reachable === false || pendingCount > 0) && (
+            <p role="status" className="mb-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
+              {hostStatus.reachable === false && "Sin conexión con la caja principal. Los precios pueden estar desactualizados. "}
+              {pendingCount > 0 && `${pendingCount} ${pendingCount === 1 ? "venta pendiente" : "ventas pendientes"} de sincronizar.`}
+            </p>
+          )}
           <Suspense fallback={<RouteShellSkeleton />}>
             <div key={location.pathname} className="animate-enter">
               <Outlet />

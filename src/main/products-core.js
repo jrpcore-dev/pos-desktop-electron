@@ -36,6 +36,13 @@ const nextInternalBarcode = (db) => {
 const BARCODE_TAKEN = "Ya existe un producto con este código de barras";
 const BARCODE_TAKEN_OTHER = "Ya existe otro producto con este código de barras";
 
+const stockEntryNeedsConfirmation = (quantity, barcode, enteredQuantity = quantity) => {
+  const code = String(barcode ?? "").trim();
+  const entered = String(enteredQuantity ?? "").trim();
+  return Number(quantity) >= 1_000_000 ||
+    (/^\d{6,}$/.test(code) && /^\d+$/.test(entered) && entered.endsWith(code));
+};
+
 // ── Promos por cantidad (product_prices) ────────────────────────────────────
 const PRICE_TIER_TYPES = ["mayoreo", "combo", "llevapaga", "piezan"];
 const PRICE_TIER_UNITS = ["piece", "box", "pack", "weight"];
@@ -230,6 +237,7 @@ const barcodeTaken = (db, barcode, exceptId = null) => {
 };
 
 module.exports = {
+  stockEntryNeedsConfirmation,
   nomarize,
   autoMinStock,
   isInternalBarcode,

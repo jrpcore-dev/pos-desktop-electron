@@ -156,10 +156,22 @@ const sell = (extra = {}) =>
   console.log("=== B · llega stock del Host antes que la venta ===");
   stopLive();
   await apiServer.stopServer();
-  const b = await sell();
+  const b = await sell({
+    cart: [{
+      id: 1,
+      quantity: 2,
+      price: 8,
+      finalPrice: 6,
+      basePriceAtSale: 8,
+      discountLabelAtSale: "Descuento aplicado en caja",
+      name: "Leche",
+    }],
+    total: 12,
+    discountTotal: 4,
+  });
   check(b.success === true && b.offline === true, "se cobra sin Host y avisa", b);
   check(stock(box) === 96, "(stock local 96)", stock(box));
-  host.prepare("UPDATE products SET stock = stock + 10 WHERE id = 1").run(); // otra caja surtió
+  host.prepare("UPDATE products SET stock = stock + 10, price = 10 WHERE id = 1").run();
   check((await apiServer.startServer(host, PORT)).success === true, "vuelve el Host");
   stopLive = startLive();
   await waitFor(() => replicaLive.liveState(box).state === "connected");
@@ -168,6 +180,19 @@ const sell = (extra = {}) =>
   await boxRpc.syncPending(box);
   await waitFor(() => boxSale(b.folio) && boxSale(b.folio).id > 0);
   check(stock(host) === 106 && stock(box) === 106, "al subir, Host y caja coinciden", [stock(host), stock(box)]);
+  for (const [name, db] of [["Host", host], ["Caja", box]]) {
+    const detail = db.prepare(
+      `SELECT s.total, s.discount_total, si.price_at_sale, si.base_price_at_sale, si.discount_label_at_sale
+       FROM sales s JOIN sale_items si ON si.sale_id = s.id WHERE s.folio = ?`,
+    ).get(b.folio);
+    check(
+      detail?.total === 12 && detail.discount_total === 4 &&
+      detail.price_at_sale === 6 && detail.base_price_at_sale === 8 &&
+      detail.discount_label_at_sale === "Descuento aplicado en caja",
+      `${name} conserva importe y descuento pese al cambio de precio`,
+      detail,
+    );
+  }
 
   console.log("=== C · resync completo ===");
   stopLive();

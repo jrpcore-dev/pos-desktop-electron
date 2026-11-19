@@ -15,7 +15,7 @@ import { Kbd } from "./ui/kbd";
 import { Skeleton } from "./ui/skeleton";
 import { InitialsAvatar } from "./ui/initials-avatar";
 import { cn } from "@/lib/utils";
-import { fmtMoney } from "@/utils/format";
+import { fmtMoney, fmtQty } from "@/utils/format";
 import { promoInfo } from "../utils/cartMath";
 
 const F_KEYS = [
@@ -209,10 +209,12 @@ const SearchSection =
                                   aria-hidden
                                 />
                                 {stock > 0
-                                  ? `${product.sale_unit === "weight" ? Number(stock.toFixed(2)) : stock} disp.`
+                                  ? product.sale_unit === "weight"
+                                    ? `${fmtQty(stock, "weight")} kg disponibles`
+                                    : `${stock} disp.`
                                   : "Sin stock"}
                               </span>
-                              {unit && (
+                              {unit && (product.sale_unit !== "weight" || stock <= 0) && (
                                 <Badge variant="unit" className="shrink-0 px-1.5 py-0">
                                   {unit}
                                 </Badge>

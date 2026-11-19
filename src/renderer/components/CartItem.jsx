@@ -66,6 +66,8 @@ const CartItem = React.memo(
     const promo = linePromo(item);
     const fullyBundled = item.bundleUnits > 0 && item.bundleUnits >= item.quantity;
     const fp = lineUnitPrice(item, item.quantity);
+    const payable = lineTotal(item, item.quantity);
+    const savings = Math.max(0, item.price * item.quantity - payable);
     const unitBadge = unitBadgeLabel(item);
     const qtyDisplay = item.isWeightItem
       ? item.quantity.toFixed(3)
@@ -129,7 +131,7 @@ const CartItem = React.memo(
             </div>
             <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
               <span className="text-xs font-semibold tabular-nums text-muted-foreground">
-                {promoPct > 0 || item.discount > 0 || promo || bundleBadge ? (
+                {savings >= 0.005 ? (
                   <>
                     <span className="line-through">{fmtMoney(item.price)}</span>{" "}
                     {fmtMoney(fp)}
@@ -159,9 +161,14 @@ const CartItem = React.memo(
             </div>
           </div>
 
-          <span className="text-lg font-bold leading-6 tabular-nums text-foreground">
-            {fmtMoney(roundValue(lineTotal(item, item.quantity)))}
-          </span>
+          <div className="text-right">
+            <p className="text-lg font-bold leading-6 tabular-nums text-foreground">
+              {fmtMoney(roundValue(payable))}
+            </p>
+            {savings >= 0.005 && (
+              <p className="text-xs font-medium text-success">Ahorro {fmtMoney(savings)}</p>
+            )}
+          </div>
         </div>
 
         {/* Línea 2: stepper a la izquierda; descuento y eliminar bajo el total */}

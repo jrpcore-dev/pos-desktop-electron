@@ -48,7 +48,10 @@ const CATALOG = {
       name: "Telcel",
       categoryId: 1,
       input: { numeric: true, min: 10, max: 10 },
-      products: [{ sku: "TEL050", name: "Telcel $50", categoryId: 1, amountCents: 5000 }],
+      products: [
+        { sku: "TEL050", name: "Telcel $50", categoryId: 1, amountCents: 5000 },
+        { sku: "TEL100", name: "Telcel $100", categoryId: 1, amountCents: 10000 },
+      ],
     },
     {
       id: "TMX",
@@ -157,6 +160,43 @@ const waitApplied = async (id) => {
   const telRow = await waitApplied("fee-tel");
   const telItems = db.prepare("SELECT COUNT(*) AS n FROM sale_items WHERE sale_id = ?").get(telRow.sale_id).n;
   check(tel.ok && telRow.fee_cents === 0 && telItems === 1, "sin comisión: un solo renglón como antes");
+
+  const feeRules = {
+    byCategory: { recargas: 500, servicios: 1500 },
+    byCarrier: { TEL: 700 },
+  };
+  svc.setFees({ fees: { ...feeRules, airtimeFeeWaiverCents: 10000 } });
+  // Una caja anterior guarda las tarifas sin conocer el nuevo campo.
+  svc.setFees({ fees: feeRules });
+  const withWaiver = svc.withFees(CATALOG);
+  const telOperator = withWaiver.operators.find((op) => op.id === "TEL");
+  const cfeOperator = withWaiver.operators.find((op) => op.id === "CFE");
+  check(telOperator.feeWaiverCents === 10000 && telOperator.feeCents === 700,
+    "el catálogo conserva el límite y la tarifa de compañía");
+  check(cfeOperator.feeWaiverCents === 0 && cfeOperator.feeCents === 1500,
+    "los pagos de servicios conservan su comisión");
+
+  const below = await svc.createRecharge(
+    { clientRequestId: "waiver-below", productCode: "TEL050", reference: "9991234567", feeCents: 700 },
+    ctx,
+  );
+  const belowRow = await waitApplied("waiver-below");
+  check(below.ok && belowRow?.fee_cents === 700, "por debajo de $100 se cobra la comisión de compañía");
+
+  const staleWaiver = await svc.createRecharge(
+    { clientRequestId: "waiver-stale", productCode: "TEL100", reference: "9991234567", feeCents: 700 },
+    ctx,
+  );
+  check(staleWaiver.code === "FEE_CHANGED" && staleWaiver.feeCents === 0,
+    "se rechaza la comisión de una caja con catálogo desactualizado");
+  const atLimit = await svc.createRecharge(
+    { clientRequestId: "waiver-exact", productCode: "TEL100", reference: "9991234567", feeCents: 0 },
+    ctx,
+  );
+  const atLimitRow = await waitApplied("waiver-exact");
+  check(atLimit.ok && atLimitRow?.fee_cents === 0, "el límite de $100 se aplica de forma inclusiva");
+  svc.setFees({ fees: { ...feeRules, airtimeFeeWaiverCents: 0 } });
+  check(svc.getFees().fees.airtimeFeeWaiverCents === 0, "borrar el límite recupera el comportamiento anterior");
 
   // Pendiente de caja: importe + comisión.
   db.prepare(

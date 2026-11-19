@@ -54,6 +54,7 @@ import {
   customerPriceForLine,
   applyPromotions,
   linePromo,
+  promoActiveNow,
   promoLabel as promoLabelOf,
 } from "../utils/cartMath";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
@@ -355,12 +356,24 @@ const processSaleRef = useRef(null);
       warnRegisterClosed();
       return;
     }
-    const cartForSale = pricedCart.map((it) => ({
-      ...it,
-      finalPrice: lineUnitPrice(it, it.quantity),
-      // Con precio de cliente el % de la promoción no se aplicó.
-      ...(it.customerPriced ? { discount_percent: 0 } : {}),
-    }));
+    const cartForSale = pricedCart.map((it) => {
+      const promo = linePromo(it);
+      const percentageApplied = !promo && !it.customerPriced &&
+        (it.bundleUnits || 0) < it.quantity && it.discount_percent > 0 && promoActiveNow(it);
+      return {
+        ...it,
+        finalPrice: lineUnitPrice(it, it.quantity),
+        basePriceAtSale: it.price,
+        discountLabelAtSale: [
+          it.discount > 0 && "Descuento aplicado en caja",
+          it.bundleUnits > 0 && it.bundleLabel,
+          promoLabelOf(promo),
+          percentageApplied && `Promoción del producto −${it.discount_percent}%`,
+        ].filter(Boolean).join(" · "),
+        // Con precio de cliente el % de la promoción no se aplicó.
+        ...(it.customerPriced ? { discount_percent: 0 } : {}),
+      };
+    });
     const result = await window.api.invoke("record-sale", {
       cart: cartForSale,
       total: method === "cash" ? roundCash(cartSummary.total) : cartSummary.total,
@@ -1588,15 +1601,8 @@ if (e.key === "Tab" && !isEditable) {
   };
 
   const generateReceiptHTML = (method, paperWidthMm, creditInfo) => {
-    const effSubtotal = method === "cash" ? roundCash(subtotal) : subtotal;
     const effTotal = method === "cash" ? roundCash(total) : total;
-    const showDiscounts = pricedCart.some(
-      (i) =>
-        (i.discount_percent > 0 && !i.customerPriced) ||
-        i.discount > 0 ||
-        i.bundleUnits > 0 ||
-        linePromo(i),
-    );
+    const showDiscounts = cartSummary.discountTotal >= 0.005;
     const items = pricedCart.map((item) => {
       const promo = linePromo(item);
       const fp = lineUnitPrice(item, item.quantity);
@@ -1625,13 +1631,14 @@ if (e.key === "Tab" && !isEditable) {
       const discountParts = [];
       if (item.discount_percent > 0 && !item.customerPriced)
         discountParts.push(`-${item.discount_percent}%`);
-      if (item.discount > 0) discountParts.push(`-${fmtMoneyAbs(item.discount)}`);
+      if (item.discount > 0) discountParts.push(`En caja −${fmtMoneyAbs(item.discount)}`);
 
       return {
         name,
         qtyDisplay,
         unit,
         unitPrice: fp,
+        baseUnitPrice: item.price,
         lineTotal: lt,
         promoLabel,
         discountLabel: discountParts.join(" + ") || null,
@@ -1646,9 +1653,10 @@ if (e.key === "Tab" && !isEditable) {
       date: new Date(),
       cashierName: cashier?.name || "Usuario Principal",
       items,
-      subtotal: effSubtotal,
+      subtotal: showDiscounts ? subtotal : effTotal,
       showDiscounts,
-      discountTotal: effSubtotal - effTotal,
+      discountTotal: cartSummary.discountTotal,
+      cashRounding: showDiscounts ? effTotal - total : 0,
       total: effTotal,
       methodLabel:
         method === "card"

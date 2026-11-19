@@ -47,6 +47,7 @@ export function buildReceiptHTML(model) {
     items = [],
     subtotal = 0,
     showDiscounts = false,
+    cashRounding = 0,
     discountTotal = 0,
     total = 0,
     methodLabel = "EFECTIVO",
@@ -95,6 +96,12 @@ export function buildReceiptHTML(model) {
     lines.push(
       `<div style="display:flex;justify-content:space-between;font-size:10px"><span>${it.qtyDisplay} ${it.unit} x $${pad(it.unitPrice)}</span><span>$${pad(it.lineTotal)}</span></div>`,
     );
+    const savings = Number(it.baseUnitPrice) * Number(it.qtyDisplay) - it.lineTotal;
+    if (savings >= 0.005) {
+      lines.push(
+        `<div style="font-size:10px">Antes $${pad(it.baseUnitPrice)} por unidad · Ahorro $${pad(savings)}</div>`,
+      );
+    }
     if (it.promoLabel) {
       lines.push(
         `<div style="text-align:center;font-size:10px;color:purple">${esc(it.promoLabel)}</div>`,
@@ -117,6 +124,11 @@ export function buildReceiptHTML(model) {
   if (showDiscounts) {
     lines.push(
       `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Descuentos:</span><span>-$${pad(discountTotal)}</span></div>`,
+    );
+  }
+  if (Math.abs(cashRounding) >= 0.005) {
+    lines.push(
+      `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Redondeo en efectivo</span><span>${cashRounding < 0 ? "-" : "+"}$${pad(Math.abs(cashRounding))}</span></div>`,
     );
   }
   lines.push(`<div class="sep"></div>`);

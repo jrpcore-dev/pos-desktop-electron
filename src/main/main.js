@@ -2169,6 +2169,8 @@ ipcMain.handle(
       productId: rawProductId,
       productUid,
       quantity,
+      enteredQuantity,
+      confirmedStockQuantity,
       cost,
       cashierId,
       registerExpense,
@@ -2185,7 +2187,7 @@ ipcMain.handle(
     const txn = db.transaction(() => {
       const product = db
         .prepare(
-          "SELECT name, cost_price, sale_unit, box_qty FROM products WHERE id = ?",
+          "SELECT name, barcode, cost_price, sale_unit, box_qty FROM products WHERE id = ?",
         )
         .get(productId);
       if (!product) throw new Error("Producto no encontrado");
@@ -2203,6 +2205,10 @@ ipcMain.handle(
             ? "Cantidad no válida"
             : "Cantidad no válida. Solo números enteros.",
         );
+      if (productsCore.stockEntryNeedsConfirmation(qty, product.barcode, enteredQuantity) &&
+          confirmedStockQuantity !== true) {
+        throw new Error("Revisa y confirma la cantidad. Podría ser un código de barras.");
+      }
 
       const isBox =
         (product.sale_unit === "box" ||
@@ -2637,10 +2643,12 @@ ipcMain.handle(
         .prepare(
           `SELECT si.id, si.stock_deducted AS quantity, s.id AS sale_id,
                   s.folio, s.created_at, s.cashier_name, s.payment_method,
+                  pd.device_code, ${deviceNameSql("s")},
                   COALESCE(s.status, 'completado') AS sale_status,
                   COALESCE(si.status, 'activo') AS item_status
              FROM sale_items si
              JOIN sales s ON s.id = si.sale_id
+             LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
             WHERE si.product_id = ? AND si.stock_deducted > 0
             ORDER BY s.created_at ASC, si.id ASC`,
         )
@@ -2677,6 +2685,7 @@ ipcMain.handle(
           reference: s.folio ? `Venta ${s.folio}` : `Venta #${s.sale_id}`,
           notes: s.payment_method || "",
           cashier_name: s.cashier_name || "",
+          device_name: s.device_name || s.device_code || "",
           cancelled:
             s.sale_status === "cancelado" || s.item_status === "cancelado",
         });
@@ -2706,8 +2715,9 @@ ipcMain.handle(
 
       let balance = opening;
       const out = rows.map((e) => {
+        const balanceBefore = Math.round(balance * 1000) / 1000;
         balance += e.delta;
-        return { ...e, balance: Math.round(balance * 1000) / 1000 };
+        return { ...e, balance_before: balanceBefore, balance: Math.round(balance * 1000) / 1000 };
       });
 
       const totals = { in: 0, out: 0, sales: 0, devolution: 0 };
@@ -3191,20 +3201,47 @@ ipcMain.handle("get-outside-register-sales", async () => {
   }
 });
 
-ipcMain.handle("get-sales-by-range", async (event, { startDate, endDate, deviceId } = {}) => {
+ipcMain.handle("get-sales-by-range", async (event, { startDate, endDate, deviceId, search, method, listOnly } = {}) => {
   try {
     const { start } = toUTCDateRange(startDate);
     const { end } = toUTCDateRange(endDate);
     const dev = deviceWhere(deviceId, "s");
+    const term = nomarize(String(search ?? "").trim());
+    const matchingItems = `
+      FROM sale_items si
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE si.sale_id = s.id AND (
+        instr(nomar(si.product_name), q.term) > 0 OR
+        instr(nomar(p.name), q.term) > 0 OR
+        instr(nomar(p.barcode), q.term) > 0
+      )`;
     const sales = db
       .prepare(
-        `SELECT s.*, pd.device_code, ${deviceNameSql("s")}
+        `${term ? "WITH search_query(term) AS (VALUES (?))" : ""}
+         SELECT s.*, pd.device_code, ${deviceNameSql("s")}
+           ${term ? `, (SELECT json_group_array(json_object(
+             'id', si.id, 'name', COALESCE(NULLIF(si.product_name, ''), p.name),
+             'quantity', si.quantity, 'price', si.price_at_sale,
+             'sale_unit', p.sale_unit, 'status', si.status, 'returned_qty', si.returned_qty
+           )) ${matchingItems}) AS matching_items` : ""}
          FROM sales s
          LEFT JOIN paired_devices pd ON pd.device_id = s.device_id
+         ${term ? "CROSS JOIN search_query q" : ""}
          WHERE s.created_at >= ? AND s.created_at < ?${dev.sql}
-         ORDER BY s.created_at DESC LIMIT 500`,
+         ${method ? "AND s.payment_method = ?" : ""}
+         ${term ? `AND (
+           instr(nomar(s.cashier_name), q.term) > 0 OR
+           instr(nomar(s.folio), q.term) > 0 OR
+           instr('#' || s.id, q.term) > 0 OR
+           EXISTS (SELECT 1 ${matchingItems})
+         )` : ""}
+         ORDER BY s.created_at DESC, s.id DESC LIMIT 500`,
       )
-      .all(start, end, ...dev.args);
+      .all(...(term ? [term] : []), start, end, ...dev.args, ...(method ? [method] : []))
+      .map(({ matching_items, ...sale }) => matching_items
+        ? { ...sale, matching_items: JSON.parse(matching_items) }
+        : sale);
+    if (listOnly) return { success: true, sales };
     const total = db
       .prepare(
         `SELECT COALESCE(SUM(total),0) as total FROM sales s WHERE s.created_at >= ? AND s.created_at < ? AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}`,

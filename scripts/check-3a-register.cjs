@@ -186,22 +186,30 @@ const cashRegisterRow = (db, id) =>
   // Servicios · comisión (`service_transactions.fee_cents`) ya está en HEAD.
   // App móvil · deshacer sin borrar (`stock_movements.prev_cost_price`,
   // `set_cost_price`, `reverted_by`) ya está en HEAD.
-  const DDL_AGREGADO = [];
-  const DDL_AGREGADO_TOTAL = 0;
-  const DDL_BORRADO = [];
-  const DDL_BORRADO_TOTAL = 0;
+  const saleItemDiscountColumns = [
+    ["base_price_at_sale", "REAL"],
+    ["discount_label_at_sale", "TEXT"],
+  ];
+  const saleItemsDdl = ddlOld.find((sql) => /^CREATE TABLE "?sale_items"?\s*\(/i.test(sql));
+  const discountColumnsToAdd = saleItemDiscountColumns.filter(
+    ([column]) => saleItemsDdl && !saleItemsDdl.includes(column),
+  );
+  const DDL_BORRADO = discountColumnsToAdd.length ? [saleItemsDdl] : [];
+  const DDL_AGREGADO = discountColumnsToAdd.length
+    ? [saleItemsDdl.replace(/\)$/, `${discountColumnsToAdd.map(([column, type]) => `, ${column} ${type}`).join("")})`)]
+    : [];
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
   for (const s of d.removed) console.log("    - " + s.replace(/\s+/g, " ").slice(0, 200));
   check(
-    d.added.length === DDL_AGREGADO_TOTAL && d.removed.length === DDL_BORRADO_TOTAL,
+    d.added.length === DDL_AGREGADO.length && d.removed.length === DDL_BORRADO.length,
     "diff del DDL = el declarado (sin altas ni bajas extra)",
     `agregados=${d.added.length} borrados=${d.removed.length}`,
   );
   check(
-    d.added.every((s) => DDL_AGREGADO.some((re) => re.test(s))) &&
-      d.removed.every((s) => DDL_BORRADO.some((re) => re.test(s))),
+    d.added.every((sql) => DDL_AGREGADO.includes(sql)) &&
+      d.removed.every((sql) => DDL_BORRADO.includes(sql)),
     "los statements agregados son exactamente los declarados (delta sin commitear)",
   );
   check(
@@ -363,6 +371,9 @@ const cashRegisterRow = (db, id) =>
       ...(colDe(before.cols.bundles, "uid") ? [] : ["+ bundles.uid|TEXT|nn=0|dflt=null"]),
       // Reportes · costo de la partida al vender.
       ...(colDe(before.cols.sale_items, "cost_at_sale") ? [] : ["+ sale_items.cost_at_sale|REAL|nn=0|dflt=null"]),
+      ...saleItemDiscountColumns
+        .filter(([column]) => !colDe(before.cols.sale_items, column))
+        .map(([column, type]) => `+ sale_items.${column}|${type}|nn=0|dflt=null`),
     ];
     // Paso 2 local-first · cola de operaciones. Delta 0 si la app ya corrió.
     const ESPERADO_OPS = Array.isArray(before.cols.pending_ops)
