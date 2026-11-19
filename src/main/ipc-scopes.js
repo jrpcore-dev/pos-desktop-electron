@@ -143,6 +143,7 @@ const CLASSIFICATION_BASE = {
   "get-low-stock-count": SCOPES.HOST_READ,
   "get-product-by-barcode": SCOPES.HOST_READ,
   "get-product-day-summary": SCOPES.HOST_READ,
+  "get-product-kardex": SCOPES.HOST_READ,
   "get-products": SCOPES.HOST_READ,
   "get-products-by-ids": SCOPES.HOST_READ,
   "get-promotions": SCOPES.HOST_READ,

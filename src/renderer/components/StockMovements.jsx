@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
   memo,
 } from "react";
 import { useDbChanges } from "../lib/useDbChanges";
@@ -14,7 +15,7 @@ import {
 import { useCashier } from "../contexts/CashierContext";
 import { formatMXDate, formatMXTime, mxToday, mxWeekRange } from "../utils/dateUtils";
 import { cn } from "@/lib/utils";
-import { fmtMoney } from "@/utils/format";
+import { fmtMoney, fmtQty, fmtStockQty } from "@/utils/format";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
@@ -31,10 +32,22 @@ import { CardSkeleton } from "./Skeletons";
 import { usePagination } from "../lib/usePagination";
 import PaginationBar from "./PaginationBar";
 import { DateRangePicker } from "./ui/date-range-picker";
+import ProductKardexDialog from "./ProductKardexDialog";
 
 import PageHeader from "./PageHeader";
 
 const PAGE_SIZE = 25;
+
+function MovementBalance({ movement }) {
+  if (movement.stock_before == null || movement.stock_after == null) return null;
+  return (
+    <span className="block whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+      Antes {fmtStockQty(movement.stock_before, movement.sale_unit)}
+      {" · "}
+      Después {fmtStockQty(movement.stock_after, movement.sale_unit)}
+    </span>
+  );
+}
 
 const TypeBadge = memo(function TypeBadge({ type }) {
   if (type === "in")
@@ -66,12 +79,13 @@ const StockMovements = () => {
   const { cashier } = useCashier();
   const isAdmin = cashier?.role === "admin";
   const [movements, setMovements] = useState([]);
-  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const rowsClass = useRowsEntering(loading);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [type, setType] = useState("");
+  const [kardexOpen, setKardexOpen] = useState(false);
+  const kardexPeriods = useRef(new Map());
   const [dateRange, setDateRange] = useState(() => {
     const today = mxToday();
     return { from: today, to: today };
@@ -91,11 +105,6 @@ const StockMovements = () => {
     setPage,
     reset: resetPage,
   } = usePagination(movements, { pageSize: PAGE_SIZE });
-
-  const fetchProducts = useCallback(async () => {
-    const result = await window.api.invoke("get-products");
-    setProducts(result.products || result);
-  }, []);
 
   const load = useCallback(
     async (searchOverride, opts) => {
@@ -120,10 +129,6 @@ const StockMovements = () => {
     [debouncedSearch, type, dateRange, cashier?.id, cashier?.role],
   );
 
-  useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
-
   // In vivo: el movimiento nuevo llega señalado por `products` (su stock
   // cambió en el Host al mismo tiempo); `stock_movements` queda declarado por
   // semántica (hoy no genera change_log — no se replica —). Nunca cambia el
@@ -131,9 +136,8 @@ const StockMovements = () => {
   useDbChanges(
     () => {
       load(undefined, { silent: true });
-      fetchProducts();
     },
-    ["stock_movements", "products"],
+    ["stock_movements", "products", "sale_items", "sales"],
   );
 
   useEffect(() => {
@@ -161,15 +165,6 @@ const StockMovements = () => {
   useEffect(() => {
     load();
   }, [type, dateRange]);
-
-  const unitMap = useMemo(() => {
-    const map = {};
-    (products || []).forEach((p) => {
-      map[p.id] = p.sale_unit === "weight" ? "kg" : "pz";
-    });
-    return map;
-  }, [products]);
-  const getUnit = (productId) => unitMap[productId] || "pz";
 
   const totalIn = movements.filter((m) => m.type === "in").reduce((s, m) => s + m.quantity, 0);
   const totalOut = movements.filter((m) => m.type === "out").reduce((s, m) => s + m.quantity, 0);
@@ -218,6 +213,12 @@ const StockMovements = () => {
     <div className="p-1">
       <PageHeader
         description="Entradas, salidas, ajustes y devoluciones de inventario"
+        actions={
+          <Button variant="outline" onClick={() => setKardexOpen(true)}>
+            <ArrowDownUp className="h-4 w-4" />
+            Cuadre por producto
+          </Button>
+        }
       />
 
       {loading ? (
@@ -230,7 +231,7 @@ const StockMovements = () => {
             icon={<TrendingUp />}
             tone="success"
             label="Unidades entradas"
-            value={totalIn}
+            value={fmtQty(totalIn)}
           />
           <StatCard
             prominent
@@ -238,7 +239,7 @@ const StockMovements = () => {
             icon={<TrendingDown />}
             tone="destructive"
             label="Unidades salidas"
-            value={totalOut}
+            value={fmtQty(totalOut)}
           />
           <StatCard
             prominent
@@ -246,7 +247,7 @@ const StockMovements = () => {
             icon={<Undo2 />}
             tone="info"
             label="Devoluciones"
-            value={totalDev}
+            value={fmtQty(totalDev)}
           />
           <StatCard
             prominent
@@ -321,6 +322,14 @@ const StockMovements = () => {
           </Button>
         </div>
       </div>
+
+      {kardexOpen && (
+        <ProductKardexDialog
+          open={kardexOpen}
+          onOpenChange={setKardexOpen}
+          periodsRef={kardexPeriods}
+        />
+      )}
 
       {viewMode === "timeline" ? (
         <div className="space-y-5">
@@ -412,7 +421,7 @@ const StockMovements = () => {
                             <div className="flex shrink-0 items-center divide-x divide-border">
                               <div className="flex flex-col items-end px-4">
                                 <span className="text-[0.62rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                                  Piezas
+                                  Cantidad
                                 </span>
                                 <span
                                   className={cn(
@@ -421,11 +430,9 @@ const StockMovements = () => {
                                   )}
                                 >
                                   {meta.qtySign}
-                                  {m.quantity}{" "}
-                                  <span className="text-xs font-bold">
-                                    {getUnit(m.product_id)}
-                                  </span>
+                                  {fmtStockQty(m.quantity, m.sale_unit)}
                                 </span>
+                                <MovementBalance movement={m} />
                               </div>
                               <div className="flex flex-col items-end pl-4">
                                 <span className="text-[0.62rem] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -569,8 +576,9 @@ const StockMovements = () => {
                     <TableCell className="px-4 py-3 text-right">
                       <span className={`text-sm font-bold tabular-nums ${qtyColor}`}>
                         {qtySign}
-                        {m.quantity} {getUnit(m.product_id)}
+                        {fmtStockQty(m.quantity, m.sale_unit)}
                       </span>
+                      <MovementBalance movement={m} />
                     </TableCell>
                     <TableCell className="px-4 py-3 text-right text-sm tabular-nums text-muted-foreground">
                       {isIn || isDev

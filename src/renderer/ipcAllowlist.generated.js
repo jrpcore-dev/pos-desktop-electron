@@ -79,6 +79,7 @@ export const invoke = [
   "get-printers",
   "get-product-by-barcode",
   "get-product-day-summary",
+  "get-product-kardex",
   "get-product-movement",
   "get-product-promos",
   "get-products",

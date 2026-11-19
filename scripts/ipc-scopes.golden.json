@@ -77,6 +77,7 @@
   "get-printers": "system",
   "get-product-by-barcode": "host_read",
   "get-product-day-summary": "host_read",
+  "get-product-kardex": "host_read",
   "get-product-movement": "host_read",
   "get-product-promos": "host_read",
   "get-products": "host_read",

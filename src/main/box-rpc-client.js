@@ -743,13 +743,14 @@ const withPendingMovements = (db, rows, params = {}) => {
     const p = (o.args && o.args[0]) || {};
     const type = o.channel === "add-stock" ? "in" : "out";
     if (params && params.type && params.type !== type) continue;
-    const product = db.prepare("SELECT name, barcode FROM products WHERE id = ?").get(p.productId) || {};
+    const product = db.prepare("SELECT name, barcode, sale_unit FROM products WHERE id = ?").get(p.productId) || {};
     if (term && !String(product.name || "").toLowerCase().includes(term) && !String(product.barcode || "").includes(term)) continue;
     extra.push({
       id: `op-${o.id}`,
       product_id: p.productId,
       product_name: product.name || "—",
       barcode: product.barcode || null,
+      sale_unit: product.sale_unit,
       type,
       quantity: Math.abs(Number(((o.effect && o.effect.stock) || [])[0]?.delta) || 0),
       notes: p.notes || (type === "in" ? "Compra de inventario" : "Salida de stock"),

@@ -1097,6 +1097,7 @@ ipcMain.handle("get-products", async (event, params) => {
   } = params || {};
   const conditions = [];
   const queryParams = [];
+  const searchName = search?.length >= 2 ? nomarize(search.trim()) : "";
   if (search && search.length >= 2) {
     conditions.push(
       "(nomar(p.name) LIKE ? OR nomar(p.brand) LIKE ? OR p.barcode LIKE ?)",
@@ -1136,6 +1137,18 @@ ipcMain.handle("get-products", async (event, params) => {
   const allowedSort = { name: "p.name", price: "p.price", stock: "p.stock" };
   const col = allowedSort[sortField] || "p.name";
   const dir = sortDir === "desc" ? "DESC" : "ASC";
+  const rankByName = col === "p.name" && /\p{L}/u.test(searchName);
+  const relevanceOrder = rankByName
+    ? `CASE
+         WHEN nomar(p.name) = ? THEN 0
+         WHEN instr(nomar(p.name), ? || ' ') = 1 THEN 1
+         WHEN instr(nomar(p.name), ?) = 1 THEN 2
+         WHEN instr(' ' || nomar(p.name), ' ' || ?) > 1 THEN 3
+         WHEN instr(nomar(p.name), ?) > 1 THEN 4
+         ELSE 5
+       END ASC, `
+    : "";
+  const relevanceParams = rankByName ? Array(5).fill(searchName) : [];
 
   const total = db
     .prepare(
@@ -1160,11 +1173,11 @@ ipcMain.handle("get-products", async (event, params) => {
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN suppliers s ON p.supplier_id = s.id
     ${where}
-    ORDER BY ${col} ${dir}
+    ORDER BY ${relevanceOrder}${col} ${dir}
     LIMIT ? OFFSET ?
   `,
     )
-    .all(...queryParams, limit, offset);
+    .all(...queryParams, ...relevanceParams, limit, offset);
 
   const statsConditions =
     conditions.length > 0
@@ -2515,7 +2528,24 @@ ipcMain.handle(
     { search, type, startDate, endDate, cashierId, role, supplierId } = {},
   ) => {
     try {
-      let sql = `SELECT sm.*, p.name as product_name, p.barcode, c.name as cashier_name, s.name as supplier_name
+      // El saldo se reconstruye con todo el historial del producto, incluso
+      // cuando la lista visible está filtrada. Las ventas del mismo segundo se
+      // ordenan antes de los movimientos, incluida su posible devolución.
+      let sql = `SELECT sm.*, p.name as product_name, p.barcode, p.sale_unit,
+                      c.name as cashier_name, s.name as supplier_name,
+                      p.stock - COALESCE((
+                        SELECT SUM(CASE WHEN later.type IN ('in', 'devolution')
+                                        THEN later.quantity ELSE -later.quantity END)
+                          FROM stock_movements later
+                         WHERE later.product_id = sm.product_id
+                           AND (later.created_at, later.id) > (sm.created_at, sm.id)
+                      ), 0) + COALESCE((
+                        SELECT SUM(si.stock_deducted)
+                          FROM sale_items si
+                          JOIN sales sale ON sale.id = si.sale_id
+                         WHERE si.product_id = sm.product_id
+                           AND si.stock_deducted > 0 AND sale.created_at > sm.created_at
+                      ), 0) AS stock_after
                FROM stock_movements sm
                JOIN products p ON sm.product_id = p.id
                LEFT JOIN cashiers c ON sm.cashier_id = c.id
@@ -2536,24 +2566,172 @@ ipcMain.handle(
         sql += " AND sm.supplier_id = ?";
         params.push(parseInt(supplierId));
       }
-      if (startDate && !search) {
+      // El rango y el cajero SIEMPRE se respetan. Antes se saltaban cuando
+      // había búsqueda (`&& !search`) y buscar un producto devolvía
+      // movimientos de cualquier fecha.
+      if (startDate) {
         const { start } = toUTCDateRange(startDate);
         sql += " AND sm.created_at >= ?";
         params.push(start);
       }
-      if (endDate && !search) {
+      if (endDate) {
         const { end } = toUTCDateRange(endDate);
         sql += " AND sm.created_at < ?";
         params.push(end);
       }
-      if (role !== "admin" && !search && cashierId) {
+      if (role !== "admin" && cashierId) {
         sql += " AND sm.cashier_id = ?";
         params.push(cashierId);
       }
-      sql += " ORDER BY sm.created_at DESC LIMIT 500";
-      return db.prepare(sql).all(...params);
+      sql += " ORDER BY sm.created_at DESC, sm.id DESC LIMIT 500";
+      return db.prepare(sql).all(...params).map((movement) => {
+        const delta = ["in", "devolution"].includes(movement.type)
+          ? movement.quantity
+          : -movement.quantity;
+        return { ...movement, stock_before: movement.stock_after - delta };
+      });
     } catch (error) {
       return [];
+    }
+  },
+);
+
+// ── Kardex por producto ─────────────────────────────────────────────────────
+// Estado de cuenta del stock en un rango: saldo inicial, cada entrada, salida,
+// venta y devolución en orden, y el saldo corrido. Cierra siempre contra el
+// stock actual: el saldo inicial se obtiene hacia atrás (stock actual − todo lo
+// que pasó desde el inicio del rango), así cuadra aunque el producto se haya
+// creado con stock o el rango no empiece en su alta.
+//
+// Las ventas NO viven en `stock_movements`: se suman desde `sale_items`
+// (`stock_deducted`, la misma unidad que `products.stock`). Una venta cancelada
+// conserva su `stock_deducted` y su devolución está como movimiento
+// 'devolution', así que el par se anula solo y el saldo sigue cuadrando.
+const MAX_KARDEX_ROWS = 1000;
+
+ipcMain.handle(
+  "get-product-kardex",
+  async (event, { productId, startDate, endDate } = {}) => {
+    try {
+      const id = parseInt(productId, 10);
+      if (!id) return { success: false, error: "Elige un producto" };
+      const product = db
+        .prepare(
+          "SELECT id, name, barcode, stock, sale_unit, box_qty, min_stock FROM products WHERE id = ?",
+        )
+        .get(id);
+      if (!product) return { success: false, error: "Producto no encontrado" };
+
+      const movements = db
+        .prepare(
+          `SELECT sm.id, sm.type, sm.quantity, sm.cost, sm.reference, sm.notes,
+                  sm.created_at, c.name AS cashier_name
+             FROM stock_movements sm
+             LEFT JOIN cashiers c ON c.id = sm.cashier_id
+            WHERE sm.product_id = ?
+            ORDER BY sm.created_at ASC, sm.id ASC`,
+        )
+        .all(id);
+
+      const sales = db
+        .prepare(
+          `SELECT si.id, si.stock_deducted AS quantity, s.id AS sale_id,
+                  s.folio, s.created_at, s.cashier_name, s.payment_method,
+                  COALESCE(s.status, 'completado') AS sale_status,
+                  COALESCE(si.status, 'activo') AS item_status
+             FROM sale_items si
+             JOIN sales s ON s.id = si.sale_id
+            WHERE si.product_id = ? AND si.stock_deducted > 0
+            ORDER BY s.created_at ASC, si.id ASC`,
+        )
+        .all(id);
+
+      const events = [];
+      for (const m of movements) {
+        const qty = Number(m.quantity) || 0;
+        events.push({
+          key: `m-${m.id}`,
+          id: m.id,
+          kind: "movement",
+          at: m.created_at,
+          type: m.type,
+          quantity: qty,
+          delta: m.type === "in" || m.type === "devolution" ? qty : -qty,
+          cost: m.cost || 0,
+          reference: m.reference || "",
+          notes: m.notes || "",
+          cashier_name: m.cashier_name || "",
+        });
+      }
+      for (const s of sales) {
+        const qty = Number(s.quantity) || 0;
+        events.push({
+          key: `s-${s.id}`,
+          id: s.id,
+          kind: "sale",
+          at: s.created_at,
+          type: "sale",
+          quantity: qty,
+          delta: -qty,
+          cost: 0,
+          reference: s.folio ? `Venta ${s.folio}` : `Venta #${s.sale_id}`,
+          notes: s.payment_method || "",
+          cashier_name: s.cashier_name || "",
+          cancelled:
+            s.sale_status === "cancelado" || s.item_status === "cancelado",
+        });
+      }
+      events.sort((a, b) => {
+        if (a.at !== b.at) return a.at < b.at ? -1 : 1;
+        // Una venta precede a su posible devolución en el mismo segundo.
+        if (a.kind !== b.kind) return a.kind === "sale" ? -1 : 1;
+        return a.id - b.id;
+      });
+
+      const start = startDate ? toUTCDateRange(startDate).start : null;
+      const end = endDate ? toUTCDateRange(endDate).end : null;
+      const inRange = events.filter(
+        (e) => (!start || e.at >= start) && (!end || e.at < end),
+      );
+
+      const current = Number(product.stock) || 0;
+      const truncated = inRange.length > MAX_KARDEX_ROWS;
+      const rows = truncated ? inRange.slice(-MAX_KARDEX_ROWS) : inRange;
+      const firstEvent = rows[0]
+        ? events.indexOf(rows[0])
+        : events.findIndex((e) => !start || e.at >= start);
+      const opening = firstEvent < 0
+        ? current
+        : current - events.slice(firstEvent).reduce((sum, e) => sum + e.delta, 0);
+
+      let balance = opening;
+      const out = rows.map((e) => {
+        balance += e.delta;
+        return { ...e, balance: Math.round(balance * 1000) / 1000 };
+      });
+
+      const totals = { in: 0, out: 0, sales: 0, devolution: 0 };
+      for (const e of out) {
+        if (e.type === "sale") totals.sales += e.quantity;
+        else if (e.type === "devolution") totals.devolution += e.quantity;
+        else if (e.type === "in") totals.in += e.quantity;
+        else totals.out += e.quantity;
+      }
+
+      return {
+        success: true,
+        product,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        opening: Math.round(opening * 1000) / 1000,
+        closing: Math.round(balance * 1000) / 1000,
+        current,
+        truncated,
+        totals,
+        rows: out,
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   },
 );

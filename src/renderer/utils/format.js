@@ -22,12 +22,21 @@ export const fmtNumber = (n) => {
  * Cantidades vendidas / en existencia: "5" para piezas y "5.450" para granel.
  * Nunca más de 3 decimales (evita "5.450000000000001" por sumas en coma flotante).
  */
-export const fmtQty = (n) => {
+export const fmtQty = (n, saleUnit) => {
   const v = Number(n);
   const r = Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0;
-  return Number.isInteger(r)
+  return Number.isInteger(r) && saleUnit !== "weight"
     ? r.toLocaleString("es-MX")
     : r.toLocaleString("es-MX", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+};
+
+/** Stock a granel almacenado en kg, con la presentación ".600g" bajo un kilo. */
+export const fmtStockQty = (n, saleUnit) => {
+  if (n == null) return "—";
+  const amount = fmtQty(n, saleUnit);
+  if (saleUnit !== "weight") return `${amount} pz`;
+  if (/^-?0\.(?!000$)/.test(amount)) return `${amount.replace(/^(-?)0/, "$1")}g`;
+  return `${amount}kg`;
 };
 
 /** "1,234" (enteros, sin decimales). */
