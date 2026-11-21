@@ -359,6 +359,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [register, setRegister] = useState(null);
   const [handover, setHandover] = useState(null);
   const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverServicePending, setHandoverServicePending] = useState(false);
   const noticeShownRef = useRef(false);
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleDialogOpen, setScaleDialogOpen] = useState(false);
@@ -467,6 +468,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         String(reg.cashier_id) !== String(cashier?.id)
       ) {
         noticeShownRef.current = true;
+        setHandoverServicePending(false);
         setHandover({
           registerId: reg.id,
           opener_name: reg.opener_name,
@@ -479,8 +481,8 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     }
   }, [cashier?.id, cashier?.role]);
 
-  const handleHandoverConfirm = useCallback(async () => {
-    if (!handover) return;
+  const handleHandoverConfirm = useCallback(async (confirmServicePending = false) => {
+    if (!handover || handoverLoading) return;
     setHandoverLoading(true);
     try {
       const declared = handover.currentCash || 0;
@@ -492,9 +494,10 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
         role: cashier?.role,
         registerId: handover.registerId,
         force: true,
+        confirmServicePending,
       });
       if (!closeResult.success) {
-        setHandoverLoading(false);
+        if (closeResult.code === "SERVICE_PENDING") setHandoverServicePending(true);
         return;
       }
       await window.api.invoke("open-cash-register", {
@@ -506,9 +509,10 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
       checkRegisterStatus();
     } catch (e) {
       /* noop */
+    } finally {
+      setHandoverLoading(false);
     }
-    setHandoverLoading(false);
-  }, [handover, cashier?.id, cashier?.role, checkRegisterStatus]);
+  }, [handover, handoverLoading, cashier?.id, cashier?.role, checkRegisterStatus]);
 
   useEffect(() => {
     checkRegisterStatus();
@@ -1763,7 +1767,7 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
           onClose={() => {}}
           disableBackdropClose
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !handoverLoading) {
+            if (e.key === "Enter" && !handoverLoading && !handoverServicePending) {
               e.preventDefault();
               handleHandoverConfirm();
             }
@@ -1800,20 +1804,26 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
                 caja.
               </span>
             </div>
+            {handoverServicePending && (
+              <p role="alert" className="mt-3 rounded-lg bg-warning/15 px-4 py-3 text-sm text-foreground">
+                Hay recargas pendientes o por verificar. Confirma el cierre para
+                dejar esas recargas fuera del corte.
+              </p>
+            )}
           </ModalBody>
           <ModalFooter className="flex-col">
             <Btn
               variant="success"
               className="w-full"
               disabled={handoverLoading}
-              onClick={handleHandoverConfirm}
+              onClick={() => handleHandoverConfirm(handoverServicePending)}
             >
               {handoverLoading ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <ArrowRight size={16} />
               )}
-              Cerrar y abrir nueva caja
+              {handoverServicePending ? "Confirmar cierre y abrir caja" : "Cerrar y abrir nueva caja"}
             </Btn>
             <Btn
               variant="ghost"

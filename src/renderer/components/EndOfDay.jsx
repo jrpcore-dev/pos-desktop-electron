@@ -328,6 +328,7 @@ const EndOfDay = () => {
 
   const [openRegisterModal, setOpenRegisterModal] = useState(false);
   const [closeRegisterModal, setCloseRegisterModal] = useState(false);
+  const [servicePending, setServicePending] = useState(null);
 
   const [openingBalance, setOpeningBalance] = useState("");
   const [declaredClose, setDeclaredClose] = useState("");
@@ -672,8 +673,13 @@ const EndOfDay = () => {
     setModalError(null);
   }, [openRegisterModal, closeRegisterModal, withdrawDialogOpen, saleDetailData]);
 
-  const handleCloseRegister = async () => {
+  useEffect(() => {
+    setServicePending(null);
+  }, [closeRegisterModal, register?.id]);
+
+  const handleCloseRegister = async (confirmServicePending = false) => {
     if (closeLoading) return;
+    setModalError(null);
     setCloseLoading(true);
     let result;
     try {
@@ -686,6 +692,8 @@ const EndOfDay = () => {
 
         cashierId: cashier?.id,
         role: cashier?.role,
+        registerId: register?.id,
+        confirmServicePending,
       });
     } catch (e) {
       result = { success: false, error: e?.message || "No se pudo cerrar la caja" };
@@ -707,6 +715,8 @@ const EndOfDay = () => {
           `Caja cerrada. Esperado: ${fmtMoney(result.expectedClose)}, ` +
           `Diferencia: ${fmtMoney(result.difference)}`,
       });
+    } else if (result?.code === "SERVICE_PENDING") {
+      setServicePending(result.pending);
     } else {
       await fetchData();
       setModalError(result?.error || "No se pudo cerrar la caja.");
@@ -2101,7 +2111,10 @@ const EndOfDay = () => {
           brand
           className="max-w-sm"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) handleCloseRegister();
+            if (e.key === "Enter" && !e.shiftKey && !servicePending && e.target.tagName === "INPUT") {
+              e.preventDefault();
+              handleCloseRegister();
+            }
           }}
         >
           <DialogBrandHeader
@@ -2247,6 +2260,13 @@ const EndOfDay = () => {
 
           <ModalError text={modalError} onClose={() => setModalError(null)} />
 
+          {servicePending && (
+            <p role="alert" className="rounded-lg bg-warning/15 px-4 py-3 text-sm text-foreground">
+              Hay recargas pendientes o por verificar. Confirma el cierre para
+              dejar esas recargas fuera del corte.
+            </p>
+          )}
+
           <DialogBrandFooter>
             <CancelButton
               disabled={closeLoading}
@@ -2258,11 +2278,11 @@ const EndOfDay = () => {
             <Button
               variant="outline"
               disabled={closeLoading}
-              onClick={handleCloseRegister}
+              onClick={() => handleCloseRegister(Boolean(servicePending))}
               className="border-amber-600 bg-amber-500/10 text-amber-600 hover:border-amber-600 hover:bg-amber-500/20 hover:text-amber-600 dark:border-amber-500 dark:text-amber-400 dark:hover:border-amber-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-300"
             >
               {closeLoading ? <Spinner size={18} /> : <CircleCheck size={18} />}
-              {closeLoading ? "Cerrando..." : "Cerrar caja"}
+              {closeLoading ? "Cerrando..." : servicePending ? "Confirmar cierre" : "Cerrar caja"}
             </Button>
           </DialogBrandFooter>
         </DialogContent>
