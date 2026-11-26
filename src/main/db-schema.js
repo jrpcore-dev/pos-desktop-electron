@@ -740,6 +740,7 @@ const runMigrations = (db) => {
   // Migration: comisión que cobra la tienda por recarga/servicio (aparte del
   // importe que va a Taecel). Se fija al pedir la operación.
   ensureColumn("service_transactions", "fee_cents", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("service_transactions", "free_amount", "INTEGER NOT NULL DEFAULT 0");
 
   // Index on cashier_id must be created AFTER the column is ensured
   // (avoids "no such column: cashier_id" on fresh installs / old DBs)
@@ -1150,6 +1151,7 @@ const REPLICATED_SETTINGS_KEYS = [
   "feature_credit",
   "feature_services",
   "feature_expiry",
+  "inventory_cash_payment",
   // Nombre visible del Host ("Caja 1"): las cajas lo muestran en sus copias
   // locales de ventas y cortes.
   "host_device_name",

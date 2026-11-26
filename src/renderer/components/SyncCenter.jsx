@@ -40,6 +40,14 @@ const EYEBROW = {
   destructive: "text-destructive",
   brand: "text-primary dark:text-chart-2",
 };
+export const noticeCardStyles = {
+  surface: "overflow-hidden rounded-[18px] border border-border bg-card text-foreground shadow-[0_1px_2px_hsl(222_47%_11%_/_0.06),0_10px_24px_-6px_hsl(222_47%_11%_/_0.16),0_28px_56px_-12px_hsl(222_47%_11%_/_0.14)]",
+  icon: "flex size-[42px] shrink-0 items-center justify-center rounded-[13px]",
+  brandTile: TILE.brand,
+  eyebrow: "text-[10px] font-bold uppercase tracking-[0.1em]",
+  brandEyebrow: EYEBROW.brand,
+  title: "mt-0.5 text-[15px] font-bold leading-snug tracking-[-0.01em]",
+};
 const ICONS = {
   host: WifiOff,
   upload: RefreshCw,
@@ -55,12 +63,12 @@ const ICONS = {
 };
 
 // ── Aviso flotante ──────────────────────────────────────────────────────────
-function NoticeCard({ n, onAction }) {
+export function NoticeCard({ n, onAction, onDismiss, hideIcon = false, children }) {
   const Icon = ICONS[n.key] || TriangleAlert;
   const [leaving, setLeaving] = useState(false);
   const close = () => {
     setLeaving(true);
-    window.setTimeout(() => notices.dismiss(n.key), 160);
+    window.setTimeout(() => onDismiss ? onDismiss() : notices.dismiss(n.key), 160);
   };
   useEffect(() => {
     if (!n.autoMs) return undefined;
@@ -72,22 +80,25 @@ function NoticeCard({ n, onAction }) {
     <div
       role={n.tone === "destructive" || n.tone === "warning" ? "alert" : "status"}
       className={cn(
-        "pointer-events-auto w-[380px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px] border border-border bg-card text-foreground",
-        "shadow-[0_1px_2px_hsl(222_47%_11%_/_0.06),0_10px_24px_-6px_hsl(222_47%_11%_/_0.16),0_28px_56px_-12px_hsl(222_47%_11%_/_0.14)]",
+        "pointer-events-auto w-[380px] max-w-[calc(100vw-32px)]",
+        noticeCardStyles.surface,
         "transition-all duration-200 animate-in fade-in-0 slide-in-from-bottom-3",
         leaving && "translate-y-2 opacity-0",
       )}
     >
-      <div className={cn("flex gap-3 p-4", n.progress == null && !n.body && "items-center")}>
-        <span className={cn("flex size-[42px] shrink-0 items-center justify-center rounded-[13px]", TILE[n.tone])}>
-          <Icon size={20} strokeWidth={2.3} className={n.spin ? "animate-spin" : undefined} />
-        </span>
+      <div className={cn("flex gap-3 p-4", n.progress == null && !n.body && !children && "items-center")}>
+        {!hideIcon && (
+          <span className={cn(noticeCardStyles.icon, TILE[n.tone])}>
+            <Icon size={20} strokeWidth={2.3} className={n.spin ? "animate-spin" : undefined} />
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           {n.eyebrow && (
-            <p className={cn("text-[10px] font-bold uppercase tracking-[0.1em]", EYEBROW[n.tone])}>{n.eyebrow}</p>
+            <p className={cn(noticeCardStyles.eyebrow, EYEBROW[n.tone])}>{n.eyebrow}</p>
           )}
-          <p className="mt-0.5 text-[15px] font-bold leading-snug tracking-[-0.01em]">{n.title}</p>
+          <p className={noticeCardStyles.title}>{n.title}</p>
           {n.body && <p className="mt-1 text-[13px] leading-snug text-muted-foreground">{n.body}</p>}
+          {children}
           {n.progress != null && (
             <>
               <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-primary/10 dark:bg-chart-2/20">
@@ -127,7 +138,7 @@ function NoticeCard({ n, onAction }) {
           <button
             type="button"
             onClick={close}
-            aria-label="Cerrar aviso (queda en la campana)"
+            aria-label={onDismiss ? "Cerrar novedades" : "Cerrar aviso (queda en la campana)"}
             className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] bg-muted text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
           >
             <X size={14} strokeWidth={2.4} />
@@ -165,7 +176,7 @@ const PILL_DOT = {
   brand: "bg-primary/10 text-primary dark:bg-chart-2/20 dark:text-chart-2",
 };
 
-export default function SyncCenter() {
+export default function SyncCenter({ children }) {
   const notify = useToast();
   const floating = useSyncExternalStore(notices.subscribe, notices.getFloating);
   const [status, setStatus] = useState(null);
@@ -421,6 +432,7 @@ export default function SyncCenter() {
       {floating.map((n) => (
         <NoticeCard key={n.id} n={n} onAction={onAction} />
       ))}
+      {children}
     </div>,
     document.body,
   );

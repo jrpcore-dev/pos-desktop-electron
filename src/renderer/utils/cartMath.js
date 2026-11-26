@@ -43,6 +43,7 @@ export const promoActiveNow = (item) => {
 };
 
 export const canManualDiscount = (item) => {
+  if (item.recharge) return false;
   if (item.allow_manual_discount !== 1) return false;
   // Ya lleva una promo avanzada (paquete o categoría/marca).
   if (item.bundleUnits > 0) return false;

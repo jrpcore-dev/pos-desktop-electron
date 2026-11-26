@@ -30,6 +30,7 @@ import {
   CheckCheck,
   ListChecks,
 } from "lucide-react";
+import { WhatsNewCard } from "./WhatsNew";
 import React, {
   Suspense,
   useCallback,
@@ -1603,7 +1604,9 @@ const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
             )}
 
             {/* Caja · sincronización: sólo aparece si hay algo que saber */}
-            <SyncCenter />
+            <SyncCenter>
+              {location.pathname === "/" && <WhatsNewCard />}
+            </SyncCenter>
             {/* Versión nueva de la app: sólo aparece si la hay */}
             <UpdateButton />
 

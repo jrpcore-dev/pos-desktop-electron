@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { setOpenItems } from "../../lib/saleInProgress";
 
 let uid = 0;
 
@@ -31,10 +32,22 @@ const createCart = (folio) => {
  *   nuevo con un único carrito cambiado (el activo), sin propagar cambios al
  *   resto del árbol.
  */
-export const useMultiCart = () => {
+export const useMultiCart = (cashierId) => {
   const folioRef = useRef(1);
   const [carts, setCarts] = useState(() => [createCart(folioRef.current)]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const cashierRef = useRef(cashierId);
+  useEffect(() => {
+    if (cashierRef.current === cashierId) return;
+    cashierRef.current = cashierId;
+    folioRef.current = 1;
+    setCarts([createCart(1)]);
+    setActiveIndex(0);
+  }, [cashierId]);
+  useEffect(() => {
+    setOpenItems(carts.reduce((count, cart) => count + cart.items.length, 0));
+  }, [carts]);
+  useEffect(() => () => setOpenItems(0), []);
 
   const activeCart = carts[activeIndex] || carts[0];
 

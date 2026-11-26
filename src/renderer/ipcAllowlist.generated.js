@@ -172,6 +172,7 @@ export const invoke = [
   "taecel:get-fees",
   "taecel:get-recent-numbers",
   "taecel:history",
+  "taecel:mixed-sale",
   "taecel:recharge",
   "taecel:reconcile",
   "taecel:refresh-catalog",

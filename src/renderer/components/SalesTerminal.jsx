@@ -28,9 +28,10 @@ import CustomerSearchDialog from "./CustomerSearchDialog";
 import CreditSaleDialog from "./CreditSaleDialog";
 import { useFeatures } from "../lib/useFeatures";
 import { useCartSide } from "../utils/cartSide";
-import { useMultiCart } from "./cart/useMultiCart";
-import { setOpenItems } from "../lib/saleInProgress";
+import MixedSaleResult from "./servicios/MixedSaleResult";
+import { money as serviceMoney } from "./servicios/serviceMoney";
 import { Button as ShadButton } from "./ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Kbd } from "./ui/kbd";
 import { Spinner } from "./ui/spinner";
 import {
@@ -136,7 +137,7 @@ const lastSavedPaymentMethod = () => {
   }
 };
 
-const SalesTerminal = () => {
+const SalesTerminal = ({ saleCarts }) => {
   const { cashier } = useCashier();
   const notify = useToast();
   const navigate = useNavigate();
@@ -154,13 +155,10 @@ const SalesTerminal = () => {
     newSale,
     switchCart,
     cancelCart,
-  } = useMultiCart();
-  // Productos en los tickets abiertos (todas las pestañas): la actualización no
-  // reinicia mientras haya alguno. Al salir de la terminal se pierden, igual.
-  useEffect(() => {
-    setOpenItems(carts.reduce((n, c) => n + ((c.items && c.items.length) || 0), 0));
-  }, [carts]);
-  useEffect(() => () => setOpenItems(0), []);
+  } = saleCarts;
+  const [mixedSale, setMixedSale] = useState(null);
+  const [unconfirmedSale, setUnconfirmedSale] = useState(null);
+  const rechargeLine = cart.find((item) => item.recharge);
   const lastRegisterWarnRef = useRef(0);
   // Bloque 5 · folio real de la última venta (el que devuelve el Host o la
   // cola offline). Solo cambia DE DÓNDE sale el número del ticket.
@@ -327,12 +325,12 @@ const processSaleRef = useRef(null);
 
   // `credit` llega desde CreditSaleDialog; sin él, "Fiado" sólo abre el
   // diálogo (así Enter/F8/Cobrar pasan siempre por la confirmación).
-  const processSale = async (method, credit) => {
+  const processSale = async (method, credit, retryPayload) => {
     if (saleBusyRef.current) return;
     saleBusyRef.current = true;
     setSaleBusy(true);
     try {
-      await runSale(method, credit);
+      await runSale(method, credit, retryPayload);
     } catch (e) {
       console.error("[SALE]", e);
       showNotification("Error al registrar la venta", "error");
@@ -342,7 +340,11 @@ const processSaleRef = useRef(null);
     }
   };
 
-  const runSale = async (method, credit) => {
+  const runSale = async (method, credit, retryPayload) => {
+    if (method === "credit" && rechargeLine) {
+      showNotification("Las recargas se cobran en efectivo, tarjeta o transferencia", "warning");
+      return;
+    }
     if (method === "credit" && !credit) {
       if (!features.credit || !customer?.credit_enabled) {
         showNotification("Selecciona un cliente con fiado activado", "warning");
@@ -351,7 +353,7 @@ const processSaleRef = useRef(null);
       setCreditDialogOpen(true);
       return;
     }
-    const registerOpen = await checkRegisterOpen();
+    const registerOpen = retryPayload || await checkRegisterOpen();
     if (!registerOpen) {
       warnRegisterClosed();
       return;
@@ -374,8 +376,9 @@ const processSaleRef = useRef(null);
         ...(it.customerPriced ? { discount_percent: 0 } : {}),
       };
     });
-    const result = await window.api.invoke("record-sale", {
+    const payload = retryPayload || {
       cart: cartForSale,
+      ...(rechargeLine ? { saleKey: rechargeLine.id } : {}),
       total: method === "cash" ? roundCash(cartSummary.total) : cartSummary.total,
       paymentMethod: method,
       discountTotal: cartSummary.discountTotal,
@@ -390,8 +393,36 @@ const processSaleRef = useRef(null);
             ownerPin: credit.ownerPin,
           }
         : {}),
-    });
+    };
+    let result;
+    if (rechargeLine) {
+      try {
+        result = await window.api.invoke("taecel:mixed-sale", payload);
+      } catch {
+        setUnconfirmedSale(payload);
+        return;
+      }
+      if (!result?.success && result?.committed !== false) {
+        setUnconfirmedSale(payload);
+        return;
+      }
+      setUnconfirmedSale(null);
+    } else {
+      result = await window.api.invoke("record-sale", payload);
+    }
     if (result.success) {
+      if (rechargeLine) {
+        setMixedSale({
+          ...result, chargedTotal: displayTotal, change,
+          print: async (rows) => {
+            const width = await window.api.invoke("get-setting", "paper_width_mm");
+            const ticket = generateReceiptHTML(method, width, null, rows);
+            const printed = await window.api.invoke("print-receipt", ticket);
+            if (!printed?.success) throw new Error(printed?.error || "No se pudo imprimir el ticket");
+          },
+        });
+        setCart([]);
+      }
       const creditInfo =
         method === "credit"
           ? { customerName: customer?.name, ...(result.credit || credit.preview) }
@@ -444,7 +475,7 @@ const processSaleRef = useRef(null);
             "get-setting",
             "paper_width_mm",
           );
-          const text = generateReceiptHTML(method, paperWidthMm, creditInfo);
+          const text = generateReceiptHTML(method, paperWidthMm, creditInfo, result.recharges);
           // Para "Imprimir último ticket" en la paleta (Ctrl+K).
           try {
             sessionStorage.setItem("lastReceiptHtml", text);
@@ -471,7 +502,7 @@ const processSaleRef = useRef(null);
               if (setting === "true") {
                 await window.api.invoke(
                   "print-receipt",
-                  generateReceiptHTML(method, paperWidthMm),
+                  generateReceiptHTML(method, paperWidthMm, null, result.recharges),
                 );
               }
             }
@@ -506,10 +537,10 @@ const processSaleRef = useRef(null);
 
   // Sin cliente con fiado no puede quedar "Fiado" seleccionado.
   useEffect(() => {
-    if (paymentMethod === "credit" && (!features.credit || !customer?.credit_enabled)) {
+    if (paymentMethod === "credit" && (rechargeLine || !features.credit || !customer?.credit_enabled)) {
       setPaymentMethod(lastSavedPaymentMethod());
     }
-  }, [paymentMethod, customer, features.credit]);
+  }, [paymentMethod, customer, features.credit, rechargeLine]);
 
   // Ajustes de la tienda, del ticket y del POS. Se releen al montar y cada
   // vez que cambian (guardados aquí, o replicados desde el Host en una caja).
@@ -635,7 +666,7 @@ const processSaleRef = useRef(null);
           '[data-state="open"].dialog-content, [data-state="open"].sheet-content-right',
         );
 
-      if (anyDialogOpen || printing) {
+      if (anyDialogOpen || printing || saleBusyRef.current) {
         if (isEnter || e.key === "Escape")
           saleKeyLockRef.current = now + 200;
         return;
@@ -1446,6 +1477,10 @@ if (e.key === "Tab" && !isEditable) {
   };
 
   const updateQuantity = useCallback((item, delta) => {
+    if (item.recharge) {
+      if (delta < 0) setCart((items) => items.filter((line) => line.id !== item.id));
+      return;
+    }
     setCart((prev) =>
       prev
         .map((it) => {
@@ -1600,10 +1635,12 @@ if (e.key === "Tab" && !isEditable) {
     refocusBarcode();
   };
 
-  const generateReceiptHTML = (method, paperWidthMm, creditInfo) => {
+  const generateReceiptHTML = (method, paperWidthMm, creditInfo, recharges = []) => {
     const effTotal = method === "cash" ? roundCash(total) : total;
     const showDiscounts = cartSummary.discountTotal >= 0.005;
+    let rechargeIndex = 0;
     const items = pricedCart.map((item) => {
+      const recharge = item.recharge ? recharges[rechargeIndex++] : null;
       const promo = linePromo(item);
       const fp = lineUnitPrice(item, item.quantity);
       const lt = lineTotal(item, item.quantity);
@@ -1617,7 +1654,7 @@ if (e.key === "Tab" && !isEditable) {
       const qtyDisplay = item.isWeightItem
         ? item.quantity.toFixed(3)
         : item.quantity;
-      const name =
+      const name = recharge ? item.name :
         item.name.length > 24 ? item.name.substring(0, 22) + ".." : item.name;
       const bundleText =
         item.bundleUnits > 0
@@ -1626,7 +1663,13 @@ if (e.key === "Tab" && !isEditable) {
             : `Paquete ${item.bundleLabel}`
           : null;
       const promoText = promoLabelOf(promo);
-      const promoLabel =
+      const promoLabel = recharge
+        ? [
+          recharge.status === "applied" ? "Recarga aplicada" :
+            recharge.status === "failed" ? `Por devolver ${serviceMoney(recharge.quote.totalCents)}` :
+              "Recarga en verificación",
+          recharge.transId || recharge.providerFolio,
+        ].filter(Boolean).join(" · ") :
         [bundleText, promoText].filter(Boolean).join(" · ") || null;
       const discountParts = [];
       if (item.discount_percent > 0 && !item.customerPriced)
@@ -1969,7 +2012,7 @@ if (e.key === "Tab" && !isEditable) {
               <span className="text-sm font-bold leading-none">Transf.</span>
             </button>
 
-            {features.credit && customer?.credit_enabled ? (
+            {features.credit && customer?.credit_enabled && !rechargeLine ? (
               <button
                 type="button"
                 onClick={() => handlePayClick("credit")}
@@ -2095,15 +2138,34 @@ if (e.key === "Tab" && !isEditable) {
             setCashDialogOpen(false);
           }
         }}
-        total={displayTotal}
+        total={waitingDrawer && mixedSale ? mixedSale.chargedTotal : displayTotal}
         cashAmount={cashAmount}
         onCashAmountChange={setCashAmount}
-        change={change}
+        change={waitingDrawer && mixedSale ? mixedSale.change : change}
         waitingDrawer={waitingDrawer}
         processing={saleBusy && !waitingDrawer}
         onConfirm={handleCashConfirm}
         onDrawerDone={handleDrawerDone}
       />
+
+      {mixedSale && !cashDialogOpen && (
+        <MixedSaleResult key={mixedSale.saleId} sale={mixedSale} onDone={() => {
+          setMixedSale(null);
+          refocusBarcode();
+        }} />
+      )}
+
+      {unconfirmedSale && (
+        <Dialog open>
+          <DialogContent className="max-w-md" onEscapeKeyDown={(event) => event.preventDefault()}>
+            <DialogTitle>Cobro por confirmar</DialogTitle>
+            <DialogDescription>El equipo principal podría haber registrado la venta. Comprueba el mismo cobro antes de continuar.</DialogDescription>
+            <ShadButton disabled={saleBusy} onClick={() => processSale(unconfirmedSale.paymentMethod, null, unconfirmedSale)}>
+              {saleBusy ? "Comprobando…" : "Comprobar cobro"}
+            </ShadButton>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <QtyDialog
         open={qtyDialogOpen}

@@ -50,6 +50,7 @@ const RPC_TIMEOUTS = {
   "taecel:get-catalog": 40000,
   "taecel:refresh-catalog": 40000,
   "taecel:recharge": 40000,
+  "taecel:mixed-sale": 40000,
   "taecel:reconcile": 40000,
   // El import manda el archivo completo y el Host lo procesa por lotes.
   "import-products-content": 120000,
@@ -1693,6 +1694,17 @@ const forward = (db, channel, args = []) => {
     channel === "update-product" && localReady(db) && onlyHere(db, localProduct(db, args[0]));
   const exactStock =
     channel === "update-product" && !editedHere && !!args[1] && typeof args[1] === "object" && "stock" in args[1];
+  if (channel === "add-stock" && args[0]?.registerExpense === true && localReady(db)) {
+    // El cajón se abre en esta caja al recibir la confirmación del gasto.
+    const prepared = QUEUED_OPS[channel](db, args);
+    if (prepared.success === false) return Promise.resolve(prepared);
+    return syncOps(db)
+      .catch(() => {})
+      .then(() => rpcCall(db, channel, prepared.args, null, { idempotencyKey: crypto.randomUUID() }))
+      .then((result) =>
+        result?.code === "HOST_UNREACHABLE" ? HOST_REQUIRED("Registrar el pago de mercancía") : result,
+      );
+  }
   if (QUEUED_OPS[channel] && localReady(db) && !exactStock) {
     const out = enqueueOp(db, channel, args);
     if (!(out && out.online)) return Promise.resolve(out);

@@ -29,6 +29,7 @@ import ServiceResult from "./ServiceResult";
 // (nunca a cobrar) cada pocos segundos, hasta un límite.
 const POLL_MS = 4000;
 const POLL_MAX = 15;
+const AUTO_DRAWER_WINDOW_MS = 4000;
 
 // Alto disponible: viewport − navbar − padding del <main> (2 × 24px) − barra
 // de pestañas (36px) − su margen (12px) = 6rem.
@@ -38,6 +39,10 @@ const newRequestId = () =>
   window.crypto?.randomUUID
     ? window.crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const canOpenRechargeDrawer = (tx) =>
+  tx?.isRecharge && tx.status === "applied" && tx.paymentMethod === "cash" &&
+  Boolean(tx.saleId && tx.clientRequestId);
 
 const isToday = (iso) => {
   const d = new Date(iso);
@@ -57,6 +62,7 @@ const ServiceCheckout = ({
   cashierId = null,
   loading = false,
   onCatalogStale,
+  onAddRecharge,
 }) => {
   const notify = useToast();
   const [category, setCategory] = useState("telefonia");
@@ -74,6 +80,9 @@ const ServiceCheckout = ({
   // Foco pedido tras un render (el campo puede no existir todavía).
   const [focusReq, setFocusReq] = useState(null);
   const polls = useRef(0);
+  const drawerRequestId = useRef(null);
+  const autoDrawerRequestId = useRef(null);
+  const [drawerOpenedFor, setDrawerOpenedFor] = useState(null);
   const inputRef = useRef(null);
   const confirmRef = useRef(null);
   const listRef = useRef(null);
@@ -302,12 +311,14 @@ const ServiceCheckout = ({
       sku: chargeProduct.sku,
       inputValue,
       paymentMethod,
+      isRecharge: operator.category === "telefonia" || operator.category === "paquetes",
       quote: quoteData,
     };
     setBusy(true);
     setTx(base);
     polls.current = 0;
 
+    const startedAt = performance.now();
     let next;
     try {
       const r = await window.api.invoke("taecel:recharge", {
@@ -345,6 +356,10 @@ const ServiceCheckout = ({
         message: e?.message || "Sin respuesta del Host",
       };
     }
+    autoDrawerRequestId.current =
+      canOpenRechargeDrawer(next) && performance.now() - startedAt <= AUTO_DRAWER_WINDOW_MS
+        ? clientRequestId
+        : null;
     setTx(next);
     setBusy(false);
     onTransaction?.(next);
@@ -397,6 +412,29 @@ const ServiceCheckout = ({
   }, [tx, reconcile, charge]);
 
   const opCategory = operator?.category;
+
+  const openRechargeDrawer = useCallback(async (transaction) => {
+    if (!canOpenRechargeDrawer(transaction)) return;
+    const requestId = transaction.clientRequestId;
+    if (drawerRequestId.current === requestId) return;
+
+    drawerRequestId.current = requestId;
+    try {
+      const result = await window.api.invoke("open-cash-drawer");
+      if (!result?.success) throw new Error(result?.error || "No se pudo abrir el cajón");
+      setDrawerOpenedFor(requestId);
+    } catch (error) {
+      if (drawerRequestId.current === requestId) drawerRequestId.current = null;
+      notify(error.message || "No se pudo abrir el cajón", "error");
+    }
+  }, [notify]);
+
+  useEffect(() => {
+    const requestId = tx?.clientRequestId;
+    if (!requestId || autoDrawerRequestId.current !== requestId) return;
+    autoDrawerRequestId.current = null;
+    openRechargeDrawer(tx);
+  }, [tx, openRechargeDrawer]);
 
   let blockedHint = "";
   if (!validation.ok) blockedHint = validation.error || "Captura el número";
@@ -523,6 +561,9 @@ const ServiceCheckout = ({
                   busy={busy}
                   onRetry={retry}
                   onDone={reset}
+                  onOpenDrawer={canOpenRechargeDrawer(tx) && drawerOpenedFor !== tx.clientRequestId
+                    ? () => openRechargeDrawer(tx)
+                    : undefined}
                   onPrint={async () => {
                     try {
                       const res = await printServiceReceipt(tx);
@@ -670,6 +711,24 @@ const ServiceCheckout = ({
                     received={received}
                     onReceivedChange={setReceived}
                     chargeRef={chargeRef}
+                    onAddToCart={onAddRecharge && ["telefonia", "paquetes"].includes(operator.category)
+                      ? () => {
+                        if (!canCharge) return;
+                        onAddRecharge({
+                          id: crypto.randomUUID(),
+                          isManual: true,
+                          name: `Recarga ${operator.name} · •••• ${inputValue.slice(-4)}`,
+                          quantity: 1,
+                          price: quoteData.totalCents / 100,
+                          recharge: {
+                            productCode: chargeProduct.sku,
+                            reference: inputValue,
+                            amountCents: chargeCents,
+                            feeCents: quoteData.feeCents || 0,
+                          },
+                        });
+                      }
+                      : undefined}
                   />
                 </div>
               </>

@@ -644,6 +644,22 @@ const InventoryStatsCards = React.memo(function InventoryStatsCards({
 
 const STOCK_FILTER_LABELS = { low: "Stock bajo", discounted: "En rebaja" };
 
+// Compara en centavos para incluir diferencias de hasta un peso por redondeo.
+function findSimilarWithdrawal(expenses, amount) {
+  const target = Math.round(amount * 100);
+  let match = null;
+  let bestDifference = 101;
+  for (const expense of expenses) {
+    if (expense.kind === "in" || expense.product_id != null || expense.status === "cancelado") continue;
+    const difference = Math.abs(Math.round(Number(expense.amount) * 100) - target);
+    if (difference < bestDifference) {
+      match = expense;
+      bestDifference = difference;
+    }
+  }
+  return match;
+}
+
 const Inventory = () => {
   const notify = useToast();
   const { cashier } = useCashier();
@@ -688,13 +704,11 @@ const Inventory = () => {
   const [confirmedStockQuantity, setConfirmedStockQuantity] = useState(false);
   const [stockCost, setStockCost] = useState("");
   // Configuración → Funciones: sin caducidades no se muestra el campo.
-  const { expiry: expiryOn } = useFeatures();
+  const { expiry: expiryOn, stockCashPayment } = useFeatures();
   // Caducidad opcional del lote que entra ("YYYY-MM-DD" o "").
   const [stockExpiry, setStockExpiry] = useState("");
   const [stockExpiryOpen, setStockExpiryOpen] = useState(false);
-  const [stockRegisterExpense, setStockRegisterExpense] = useState(
-    () => localStorage.getItem("stockRegisterExpense") === "true",
-  );
+  const [stockPaymentConfirm, setStockPaymentConfirm] = useState(null);
   const [costConfirmOpen, setCostConfirmOpen] = useState(false);
   const [stockCostConfirm, setStockCostConfirm] = useState(null);
   const [stockUnitMode, setStockUnitMode] = useState("box");
@@ -1002,7 +1016,7 @@ const Inventory = () => {
     setConfirmedStockQuantity(false);
     setStockCost("");
     setStockExpiry("");
-    setStockRegisterExpense(false);
+    setStockPaymentConfirm(null);
     setStockUnitMode("box");
     setStockModalOpen(true);
   }, []);
@@ -1037,7 +1051,7 @@ const Inventory = () => {
     }
   };
 
-  const doAddStock = async (updateCostPrice) => {
+  const doAddStock = async (updateCostPrice, registerExpense = false) => {
     if (!selectedProduct || stockQuantity <= 0) return;
     if (
       selectedProduct.sale_unit !== "weight" &&
@@ -1057,14 +1071,6 @@ const Inventory = () => {
       return;
     }
     const costNum = parseFloat(stockCost) || 0;
-    const totalCost =
-      costNum > 0
-        ? costNum
-        : isContainerUnit(selectedProduct.sale_unit) &&
-            selectedProduct.box_qty > 0
-          ? ((selectedProduct.cost_price || 0) / selectedProduct.box_qty) *
-            actualQty
-          : (selectedProduct.cost_price || 0) * actualQty;
     setAddingStock(true);
     try {
       const result = await window.api.invoke("add-stock", {
@@ -1074,7 +1080,7 @@ const Inventory = () => {
         confirmedStockQuantity,
         cost: costNum,
         cashierId: cashier?.id,
-        registerExpense: stockRegisterExpense,
+        registerExpense: stockCashPayment && registerExpense,
         updateCostPrice,
         expiryDate: (expiryOn && stockExpiry) || undefined,
       });
@@ -1082,10 +1088,19 @@ const Inventory = () => {
         setStockModalOpen(false);
         setSelectedProduct(null);
         fetchProducts();
-        if (!stockRegisterExpense) {
-          notify("Mercancía sumada. La caja no cambió.", "info");
+        if (result.expenseRecorded) {
+          notify("Mercancía sumada y gasto registrado.", "success");
+          window.api.invoke("open-cash-drawer")
+            .then((drawer) => {
+              if (!drawer?.success) {
+                notify(drawer?.error || "El pago quedó registrado. No se pudo abrir el cajón.", "error");
+              }
+            })
+            .catch(() => notify("El pago quedó registrado. No se pudo abrir el cajón.", "error"));
+        } else if (registerExpense && result.queued) {
+          notify("Mercancía sumada. El gasto se verifica al sincronizar.", "info");
         } else {
-          notify("Mercancía sumada y gasto registrado en la caja.", "success");
+          notify("Mercancía sumada. La caja no cambió.", "info");
         }
       } else {
         notify(result.error, "error");
@@ -1095,7 +1110,7 @@ const Inventory = () => {
     }
   };
 
-  const confirmAddStock = async () => {
+  const confirmAddStock = async (registerExpense = false, paymentConfirmed = false) => {
     if (!selectedProduct || stockQuantity <= 0) return;
     if (stockQuantityWarning && !confirmedStockQuantity) {
       setStockQtyError("Confirma la cantidad antes de continuar.");
@@ -1118,6 +1133,37 @@ const Inventory = () => {
     // importar si la cantidad se capturó en cajas, paquetes o piezas.
     const pieces = addPiezas;
     const piecesPerCost = isBox ? selectedProduct.box_qty : 1;
+    if (registerExpense && !stockCashPayment) return;
+    if (registerExpense && !paymentConfirmed) {
+      const total = costNum > 0 ? costNum : ((selectedProduct.cost_price || 0) / piecesPerCost) * pieces;
+      const base = Math.floor(total);
+      const cents = Math.round((total - base) * 100);
+      const amount = base + (cents <= 29 ? 0 : cents <= 79 ? 0.5 : 1);
+      if (!(amount > 0)) {
+        notify("Captura un costo que permita registrar una salida de caja.", "error");
+        return;
+      }
+      const pending = { amount, checking: true };
+      setStockPaymentConfirm(pending);
+      let checkFailed = false;
+      let withdrawal = null;
+      try {
+        const result = await window.api.invoke("get-cash-register-expenses", {
+          cashierId: cashier?.id,
+          role: "cashier",
+        });
+        checkFailed = !result?.success;
+        if (!checkFailed) {
+          withdrawal = findSimilarWithdrawal(result.expenses, amount);
+        }
+      } catch {
+        checkFailed = true;
+      }
+      setStockPaymentConfirm((current) =>
+        current === pending ? { amount, checking: false, checkFailed, withdrawal } : current,
+      );
+      return;
+    }
     if (costNum > 0 && pieces > 0) {
       const expected =
         ((selectedProduct.cost_price || 0) / piecesPerCost) * pieces;
@@ -1132,25 +1178,26 @@ const Inventory = () => {
           direction: diff > 0 ? "subio" : "bajo",
           isBox,
           saleUnit: selectedProduct.sale_unit,
+          registerExpense,
         });
         setCostConfirmOpen(true);
         return;
       }
     }
-    await doAddStock(null);
+    await doAddStock(null, registerExpense);
   };
 
   const handleCostConfirmYes = async () => {
     const confirm = stockCostConfirm;
     setCostConfirmOpen(false);
     setStockCostConfirm(null);
-    await doAddStock(confirm?.newCost ?? null);
+    await doAddStock(confirm?.newCost ?? null, confirm?.registerExpense);
   };
 
   const handleCostConfirmNo = async () => {
     setCostConfirmOpen(false);
     setStockCostConfirm(null);
-    await doAddStock(null);
+    await doAddStock(null, stockCostConfirm?.registerExpense);
   };
 
   const confirmRemoveStock = async () => {
@@ -2197,35 +2244,6 @@ const Inventory = () => {
                   {expiryOn ? "Ambos son opcionales. " : "Opcional. "}Si dejas el costo vacío, se calcula con el último costo del producto.
                 </p>
 
-                <label
-                  className={cn(
-                    "flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors",
-                    stockRegisterExpense
-                      ? "border-emerald-500/40 bg-emerald-500/10"
-                      : "border-border bg-muted/40",
-                  )}
-                >
-                  <Checkbox
-                    checked={stockRegisterExpense}
-                    onCheckedChange={(v) => {
-                      setStockRegisterExpense(!!v);
-                      localStorage.setItem(
-                        "stockRegisterExpense",
-                        v ? "true" : "false",
-                      );
-                    }}
-                  />
-                  <span className="space-y-0.5">
-                    <span className="block text-sm font-bold">
-                      Registrar el pago como gasto de la caja
-                    </span>
-                    <span className="block text-xs leading-snug text-muted-foreground">
-                      {stockRegisterExpense
-                        ? "Se resta del efectivo de la caja. Si ya lo sacaste con un retiro, desmárcalo para no contarlo doble."
-                        : "No se registra ningún gasto; la caja no cambia y solo se suma la mercancía."}
-                    </span>
-                  </span>
-                </label>
               </div>
 
               {/* ─── Resumen ─── */}
@@ -2315,8 +2333,17 @@ const Inventory = () => {
             <CancelButton onClick={() => setStockModalOpen(false)}>
               Cancelar
             </CancelButton>
+            {stockCashPayment && (
+              <SButton
+                variant="outline"
+                disabled={!stockQuantity || stockQuantity <= 0 || addingStock}
+                onClick={() => confirmAddStock(true)}
+              >
+                Agregar stock y registrar pago
+              </SButton>
+            )}
             <SButton
-              onClick={confirmAddStock}
+              onClick={() => confirmAddStock()}
               disabled={!stockQuantity || stockQuantity <= 0 || addingStock}
               className="px-4"
             >
@@ -2332,6 +2359,66 @@ const Inventory = () => {
                     : "Sumar"}
                 </>
               )}
+            </SButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={stockPaymentConfirm !== null && stockCashPayment}
+        onOpenChange={(open) => !open && setStockPaymentConfirm(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar salida de efectivo</DialogTitle>
+            <DialogDescription>
+              Se registrará una salida de <strong>{fmtMoney(stockPaymentConfirm?.amount ?? 0)}</strong> en el efectivo del turno.
+              Si ya retiraste el efectivo para esta compra, elige «Solo sumar stock».
+            </DialogDescription>
+          </DialogHeader>
+          {stockPaymentConfirm?.checking && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Revisando los retiros de la caja abierta…
+            </p>
+          )}
+          {stockPaymentConfirm?.checkFailed && (
+            <p role="status" className="text-sm text-muted-foreground">
+              No se pudieron revisar los retiros. Verifica si ya registraste esta salida de efectivo.
+            </p>
+          )}
+          {stockPaymentConfirm?.withdrawal && (
+            <div role="status" className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+              <p className="flex items-center gap-2 font-semibold text-foreground">
+                <TriangleAlert aria-hidden="true" className="size-4 shrink-0" />
+                Hay un retiro de importe similar en este turno
+              </p>
+              <p className="mt-1 break-words text-muted-foreground">
+                {fmtMoney(stockPaymentConfirm.withdrawal.amount)}
+                {stockPaymentConfirm.withdrawal.created_at && ` · ${formatMXTime(stockPaymentConfirm.withdrawal.created_at)}`}
+                {` · ${stockPaymentConfirm.withdrawal.reason || "Sin motivo"}`}
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <CancelButton onClick={() => setStockPaymentConfirm(null)}>Cancelar</CancelButton>
+            <SButton
+              variant={stockPaymentConfirm?.withdrawal ? "default" : "outline"}
+              onClick={() => {
+                setStockPaymentConfirm(null);
+                confirmAddStock();
+              }}
+            >
+              Solo sumar stock
+            </SButton>
+            <SButton
+              variant={stockPaymentConfirm?.withdrawal ? "outline" : "default"}
+              disabled={stockPaymentConfirm?.checking}
+              onClick={() => {
+                setStockPaymentConfirm(null);
+                confirmAddStock(true, true);
+              }}
+            >
+              Registrar salida
             </SButton>
           </DialogFooter>
         </DialogContent>

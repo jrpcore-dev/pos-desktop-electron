@@ -10,7 +10,7 @@ import { OperatorIcon } from "./OperatorIcon";
 // `unknown` se explica en pantalla: el cliente ya pagó y no sabemos si el
 // operador aplicó la recarga. El checkout consulta el estado solo (misma
 // operación, nunca un cobro nuevo); "Reintentar" fuerza esa consulta.
-const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
+const ServiceResult = ({ tx, onRetry, onDone, onPrint, onOpenDrawer, busy, kind, mixed = false }) => {
   const status = getStatus(tx.status);
   const needsInput = tx.operatorKey && tx.inputValue;
 
@@ -23,9 +23,17 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
       <ServiceResultArt status={tx.status} ringClassName={status.artRing} />
 
       <div>
-        <p className="text-base font-bold text-foreground">{title(tx.status, kind)}</p>
+        <p className="text-base font-bold text-foreground">
+          {mixed && ["pending", "unknown"].includes(tx.status)
+            ? "Recarga en verificación"
+            : title(tx.status, kind)}
+        </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {subtitle(tx.status, kind)}
+          {mixed && tx.status === "failed"
+            ? `Devuelve ${money(tx.quote.totalCents)} por la recarga.`
+            : mixed && ["unknown", "pending"].includes(tx.status)
+              ? "Venta cobrada. Consulta el resultado en el historial de Recargas y servicios."
+              : subtitle(tx.status, kind)}
         </p>
       </div>
 
@@ -96,7 +104,7 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
         </p>
       )}
 
-      <div className="mt-auto flex w-full flex-col gap-2">
+      {!mixed && <div className="mt-auto flex w-full flex-col gap-2">
         {tx.status === "applied" && (
           <>
             <Button
@@ -107,6 +115,11 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
               <CircleCheck size={16} />
               Nueva recarga
             </Button>
+            {onOpenDrawer && (
+              <Button variant="outline" onClick={onOpenDrawer} className="h-11 w-full text-sm">
+                Abrir cajón
+              </Button>
+            )}
             <Button variant="outline" onClick={() => onPrint?.(tx)} className="h-11 w-full gap-1.5 text-sm">
               <Printer size={15} />
               Imprimir ticket
@@ -144,7 +157,7 @@ const ServiceResult = ({ tx, onRetry, onDone, onPrint, busy, kind }) => {
             Volver
           </Button>
         )}
-      </div>
+      </div>}
     </div>
   );
 };

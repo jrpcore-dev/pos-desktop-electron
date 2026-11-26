@@ -1,4 +1,4 @@
-import { CreditCard, DollarSign, Landmark, RotateCcw, Zap } from "lucide-react";
+import { CreditCard, DollarSign, Landmark, RotateCcw, ShoppingCart, Zap } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "@/lib/utils";
 import { money } from "./serviceMoney";
@@ -54,6 +54,7 @@ const ServiceSummary = ({
   quote,
   canCharge,
   onReset,
+  onAddToCart,
   disabled,
   blockedHint,
   paymentMethod = "cash",
@@ -153,6 +154,14 @@ const ServiceSummary = ({
           Enter
         </kbd>
       </Button>
+
+      {onAddToCart && (
+        <Button type="button" variant="outline" size="sm" className="w-full"
+          onClick={onAddToCart} disabled={!canCharge || disabled}>
+          <ShoppingCart size={15} aria-hidden />
+          Agregar al carrito
+        </Button>
+      )}
 
       <div className="flex items-center justify-between gap-2">
         <span

@@ -8,6 +8,8 @@
 //   applied    → el operador aplicó; se crea la venta real (sales/sale_items)
 //   failed     → el operador rechazó; NO se crea venta
 //   unknown    → no sabemos; NO se crea venta y se marca para revisión
+// En una venta mixta, 'queued' enlaza la recarga a la venta ya cobrada.
+// Al confirmar el operador se actualiza esa operación y su misma venta.
 //
 // Ciclo de confirmación (tiempos exigidos por Taecel en la certificación):
 //   · StatusTXN se consulta en cuanto RequestTXN devuelve el transID.
@@ -213,7 +215,7 @@ const createServiceTransactions = ({
   const toUiRow = (row) => {
     if (!row) return null;
     let status = row.status;
-    if (status === "requesting") status = "pending";
+    if (status === "requesting" || status === "queued") status = "pending";
     if (status === "applied" && Number(row.needs_review) === 1) {
       status = "needs_review";
     }
@@ -233,6 +235,7 @@ const createServiceTransactions = ({
       providerFolio: row.provider_folio || null,
       saleId: row.sale_id || null,
       saleFolio: row.sale_folio || null,
+      refundDueCents: row.status === "failed" && row.sale_id ? amountCents + feeCents : 0,
       needsReview: Number(row.needs_review) === 1,
       reviewReason: row.review_reason || null,
       operatorKey: row.carrier_id || null,
@@ -785,7 +788,7 @@ const createServiceTransactions = ({
     const current = getForSettlement(row);
     if (!current) return null;
 
-    if (current.status === "failed" && !current.sale_id) {
+    if (current.status === "failed" || current.status === "queued") {
       return current;
     }
     if (current.status === "applied") {
@@ -852,7 +855,7 @@ const createServiceTransactions = ({
     }
   };
 
-  const doCreate = async (payload, context) => {
+  const prepareRecharge = async (payload, context, mixed = false) => {
     const clientRequestId = String(payload.clientRequestId || "").trim();
     if (!clientRequestId) {
       return {
@@ -863,7 +866,9 @@ const createServiceTransactions = ({
     }
 
     const existing = getByClientRequestId(clientRequestId);
-    if (existing) return resultFromRow(existing);
+    if (existing) return mixed
+      ? { ok: false, error: "La recarga ya pertenece a una operación" }
+      : resultFromRow(existing);
 
     const productCode = String(payload.productCode || "").trim();
     const reference = normalizeReference(payload.reference);
@@ -926,6 +931,9 @@ const createServiceTransactions = ({
     }
 
     const freeAmount = !!operator.freeAmount;
+    if (mixed && ![1, 2].includes(Number(operator.categoryId))) {
+      return { ok: false, error: "Solo se pueden agregar recargas y paquetes al carrito" };
+    }
     const amountCents = freeAmount
       ? Math.round(Number(payload.amountCents) || 0)
       : Number(product.amountCents) || 0;
@@ -967,6 +975,9 @@ const createServiceTransactions = ({
     const fees = readFees();
     const threshold = Number(operator.categoryId) === 1 ? fees.airtimeFeeWaiverCents : 0;
     const feeCents = threshold > 0 && amountCents >= threshold ? 0 : feeFor(operator, fees);
+    if (mixed && amountCents !== payload.amountCents) {
+      return { ok: false, error: "El importe de la recarga cambió. Vuelve a agregarla al carrito." };
+    }
     if (payload.feeCents != null && Math.round(Number(payload.feeCents)) !== feeCents) {
       return {
         ok: false,
@@ -1006,6 +1017,9 @@ const createServiceTransactions = ({
     const referenceHash = sha256(reference);
     const referenceMasked = maskReference(reference);
     const referenceEnc = taecel.encryptReference(reference);
+    if (mixed && !referenceEnc) {
+      return { ok: false, error: "No se pudo proteger el número. Revisa la configuración del equipo principal." };
+    }
     // Con monto libre el nombre del producto no trae importe: se agrega aquí
     // para que el ledger y el ticket lo muestren completos.
     const description = freeAmount
@@ -1017,10 +1031,10 @@ const createServiceTransactions = ({
         client_request_id, ref_cte, provider, status, category_id, carrier_id,
         carrier_name, carrier_logo, product_code, product_name, reference_masked,
         reference_hash, reference_enc, amount_cents, payment_method, register_id,
-        cashier_id, cashier_name, device_id, fee_cents, requested_at, updated_at
-      ) VALUES (?, ?, 'taecel', 'requesting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        cashier_id, cashier_name, device_id, fee_cents, free_amount, requested_at, updated_at
+      ) VALUES (?, ?, 'taecel', 'requesting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     );
-    const info = insert.run(
+    const insertRow = () => Number(insert.run(
       clientRequestId,
       refCte,
       Number(product.categoryId) || Number(operator.categoryId) || null,
@@ -1039,18 +1053,23 @@ const createServiceTransactions = ({
       cashierName,
       context.deviceId || null,
       feeCents,
-    );
-    const ledgerId = Number(info.lastInsertRowid);
-    touch();
+      freeAmount ? 1 : 0,
+    ).lastInsertRowid);
+    return { insertRow, registerId: register.id, amountCents, feeCents,
+      name: `Recarga ${description} · ${referenceMasked}`, reference, freeAmount };
+  };
+
+  const dispatchRecharge = async (row, reference, freeAmount = false) => {
+    const ledgerId = row.id;
 
     let result;
     const requestSentAt = Date.now();
     try {
       result = await taecel.requestTxn({
-        productCode: product.sku,
+        productCode: row.product_code,
         reference,
-        amountCents,
-        refCte,
+        amountCents: row.amount_cents,
+        refCte: row.ref_cte,
         freeAmount,
       });
     } catch (err) {
@@ -1152,6 +1171,107 @@ const createServiceTransactions = ({
     });
   };
 
+  const doCreate = async (payload, context) => {
+    const prepared = await prepareRecharge(payload, context);
+    if (!prepared.insertRow) return prepared;
+    const row = getById(prepared.insertRow());
+    touch();
+    return dispatchRecharge(row, prepared.reference, prepared.freeAmount);
+  };
+
+  const sendQueued = async (row) => {
+    const changed = db.prepare(
+      "UPDATE service_transactions SET status = 'requesting', requested_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'",
+    ).run(row.id);
+    if (!changed.changes) return;
+    const reference = taecel.decryptReference(row.reference_enc);
+    if (!reference) {
+      markFailed(row, { message: "No se pudo recuperar el número de la recarga" });
+      return;
+    }
+    await dispatchRecharge(row, reference, row.free_amount === 1);
+  };
+
+  const createMixedSale = async (payload, context) => {
+    const { cart, total, paymentMethod, discountTotal, customerId } = payload;
+    const saleKey = String(payload.saleKey || "");
+    const failSale = (error) => ({ success: false, committed: false, error });
+    if (!/^[a-f0-9-]{36}$/i.test(saleKey) || !Array.isArray(cart) ||
+        cart.length > salesCore.MAX_CART_LINES ||
+        !["cash", "card", "transfer"].includes(paymentMethod) || !Number.isFinite(total)) {
+      return failSale("Datos inválidos para cobrar la venta con recarga");
+    }
+    const serviceLines = cart.filter((item) => item?.recharge);
+    if (!serviceLines.length) return failSale("Agrega una recarga a la venta");
+    const key = [context.deviceId || "host", saleKey];
+    const readSaved = () => db.prepare(
+      "SELECT response_json FROM idempotency_keys WHERE device_id = ? AND endpoint = 'mixed-sale' AND key = ?",
+    ).get(...key);
+    const withResults = (result) => ({
+      ...result,
+      recharges: db.prepare("SELECT * FROM service_transactions WHERE sale_id = ? ORDER BY id")
+        .all(result.saleId).map(toUiRow),
+    });
+    const saved = readSaved();
+    if (saved) return withResults(JSON.parse(saved.response_json));
+    const prepared = [];
+    for (const [index, item] of serviceLines.entries()) {
+      const recharge = await prepareRecharge({
+        ...item.recharge,
+        clientRequestId: `${saleKey}-${index}`,
+        paymentMethod,
+      }, context, true);
+      const recorded = readSaved();
+      if (recorded) return withResults(JSON.parse(recorded.response_json));
+      if (!recharge.insertRow) return failSale(recharge.error);
+      if (Math.round(item.price * 100) !== recharge.amountCents + recharge.feeCents) {
+        return failSale("El precio de la recarga cambió. Vuelve a agregarla al carrito.");
+      }
+      prepared.push(recharge);
+    }
+    let result;
+    try {
+      result = db.transaction(() => {
+        const recorded = readSaved();
+        if (recorded) return JSON.parse(recorded.response_json);
+        const reg = salesCore.findOpenRegister(db, context.cashierId, context.role, context.deviceId);
+        if (!reg || prepared.some((line) => line.registerId !== reg.id)) {
+          throw new Error("La caja cambió. Revisa el cobro e inténtalo de nuevo.");
+        }
+        let index = 0;
+        const saleCart = cart.map((item) => {
+          if (!item.recharge) return { ...item, serviceTransactionId: null, serviceFee: false };
+          const recharge = prepared[index++];
+          return {
+            isManual: true, name: recharge.name, quantity: 1,
+            price: (recharge.amountCents + recharge.feeCents) / 100,
+            serviceTransactionId: recharge.insertRow(),
+          };
+        });
+        const sale = salesCore.createSaleTx(db, {
+          cart: saleCart, total, discountTotal, paymentMethod, customerId,
+          ...context, requireRegister: true, strictTotals: true, allowServiceLink: true,
+          folioDeviceId: null,
+        });
+        const link = db.prepare("UPDATE service_transactions SET status = 'queued', sale_id = ?, sale_folio = ? WHERE id = ?");
+        for (const item of saleCart) {
+          if (item.serviceTransactionId) link.run(sale.saleId, sale.folio, item.serviceTransactionId);
+        }
+        db.prepare(
+          "INSERT INTO idempotency_keys (device_id, endpoint, key, request_hash, response_json, status_code) VALUES (?, 'mixed-sale', ?, ?, ?, 200)",
+        ).run(...key, sha256(JSON.stringify(payload)), JSON.stringify(sale));
+        return sale;
+      })();
+    } catch (error) {
+      return failSale(error.message);
+    }
+    touch(["sales", "service_transactions"]);
+    for (const row of db.prepare("SELECT * FROM service_transactions WHERE sale_id = ? AND status = 'queued'").all(result.saleId)) {
+      sendQueued(row).catch((err) => logger("send-queued", err));
+    }
+    return withResults(result);
+  };
+
   const createRecharge = (payload = {}, context = {}) => {
     const id = String(payload.clientRequestId || "").trim();
     if (!id) return doCreate(payload, context);
@@ -1201,6 +1321,7 @@ const createServiceTransactions = ({
                 COALESCE(SUM(amount_cents + COALESCE(fee_cents, 0)),0) AS total_cents
          FROM service_transactions
          WHERE register_id = ?
+           AND sale_id IS NULL
            AND (status IN ('requesting','pending','unknown')
                 OR (status = 'applied' AND needs_review = 1))
          GROUP BY status, payment_method`,
@@ -1246,7 +1367,7 @@ const createServiceTransactions = ({
     } else if (status === "needs_review") {
       where.push("status = 'applied' AND needs_review = 1");
     } else if (status === "pending") {
-      where.push("status IN ('requesting','pending')");
+      where.push("status IN ('queued','requesting','pending')");
     } else if (status === "applied") {
       where.push("status = 'applied' AND needs_review = 0");
     } else if (status === "failed") {
@@ -1391,6 +1512,8 @@ const createServiceTransactions = ({
     ticking = true;
     try {
       recoverAmbiguous();
+      const queued = db.prepare("SELECT * FROM service_transactions WHERE status = 'queued' ORDER BY id").all();
+      for (const row of queued) sendQueued(row).catch((err) => logger("send-queued", err));
       // Retoma las pendientes sin ciclo cuando les toca: el siguiente getSales
       // agendado o, tras reiniciar la app, el ciclo interrumpido. Si ya pasaron
       // 60 s, el ciclo va directo a getSales.
@@ -1429,6 +1552,7 @@ const createServiceTransactions = ({
 
   return {
     createRecharge,
+    createMixedSale,
     getFees,
     setFees,
     withFees,

@@ -27,17 +27,16 @@ const FILTERS = [
   { key: "needs_review", label: "Por revisar" },
 ];
 
-// El filtro "Por atender" junta `failed` y `unknown` porque son los dos únicos
-// estados en los que el cajero tiene que hacer algo.
+const needsAttention = (tx) =>
+  NEEDS_ATTENTION.includes(tx.status) || (tx.saleId && tx.status === "pending");
+
 const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
   const [filter, setFilter] = useState("attention");
 
   const filtered = useMemo(() => {
     const rows = transactions || [];
     if (filter === "all") return rows;
-    if (filter === "attention") {
-      return rows.filter((t) => NEEDS_ATTENTION.includes(t.status));
-    }
+    if (filter === "attention") return rows.filter(needsAttention);
     return rows.filter((t) => t.status === filter);
   }, [transactions, filter]);
 
@@ -47,7 +46,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
     return {
       cobrado: sumBy(settled, (t) => t.quote?.totalCents),
       movimientos: rows.length,
-      pendientes: rows.filter((t) => NEEDS_ATTENTION.includes(t.status)).length,
+      pendientes: rows.filter(needsAttention).length,
     };
   }, [transactions]);
 
@@ -106,7 +105,7 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
             {filtered.map((t) => {
               const retryable = t.status === "unknown" || t.status === "pending";
               return (
-                <li key={t.folio} className="flex items-center gap-3 px-4 py-3">
+                <li key={t.transactionId || t.folio} className="flex items-center gap-3 px-4 py-3">
                   <OperatorIcon
                     id={t.operatorLogo || t.operatorKey}
                     remote={t.operatorRemoteLogo}
@@ -139,6 +138,14 @@ const ServiceHistory = ({ transactions, onRetry, busyFolio }) => {
                     <p className="mt-1 text-xs tabular-nums text-muted-foreground">
                       {whenLabel(t.createdAt)} · folio {t.folio}
                     </p>
+                    {t.refundDueCents > 0 && (
+                      <p className="mt-1 text-xs font-semibold text-destructive">
+                        Por devolver {money(t.refundDueCents)}
+                      </p>
+                    )}
+                    {t.providerRef && t.saleId && (
+                      <p className="mt-1 text-xs text-muted-foreground">Referencia {t.providerRef}</p>
+                    )}
                   </div>
 
                   <div className="flex w-9 shrink-0 justify-end">

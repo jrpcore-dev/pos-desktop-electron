@@ -141,6 +141,7 @@ const RPC_CHANNELS = new Set([
   "taecel:get-catalog",
   "taecel:refresh-catalog",
   "taecel:recharge",
+  "taecel:mixed-sale",
   "taecel:transaction-status",
   "taecel:history",
   "taecel:get-recent-numbers",

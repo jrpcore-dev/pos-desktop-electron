@@ -170,6 +170,7 @@
   "taecel:get-fees": "rpc",
   "taecel:get-recent-numbers": "rpc",
   "taecel:history": "rpc",
+  "taecel:mixed-sale": "rpc",
   "taecel:recharge": "rpc",
   "taecel:reconcile": "rpc",
   "taecel:refresh-catalog": "rpc",

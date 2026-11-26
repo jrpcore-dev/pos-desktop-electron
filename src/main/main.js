@@ -314,6 +314,19 @@ ipcMain.handle("taecel:recharge", async (e, payload) => {
 ipcMain.handle("taecel:transaction-status", async (e, payload) =>
   serviceTx.checkTransaction(payload || {}),
 );
+ipcMain.handle("taecel:mixed-sale", async (e, payload = {}) => {
+  const cashier = resolveCallerCashier(payload);
+  try {
+    return await serviceTx.createMixedSale(payload, {
+      deviceId: callerDeviceId(),
+      cashierId: cashier.id,
+      cashierName: cashier.name,
+      role: cashier.role,
+    });
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 ipcMain.handle("taecel:history", async (e, payload) =>
   serviceTx.history(payload || {}),
 );
@@ -2269,32 +2282,25 @@ ipcMain.handle(
         supplier ? supplier.id : null,
       );
 
-      // Register the cost as an expense (even if no cash register is open)
-      // unless the user opted to pay via "Retiro de Efectivo" (registerExpense=false).
-      if (registerExpense !== false) {
+      const expenseRecorded = registerExpense === true &&
+        roundedCost > 0 &&
+        db.prepare("SELECT value FROM settings WHERE key = 'inventory_cash_payment'").get()?.value === "true";
+      if (expenseRecorded) {
         const openReg = findOpenRegister(cashierId, "cashier");
-        if (roundedCost > 0) {
-          if (openReg) {
-            db.prepare(
-              "UPDATE cash_register SET expenses = COALESCE(expenses, 0) + ? WHERE id = ?",
-            ).run(roundedCost, openReg.id);
-          }
-          const reason = supplierName
-            ? `Compra de ${product.name} — ${supplierName}`
-            : `Compra de inventario: ${product.name}`;
+        if (openReg) {
           db.prepare(
-            "INSERT INTO cash_register_expenses (register_id, amount, reason, product_id, quantity) VALUES (?, ?, ?, ?, ?)",
-          ).run(
-            openReg ? openReg.id : null,
-            roundedCost,
-            reason,
-            productId,
-qty,
-);
-    }
-  }
+            "UPDATE cash_register SET expenses = COALESCE(expenses, 0) + ? WHERE id = ?",
+          ).run(roundedCost, openReg.id);
+        }
+        const reason = supplierName
+          ? `Compra de ${product.name} — ${supplierName}`
+          : `Compra de inventario: ${product.name}`;
+        db.prepare(
+          "INSERT INTO cash_register_expenses (register_id, amount, reason, product_id, quantity) VALUES (?, ?, ?, ?, ?)",
+        ).run(openReg?.id ?? null, roundedCost, reason, productId, qty);
+      }
 
-      return { productName: product.name };
+      return { productName: product.name, expenseRecorded };
     });
     try {
       const result = txn();
@@ -3454,7 +3460,7 @@ ipcMain.handle("get-setting", async (event, key) => {
   }
 });
 
-ipcMain.handle("save-setting", async (event, key, value) => {
+ipcMain.handle("save-setting", async (event, key, value, cashierId) => {
   try {
     // 3g/E · el rol NO se cambia por aquí: sólo el asistente de vinculación
     // (box-save-settings → clientLink.saveSettings) puede poner la caja en
@@ -3464,6 +3470,17 @@ ipcMain.handle("save-setting", async (event, key, value) => {
         success: false,
         error: "El rol del dispositivo sólo se cambia desde el asistente de vinculación.",
       };
+    }
+    if (key === "inventory_cash_payment") {
+      const caller = db.prepare(
+        "SELECT role FROM cashiers WHERE id = ? AND is_active = 1",
+      ).get(rpcContext.currentCashierId() ?? cashierId ?? null);
+      if (caller?.role !== "admin") {
+        return { success: false, error: "Este ajuste requiere un administrador." };
+      }
+      if (value !== "true" && value !== "false") {
+        return { success: false, error: "Valor de inventario inválido." };
+      }
     }
     // Frontera de validación: la config de impresión se sanitiza aquí —
     // el nombre viaja al spooler de Windows y el ancho alimenta el CSS

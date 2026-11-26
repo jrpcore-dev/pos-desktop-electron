@@ -198,6 +198,11 @@ const cashRegisterRow = (db, id) =>
   const DDL_AGREGADO = discountColumnsToAdd.length
     ? [saleItemsDdl.replace(/\)$/, `${discountColumnsToAdd.map(([column, type]) => `, ${column} ${type}`).join("")})`)]
     : [];
+  const serviceDdl = ddlOld.find((sql) => /^CREATE TABLE "?service_transactions"?\s*\(/i.test(sql));
+  if (serviceDdl && !serviceDdl.includes("free_amount")) {
+    DDL_BORRADO.push(serviceDdl);
+    DDL_AGREGADO.push(serviceDdl.replace(/\)$/, ", free_amount INTEGER NOT NULL DEFAULT 0)"));
+  }
   console.log("  statements nuevos :", d.added.length);
   for (const s of d.added) console.log("    + " + s.replace(/\s+/g, " ").slice(0, 200));
   console.log("  statements borrados:", d.removed.length);
@@ -297,6 +302,10 @@ const cashRegisterRow = (db, id) =>
       colDe(before.cols.service_transactions, "fee_cents")
         ? []
         : ["+ service_transactions.fee_cents|INTEGER|nn=1|dflt=0"]),
+      ...(!Array.isArray(before.cols.service_transactions) ||
+      colDe(before.cols.service_transactions, "free_amount")
+        ? []
+        : ["+ service_transactions.free_amount|INTEGER|nn=1|dflt=0"]),
     ];
     // Alertas inteligentes · lotes con caducidad y `insights.payload`. Si la
     // app ya corrió con esta entrega en esta máquina, el delta es 0.

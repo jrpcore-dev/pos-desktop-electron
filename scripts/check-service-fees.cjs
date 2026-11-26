@@ -13,6 +13,7 @@
  *   ELECTRON_RUN_AS_NODE=1 node_modules\electron\dist\electron.exe scripts\check-service-fees.cjs
  */
 const path = require("path");
+const { randomUUID } = require("crypto");
 const fixture = require("./db-fixture");
 
 const { createServiceTransactions } = require(path.join(fixture.REPO, "src/main/service-transactions.js"));
@@ -70,8 +71,10 @@ let nextTrans = 1;
 const fakeTaecel = {
   getCatalog: async () => CATALOG,
   encryptReference: (s) => "enc:" + s,
+  decryptReference: (s) => s?.slice(4),
   requestTxn: async (args) => {
     requests.push(args);
+    if (args.reference === "9991230000") return { ok: false, kind: "failed" };
     return { ok: true, transId: "T" + nextTrans++, message: "ok" };
   },
   statusTxn: async (transId) => ({
@@ -205,6 +208,44 @@ const waitApplied = async (id) => {
   ).run();
   const pend = svc.pendingSummary(1);
   check(pend.totalCents === 21500, "el pendiente de caja suma la comisión", pend.totalCents);
+
+  const mixed = {
+    saleKey: randomUUID(),
+    paymentMethod: "card",
+    total: 87,
+    cart: [
+      { isManual: true, name: "Producto", quantity: 2, price: 15 },
+      { price: 57, recharge: { productCode: "TEL050", reference: "9991234567", amountCents: 5000, feeCents: 700 } },
+    ],
+  };
+  const beforeMixed = requests.length;
+  const invalid = await svc.createMixedSale({ ...mixed, total: 80 }, ctx);
+  check(!invalid.success && requests.length === beforeMixed, "una venta rechazada no envía la recarga");
+  check(!db.prepare("SELECT 1 FROM service_transactions WHERE client_request_id = ?").get(mixed.saleKey + "-0"),
+    "si la venta falla, la recarga tampoco queda en el ledger");
+  const [first, duplicate] = await Promise.all([
+    svc.createMixedSale(mixed, ctx), svc.createMixedSale(mixed, ctx),
+  ]);
+  const applied = await waitApplied(mixed.saleKey + "-0");
+  check(first.success && duplicate.saleId === first.saleId && requests.length === beforeMixed + 1,
+    "un doble envío del cobro registra y despacha una sola vez", JSON.stringify(first));
+  check(applied?.sale_id === first.saleId && applied?.status === "applied",
+    "confirmar la recarga conserva el folio de la venta mixta");
+  const mixedItems = db.prepare(
+    "SELECT price_at_sale, service_transaction_id FROM sale_items WHERE sale_id = ? ORDER BY id",
+  ).all(first.saleId);
+  check(mixedItems.length === 2 && mixedItems[1]?.service_transaction_id === applied?.id &&
+    mixedItems[1]?.price_at_sale === 57, "producto y recarga quedan en una venta, con la comisión incluida");
+  const rejected = await svc.createMixedSale({
+    ...mixed, saleKey: randomUUID(),
+    cart: [mixed.cart[0], {
+      ...mixed.cart[1], recharge: { ...mixed.cart[1].recharge, reference: "9991230000" },
+    }],
+  }, ctx);
+  const rejectedStatus = await svc.checkTransaction({ transactionId: rejected.recharges?.[0]?.id });
+  check(rejected.success && rejectedStatus.transaction?.status === "failed" &&
+    rejectedStatus.transaction?.refundDueCents === 5700,
+    "el rechazo informa cuánto devolver y conserva el folio cobrado");
 
   svc.stopPoller();
   console.log(`\n=== Comisión: ${pass} PASS / ${fail} FAIL ===`);

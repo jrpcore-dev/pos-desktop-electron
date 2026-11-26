@@ -7,9 +7,11 @@ import {
   Check,
   CloudUpload,
   FlaskConical,
+  Info,
   Loader2,
   Monitor,
   Network,
+  Package,
   Pencil,
   Printer,
   ReceiptText,
@@ -61,6 +63,7 @@ import PageHeader from "./PageHeader";
 import { fmtNumber } from "../utils/format";
 import { buildReceiptHTML } from "../utils/receiptTemplate";
 import { resizeImage } from "../utils/logo";
+import { AboutVendia } from "./WhatsNew";
 import { FEATURE_KEYS, FEATURES_EVENT } from "../lib/useFeatures";
 import {
   getScaleConfig,
@@ -74,15 +77,22 @@ const TABS = [
   { id: "store", label: "Datos Generales", icon: Store, group: "Tienda" },
   { id: "ticket", label: "Tickets", icon: ReceiptText, group: "Tienda" },
   { id: "pos", label: "Parámetros del POS", icon: SlidersHorizontal, group: "Operación" },
+  { id: "inventory", label: "Inventario", icon: Package, group: "Operación" },
   { id: "features", label: "Funciones", icon: Blocks, group: "Operación" },
   { id: "printer", label: "Impresora", icon: Printer, group: "Equipos" },
   { id: "scale", label: "Báscula", icon: Scale, group: "Equipos" },
   { id: "mobile", label: "Dispositivos", icon: Smartphone, group: "Equipos" },
   { id: "host", label: "Conexión al Host", icon: Network, group: "Equipos" },
+  { id: "about", label: "Acerca de", icon: Info, group: "Vendia" },
 ];
-const TAB_GROUPS = ["Tienda", "Operación", "Equipos"];
+const TAB_GROUPS = ["Tienda", "Operación", "Equipos", "Vendia"];
 
 const TABS_META = {
+  about: {
+    icon: Info,
+    title: "Acerca de Vendia",
+    description: "Información de esta instalación, soporte e historial de versiones.",
+  },
   store: {
     icon: Store,
     title: "Datos Generales",
@@ -99,6 +109,11 @@ const TABS_META = {
     icon: SlidersHorizontal,
     title: "Parámetros del POS",
     description: "Impuestos, redondeo y reglas de operación de la terminal.",
+  },
+  inventory: {
+    icon: Package,
+    title: "Inventario",
+    description: "Ajustes para las entradas de mercancía.",
   },
   features: {
     icon: Blocks,
@@ -425,7 +440,7 @@ function ConfigurationScreen() {
     };
   }, []);
   const hiddenTabs = [
-    ...(isAdmin ? [] : ["features", "mobile"]),
+    ...(isAdmin ? [] : ["features", "inventory", "mobile"]),
     ...(isBoxDevice === false ? [] : ["mobile"]),
     ...(isAdmin && isBoxDevice === true ? [] : ["host"]),
   ];
@@ -704,6 +719,9 @@ function ConfigurationScreen() {
   });
   const [savedFeatureFlags, setSavedFeatureFlags] = useState(featureFlags);
   const [savingFeatures, setSavingFeatures] = useState(false);
+  const [stockCashPayment, setStockCashPayment] = useState({ enabled: false });
+  const [savedStockCashPayment, setSavedStockCashPayment] = useState(stockCashPayment);
+  const [savingInventory, setSavingInventory] = useState(false);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   useEffect(() => {
@@ -728,9 +746,13 @@ function ConfigurationScreen() {
         if (s.pin_for_void !== undefined)
           setPinForVoid(s.pin_for_void === "true");
         const flags = {};
-        for (const [k, key] of Object.entries(FEATURE_KEYS))
-          // Promociones avanzadas arranca apagada (ver lib/useFeatures).
+        for (const [k, key] of Object.entries(FEATURE_KEYS)) {
+          if (k === "stockCashPayment") continue;
           flags[k] = k === "promos" ? s[key] === "true" : s[key] !== "false";
+        }
+        const inventory = { enabled: s[FEATURE_KEYS.stockCashPayment] === "true" };
+        setStockCashPayment(inventory);
+        setSavedStockCashPayment(inventory);
         setFeatureFlags(flags);
         setSavedFeatureFlags(flags);
       } catch (err) {
@@ -799,8 +821,8 @@ function ConfigurationScreen() {
     }
     setSavingFeatures(true);
     try {
-      for (const [k, key] of Object.entries(FEATURE_KEYS)) {
-        await window.api.invoke("save-setting", key, flags[k] ? "true" : "false");
+      for (const [k, enabled] of Object.entries(flags)) {
+        await window.api.invoke("save-setting", FEATURE_KEYS[k], enabled ? "true" : "false");
       }
       setFeatureFlags(flags);
       setSavedFeatureFlags(flags);
@@ -813,6 +835,29 @@ function ConfigurationScreen() {
       return false;
     } finally {
       setSavingFeatures(false);
+    }
+  };
+
+  const handleSaveInventory = async () => {
+    if (!isAdmin) return false;
+    setSavingInventory(true);
+    try {
+      const result = await window.api.invoke(
+        "save-setting",
+        FEATURE_KEYS.stockCashPayment,
+        String(stockCashPayment.enabled),
+        cashier?.id,
+      );
+      if (!result?.success) throw new Error(result?.error || "No se pudo guardar el ajuste.");
+      setSavedStockCashPayment(stockCashPayment);
+      window.dispatchEvent(new Event(FEATURES_EVENT));
+      notify("Ajustes de inventario guardados.", "success");
+      return true;
+    } catch (err) {
+      notify(err.message, "error");
+      return false;
+    } finally {
+      setSavingInventory(false);
     }
   };
 
@@ -2109,6 +2154,13 @@ function ConfigurationScreen() {
       save: handleSavePos,
       saving: savingPos,
     },
+    inventory: {
+      value: stockCashPayment,
+      savedValue: savedStockCashPayment,
+      apply: setStockCashPayment,
+      save: handleSaveInventory,
+      saving: savingInventory,
+    },
     features: {
       value: featureFlags,
       savedValue: savedFeatureFlags,
@@ -2270,6 +2322,16 @@ function ConfigurationScreen() {
               )}
               {activeTab === "ticket" && renderTicketTab()}
               {activeTab === "pos" && renderPosTab()}
+              {activeTab === "about" && <AboutVendia isBoxDevice={isBoxDevice} />}
+              {activeTab === "inventory" && !tabHidden && (
+                <ToggleBlock
+                  title="Permitir registrar salidas de efectivo al agregar stock"
+                  description="Permite registrar el costo de la mercancía como una salida de efectivo del turno. Si está apagado, usa Retiro de efectivo para registrar esas salidas."
+                  checked={stockCashPayment.enabled}
+                  onCheckedChange={(enabled) => setStockCashPayment({ enabled })}
+                  disabled={!prefsLoaded || savingInventory}
+                />
+              )}
               {activeTab === "features" && !tabHidden && renderFeaturesTab()}
               {activeTab === "mobile" && !tabHidden && renderMobileTab()}
               {activeTab === "host" && !tabHidden && renderHostTab()}

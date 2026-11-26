@@ -10,6 +10,7 @@ export const FEATURE_KEYS = {
   credit: "feature_credit",
   services: "feature_services",
   expiry: "feature_expiry",
+  stockCashPayment: "inventory_cash_payment",
   // Promociones avanzadas (categoría/marca y paquetes). Es la excepción:
   // arranca APAGADA, porque al encenderla cambia lo que se cobra. La clave
   // es la que lee el main (`promos_advanced`).
@@ -17,7 +18,7 @@ export const FEATURE_KEYS = {
 };
 
 // Funciones que sin valor guardado arrancan apagadas.
-const OFF_BY_DEFAULT = new Set(["promos"]);
+const OFF_BY_DEFAULT = new Set(["promos", "stockCashPayment"]);
 
 const ALL_ON = {
   customers: true,
@@ -25,6 +26,7 @@ const ALL_ON = {
   services: true,
   expiry: true,
   promos: false,
+  stockCashPayment: false,
 };
 
 // El fiado depende de Clientes: sin clientes no hay a quién fiar.
@@ -40,6 +42,7 @@ export const resolveFeatures = (settings = {}) => {
     services: on("services"),
     expiry: on("expiry"),
     promos: on("promos"),
+    stockCashPayment: on("stockCashPayment"),
   };
 };
 

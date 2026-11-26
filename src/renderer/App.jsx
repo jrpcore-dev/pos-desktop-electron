@@ -10,6 +10,8 @@ import Catalog from "./components/Catalog";
 import ToastProvider from "./components/ToastProvider";
 import BrandLoader from "./components/BrandLoader";
 import { routeAfterLogin } from "./lib/sessionReturn";
+import { markReleaseSeen } from "./lib/releaseNotes";
+import { useMultiCart } from "./components/cart/useMultiCart";
 
 const Layout = React.lazy(() => import("./components/Layout"));
 const SalesTerminal = React.lazy(() => import("./components/SalesTerminal"));
@@ -35,6 +37,7 @@ import { ThemeModeContext } from "./contexts/ThemeContext";
 
 const AppInner = () => {
   const { cashier, setCashier } = useCashier();
+  const saleCarts = useMultiCart(cashier?.id);
   const navigate = useNavigate();
   const [loggedIn, setLoggedIn] = useState(() => {
     try { return !!localStorage.getItem("currentCashier"); } catch { return false; }
@@ -173,6 +176,7 @@ const AppInner = () => {
         const firstTime = await window.api.invoke("is-first-time");
         setIsFirstTime(firstTime);
         if (firstTime) {
+          markReleaseSeen();
           setSetupPreview(false);
           setShowSetup(true);
         }
@@ -334,7 +338,7 @@ const AppInner = () => {
         <AddProductModal open={showAddProduct} onClose={() => setShowAddProduct(false)} onProductAdded={() => setShowAddProduct(false)} />
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<SalesTerminal />} />
+            <Route index element={<SalesTerminal saleCarts={saleCarts} />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="stock-conflicts" element={<AdminOnly><StockConflicts /></AdminOnly>} />
             <Route path="catalog-reference" element={<AdminOnly><Catalog /></AdminOnly>} />
@@ -344,7 +348,9 @@ const AppInner = () => {
             <Route path="promotions" element={<Promotions />} />
             <Route path="stock-movements" element={<StockMovements />} />
             <Route path="transacciones" element={<Transacciones />} />
-            <Route path="servicios" element={<ServicesScreen />} />
+            <Route path="servicios" element={<ServicesScreen onAddRecharge={(item) =>
+              saleCarts.setCart((items) => [...items, item])
+            } />} />
             <Route path="customers" element={<Customers />} />
             <Route path="end-of-day" element={<EndOfDay />} />
             <Route path="register-history" element={<AdminOnly><RegisterHistory /></AdminOnly>} />

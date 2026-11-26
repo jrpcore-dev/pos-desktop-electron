@@ -265,10 +265,12 @@ const profitByRange = (db, { startDate, endDate, dev = { sql: "", args: [] } } =
       `SELECT s.id AS sale_id, s.total AS sale_total, DATE(s.created_at, '${MX_SHIFT}') AS day,
               si.quantity, COALESCE(si.returned_qty, 0) AS returned, si.status AS item_status,
               si.price_at_sale, si.cost_at_sale, si.stock_deducted, si.service_transaction_id,
+              st.status AS service_status, st.amount_cents AS service_amount_cents, st.fee_cents AS service_fee_cents,
               si.product_id, p.cost_price, p.sale_unit, p.box_qty
          FROM sale_items si
          JOIN sales s ON s.id = si.sale_id
          LEFT JOIN products p ON p.id = si.product_id
+         LEFT JOIN service_transactions st ON st.id = si.service_transaction_id
         WHERE DATE(s.created_at, '${MX_SHIFT}') BETWEEN ? AND ?
           AND (s.status IS NULL OR s.status != 'cancelado')${dev.sql}`,
     )
@@ -294,7 +296,18 @@ const profitByRange = (db, { startDate, endDate, dev = { sql: "", args: [] } } =
     // El total de la venta manda: reparte descuentos y redondeo por partida.
     const factor = grossSum > 0 ? sale.total / grossSum : 0;
     for (const k of kept) {
-      if (!(k.eff > 0) || k.l.service_transaction_id) continue;
+      if (!(k.eff > 0)) continue;
+      if (k.l.service_transaction_id) {
+        if (k.l.service_status === "applied") {
+          const amount = (Number(k.l.service_amount_cents) || 0) / 100;
+          const fee = (Number(k.l.service_fee_cents) || 0) / 100;
+          const includedFee = Math.min(fee, Math.max(0, k.l.price_at_sale - amount));
+          const feeRevenue = includedFee * k.eff * factor;
+          revenue += feeRevenue;
+          byDay[sale.day] = (byDay[sale.day] || 0) + feeRevenue;
+        }
+        continue;
+      }
       const lineRevenue = k.gross * factor;
       let lineCost = null;
       if (k.l.cost_at_sale != null) {

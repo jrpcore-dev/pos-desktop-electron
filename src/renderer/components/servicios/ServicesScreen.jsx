@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BadgePercent,
   History,
@@ -25,11 +26,12 @@ import ServiceFeesDialog from "./ServiceFeesDialog";
 // Pantalla de Servicios: cobro e historial en la misma ruta.
 // Este archivo es el único dueño del estado compartido entre las dos pestañas.
 // Todo pasa por el Host (`taecel:*`): en una caja viajan por RPC.
-const ServicesScreen = () => {
+const ServicesScreen = ({ onAddRecharge }) => {
   // Quién cobra: el Host sólo acepta el id y resolve al nombre desde su BD,
   // así una caja no puede inventar el nombre de otro cajero.
   const { cashier } = useCashier();
   const notify = useToast();
+  const navigate = useNavigate();
   const [tab, setTab] = useState("cobrar");
   const [transactions, setTransactions] = useState([]);
   const pendingCount = transactions.filter((t) =>
@@ -322,6 +324,11 @@ const ServicesScreen = () => {
             cashierId={cashier?.id ?? null}
             loading={provider.state === "loading" && operators.length === 0}
             onCatalogStale={reloadCatalog}
+            onAddRecharge={(item) => {
+              onAddRecharge(item);
+              navigate("/");
+              notify("Recarga agregada al carrito", "success");
+            }}
           />
         </TabsContent>
 

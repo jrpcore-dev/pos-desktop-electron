@@ -208,8 +208,9 @@ const CartItem = React.memo(
             <button
               type="button"
               aria-label="Aumentar cantidad"
+              disabled={!!item.recharge}
               onClick={() => onQuantityChange(item, 1)}
-              className="flex h-full w-9 cursor-pointer items-center justify-center text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="flex h-full w-9 cursor-pointer items-center justify-center text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:hidden"
             >
               <Plus size={16} />
             </button>
